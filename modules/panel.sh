@@ -190,11 +190,11 @@ module_panel_nginx_vhost() {
     log_step "Generate konfigurasi Nginx untuk Panel (${PANEL_DOMAIN})"
 
     local conf_file="${NGINX_SITES_AVAILABLE}/panel-${PANEL_DOMAIN}.conf"
-    local listen_directive="listen 80;\n    listen [::]:80;"
 
     write_file_if_changed "$conf_file" <<EOF
 server {
-    ${listen_directive}
+    listen 80;
+    listen [::]:80;
     server_name ${PANEL_DOMAIN};
 
     include ${NGINX_SNIPPETS}/acme-challenge.conf;
