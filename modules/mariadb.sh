@@ -81,9 +81,15 @@ module_mariadb_create_accounts() {
     SQL_FILE=$(mktemp)
     cat > "$SQL_FILE" <<SQL
 -- Provisioner account: allowed to create/drop databases & users, grant privileges
--- (used exclusively by the panel's DatabaseService for tenant DB management)
+-- (used exclusively by the panel's DatabaseService for tenant DB management).
+-- MariaDB requires a grantor to already POSSESS a privilege before it can
+-- pass that privilege on to someone else - WITH GRANT OPTION alone does not
+-- bypass this. ALL PRIVILEGES (not just the admin/DDL subset) is required
+-- here so db_grant_all()'s "GRANT ALL PRIVILEGES ON tenant_db.* TO
+-- tenant_user" (used by App Installer and the Database menu) actually
+-- succeeds instead of failing with "Access denied ... to database".
 CREATE USER IF NOT EXISTS '${PANEL_DB_PROVISIONER_USER}'@'localhost' IDENTIFIED BY '${PANEL_DB_PROVISIONER_PASS}';
-GRANT CREATE, DROP, ALTER, CREATE USER, RELOAD, PROCESS ON *.* TO '${PANEL_DB_PROVISIONER_USER}'@'localhost' WITH GRANT OPTION;
+GRANT ALL PRIVILEGES ON *.* TO '${PANEL_DB_PROVISIONER_USER}'@'localhost' WITH GRANT OPTION;
 ALTER USER '${PANEL_DB_PROVISIONER_USER}'@'localhost' IDENTIFIED BY '${PANEL_DB_PROVISIONER_PASS}';
 
 -- Panel metadata database (stores websites, apps, users of the panel itself)
