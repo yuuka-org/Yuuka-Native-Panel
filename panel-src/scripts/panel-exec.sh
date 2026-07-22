@@ -368,6 +368,244 @@ op_port_check() {
 }
 
 # ---------------------------------------------------------------------------
+# File Manager - browse/upload/download/edit/extract, scoped to either a
+# website's document root (${WWW_BASE}/<domain>) or a node app's project
+# directory (${NODEAPPS_BASE}/<app>). Filenames are NOT restricted to a
+# strict charset (real-world uploads/zips legitimately contain spaces and
+# unicode) - the actual escape-prevention guarantee is realpath containment
+# (require_path_within), applied to every resolved path before use, exactly
+# like the rest of this script.
+# ---------------------------------------------------------------------------
+RE_FM_SCOPE='^(website|nodeapp)$'
+FM_MAX_READ_BYTES=209715200  # 200MB hard backstop, independent of the
+                             # app-level FILEMANAGER_MAX_UPLOAD_MB cap in
+                             # .env - protects PHP-FPM memory even if that
+                             # softer limit is ever bypassed or misconfigured.
+
+fm_require_safe_relpath() {
+    local value="$1" label="$2"
+    if [[ "$value" == *".."* ]]; then
+        fail "Path tidak valid untuk ${label}: mengandung '..'"
+    fi
+    if [[ "$value" == /* ]]; then
+        fail "Path tidak valid untuk ${label}: tidak boleh path absolut"
+    fi
+    if [[ ${#value} -gt 4096 ]]; then
+        fail "Path tidak valid untuk ${label}: terlalu panjang"
+    fi
+}
+
+fm_require_basename() {
+    local value="$1" label="$2"
+    if [[ -z "$value" || "$value" == "." || "$value" == ".." || "$value" == */* ]]; then
+        fail "Nama tidak valid untuk ${label}: '${value}'"
+    fi
+}
+
+fm_owner_for_scope() {
+    case "$1" in
+        website) printf 'www-data:www-data' ;;
+        nodeapp) printf 'nodeapps:nodeapps' ;;
+    esac
+}
+
+# fm_resolve_base <scope> <name> -> prints absolute (realpath-canonicalized)
+# base directory, verified to exist and be confined under the scope's fixed
+# root. Returns the realpath'd form (not the raw concatenation) so that
+# later exact-match comparisons (e.g. "is target == base") are comparing
+# like with like.
+fm_resolve_base() {
+    local scope="$1" name="$2" dir="" resolved=""
+    case "$scope" in
+        website)
+            require_match "$name" "$RE_DOMAIN" "domain"
+            dir="${WWW_BASE}/${name}"
+            resolved=$(require_path_within "$dir" "$WWW_BASE")
+            ;;
+        nodeapp)
+            require_match "$name" "$RE_APPNAME" "appname"
+            dir="${NODEAPPS_BASE}/${name}"
+            resolved=$(require_path_within "$dir" "$NODEAPPS_BASE")
+            ;;
+        *)
+            fail "Scope tidak dikenal: $scope"
+            ;;
+    esac
+    [[ -d "$resolved" ]] || fail "Direktori scope tidak ditemukan: $resolved"
+    printf '%s' "$resolved"
+}
+
+# fm_resolve_target <scope> <name> <relpath> -> prints absolute resolved
+# target path, guaranteed confined under the scope's base dir (does NOT
+# require the target to already exist - safe for mkdir/write of new paths).
+# Empty relpath means "the scope root itself" - handled as a direct
+# short-circuit because require_path_within() only accepts paths STRICTLY
+# nested under base (base itself does not match "$base/*"), so calling it
+# with target==base would incorrectly fail even though base was already
+# validated by fm_resolve_base() above.
+fm_resolve_target() {
+    local scope="$1" name="$2" relpath="$3" base=""
+    require_match "$scope" "$RE_FM_SCOPE" "scope"
+    fm_require_safe_relpath "$relpath" "path"
+    base=$(fm_resolve_base "$scope" "$name")
+    if [[ -z "$relpath" ]]; then
+        printf '%s' "$base"
+        return 0
+    fi
+    require_path_within "${base}/${relpath}" "$base"
+}
+
+op_files_list() {
+    local scope="$1" name="$2" relpath="${3:-}"
+    local target
+    target=$(fm_resolve_target "$scope" "$name" "$relpath")
+    [[ -d "$target" ]] || fail "Direktori tidak ditemukan: $relpath"
+    find "$target" -mindepth 1 -maxdepth 1 -printf '%y\t%s\t%T@\t%f\n' 2>/dev/null
+}
+
+op_files_read() {
+    local scope="$1" name="$2" relpath="$3"
+    [[ -n "$relpath" ]] || fail "Path file wajib diisi"
+    local target
+    target=$(fm_resolve_target "$scope" "$name" "$relpath")
+    [[ -f "$target" ]] || fail "File tidak ditemukan: $relpath"
+    local size
+    size=$(stat -c%s "$target" 2>/dev/null || echo 0)
+    [[ "$size" -le "$FM_MAX_READ_BYTES" ]] || fail "File terlalu besar untuk dibuka lewat File Manager (${size} bytes)"
+    cat -- "$target"
+}
+
+op_files_write() {
+    local scope="$1" name="$2" relpath="$3"
+    [[ -n "$relpath" ]] || fail "Path file wajib diisi"
+    local target
+    target=$(fm_resolve_target "$scope" "$name" "$relpath")
+    local base
+    base=$(fm_resolve_base "$scope" "$name")
+    [[ "$target" == "$base" ]] && fail "Path file tidak valid"
+
+    local tmp parent_dir owner
+    tmp=$(mktemp)
+    cat > "$tmp"
+
+    parent_dir="$(dirname "$target")"
+    owner=$(fm_owner_for_scope "$scope")
+    if [[ ! -d "$parent_dir" ]]; then
+        mkdir -p "$parent_dir"
+        chown -R "$owner" "$parent_dir"
+    fi
+    mv "$tmp" "$target"
+    chown "$owner" "$target"
+    chmod 640 "$target"
+    echo "OK: written $relpath"
+}
+
+op_files_mkdir() {
+    local scope="$1" name="$2" relpath="$3"
+    [[ -n "$relpath" ]] || fail "Nama folder wajib diisi"
+    local target
+    target=$(fm_resolve_target "$scope" "$name" "$relpath")
+    mkdir -p "$target"
+    local owner
+    owner=$(fm_owner_for_scope "$scope")
+    chown -R "$owner" "$target"
+    echo "OK: mkdir $relpath"
+}
+
+op_files_delete() {
+    local scope="$1" name="$2" relpath="$3"
+    [[ -n "$relpath" ]] || fail "Refusing to delete scope root"
+    local target
+    target=$(fm_resolve_target "$scope" "$name" "$relpath")
+    local base
+    base=$(fm_resolve_base "$scope" "$name")
+    [[ "$target" == "$base" ]] && fail "Refusing to delete scope root"
+    [[ -e "$target" ]] || fail "Target tidak ditemukan: $relpath"
+    rm -rf -- "$target"
+    echo "OK: deleted $relpath"
+}
+
+op_files_rename() {
+    local scope="$1" name="$2" relpath="$3" newbasename="$4"
+    [[ -n "$relpath" ]] || fail "Path sumber wajib diisi"
+    fm_require_basename "$newbasename" "nama baru"
+    local target
+    target=$(fm_resolve_target "$scope" "$name" "$relpath")
+    [[ -e "$target" ]] || fail "Target tidak ditemukan: $relpath"
+    local base
+    base=$(fm_resolve_base "$scope" "$name")
+    [[ "$target" == "$base" ]] && fail "Refusing to rename scope root"
+
+    local parent dest
+    parent=$(dirname "$target")
+    dest="${parent}/${newbasename}"
+    require_path_within "$dest" "$base" >/dev/null
+    [[ -e "$dest" ]] && fail "Sudah ada file/folder dengan nama itu"
+    mv -- "$target" "$dest"
+    echo "OK: renamed to $newbasename"
+}
+
+op_files_extract_zip() {
+    local scope="$1" name="$2" relpath="${3:-}"
+    require_match "$scope" "$RE_FM_SCOPE" "scope"
+    fm_require_safe_relpath "$relpath" "path"
+    local base
+    base=$(fm_resolve_base "$scope" "$name")
+    local target_dir="$base"
+    if [[ -n "$relpath" ]]; then
+        target_dir=$(require_path_within "${base}/${relpath}" "$base")
+    fi
+    mkdir -p "$target_dir"
+
+    local tmp_zip
+    tmp_zip=$(mktemp --suffix=.zip)
+    cat > "$tmp_zip"
+    if [[ ! -s "$tmp_zip" ]]; then
+        rm -f "$tmp_zip"
+        fail "File ZIP kosong"
+    fi
+
+    local tmp_extract
+    tmp_extract=$(mktemp -d)
+
+    if ! unzip -q -o "$tmp_zip" -d "$tmp_extract"; then
+        rm -f "$tmp_zip"
+        rm -rf "$tmp_extract"
+        fail "Gagal mengekstrak ZIP (format tidak valid atau rusak)"
+    fi
+    rm -f "$tmp_zip"
+
+    # Zip-slip guard: verify every extracted entry's realpath is still
+    # confined under tmp_extract BEFORE copying anything into the real
+    # target directory - protects against crafted archives with symlink
+    # entries or traversal sequences that a given unzip build might not
+    # fully sanitize on its own.
+    local escaped=0 entry resolved
+    while IFS= read -r -d '' entry; do
+        resolved=$(realpath -m -- "$entry")
+        case "$resolved" in
+            "$tmp_extract"/*) ;;
+            *) escaped=1 ;;
+        esac
+    done < <(find "$tmp_extract" -mindepth 1 -print0)
+
+    if [[ "$escaped" -eq 1 ]]; then
+        rm -rf "$tmp_extract"
+        fail "ZIP ditolak: berisi entry yang mencoba keluar dari direktori tujuan"
+    fi
+
+    shopt -s dotglob nullglob
+    cp -a "$tmp_extract"/* "$target_dir"/
+    shopt -u dotglob nullglob
+    rm -rf "$tmp_extract"
+
+    local owner
+    owner=$(fm_owner_for_scope "$scope")
+    chown -R "$owner" "$target_dir"
+    echo "OK: extracted zip to ${relpath:-/}"
+}
+
+# ---------------------------------------------------------------------------
 # File backup / restore (tar) for website document roots and Node.js apps -
 # needed because 'panel' cannot read files owned by www-data/nodeapps.
 # ---------------------------------------------------------------------------
@@ -540,6 +778,13 @@ case "$SUBCOMMAND" in
     fs-remove-website)     op_fs_remove_website "$@" ;;
     fs-remove-nodeapp)     op_fs_remove_nodeapp "$@" ;;
     port-check)            op_port_check "$@" ;;
+    files-list)            op_files_list "$@" ;;
+    files-read)            op_files_read "$@" ;;
+    files-write)           op_files_write "$@" ;;
+    files-mkdir)           op_files_mkdir "$@" ;;
+    files-delete)          op_files_delete "$@" ;;
+    files-rename)          op_files_rename "$@" ;;
+    files-extract-zip)     op_files_extract_zip "$@" ;;
     backup-tar-website)    op_backup_tar_website "$@" ;;
     backup-tar-nodeapp)    op_backup_tar_nodeapp "$@" ;;
     restore-tar-website)   op_restore_tar_website "$@" ;;

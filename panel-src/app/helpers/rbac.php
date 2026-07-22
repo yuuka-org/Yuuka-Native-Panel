@@ -43,6 +43,9 @@ final class Rbac
         'cron.manage'                    => [self::ROLE_ADMIN, self::ROLE_OPERATOR, self::ROLE_DEVELOPER],
         'cron.view'                      => [self::ROLE_ADMIN, self::ROLE_OPERATOR, self::ROLE_DEVELOPER, self::ROLE_VIEWER],
 
+        'files.manage'                   => [self::ROLE_ADMIN, self::ROLE_OPERATOR, self::ROLE_DEVELOPER],
+        'files.view'                     => [self::ROLE_ADMIN, self::ROLE_OPERATOR, self::ROLE_DEVELOPER, self::ROLE_VIEWER],
+
         'logs.view'                      => [self::ROLE_ADMIN, self::ROLE_OPERATOR, self::ROLE_DEVELOPER],
         'monitoring.view'               => [self::ROLE_ADMIN, self::ROLE_OPERATOR, self::ROLE_DEVELOPER, self::ROLE_VIEWER],
     ];

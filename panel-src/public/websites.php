@@ -84,6 +84,9 @@ include __DIR__ . '/partials/header.php';
               </form>
               <?php endif; ?>
               <a href="/domains.php?website_id=<?= e((string) $site['id']) ?>" class="btn btn-sm btn-outline-primary" title="SSL / Domain"><i class="bi bi-shield-lock"></i></a>
+              <?php if (Rbac::can($user['role'], 'files.view')): ?>
+              <a href="/file_manager.php?scope=website&name=<?= urlencode($site['domain']) ?>" class="btn btn-sm btn-outline-secondary" title="File Manager"><i class="bi bi-folder2-open"></i></a>
+              <?php endif; ?>
               <?php if (Rbac::can($user['role'], 'website.delete')): ?>
               <button class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteModal<?= e((string) $site['id']) ?>" title="Hapus"><i class="bi bi-trash"></i></button>
               <?php endif; ?>

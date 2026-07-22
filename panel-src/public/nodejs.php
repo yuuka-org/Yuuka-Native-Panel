@@ -115,6 +115,9 @@ include __DIR__ . '/partials/header.php';
                 <a href="/nodejs_logs.php?id=<?= e((string) $m['id']) ?>" class="btn btn-sm btn-outline-secondary" title="Logs"><i class="bi bi-file-text"></i></a>
                 <a href="/nodejs_env.php?id=<?= e((string) $m['id']) ?>" class="btn btn-sm btn-outline-secondary" title="Environment"><i class="bi bi-key"></i></a>
                 <a href="/nodejs_health.php?id=<?= e((string) $m['id']) ?>" class="btn btn-sm btn-outline-secondary" title="Health Check"><i class="bi bi-heart-pulse"></i></a>
+                <?php if (Rbac::can($user['role'], 'files.view')): ?>
+                <a href="/file_manager.php?scope=nodeapp&name=<?= urlencode($m['app_name']) ?>" class="btn btn-sm btn-outline-secondary" title="File Manager"><i class="bi bi-folder2-open"></i></a>
+                <?php endif; ?>
                 <?php if (Rbac::can($user['role'], 'nodejs.control')): ?>
                 <button type="button" class="btn btn-sm btn-outline-success" title="Start" onclick="pctl(<?= (int) $m['id'] ?>,'start')"><i class="bi bi-play-fill"></i></button>
                 <button type="button" class="btn btn-sm btn-outline-warning" title="Restart" onclick="pctl(<?= (int) $m['id'] ?>,'restart')"><i class="bi bi-arrow-clockwise"></i></button>

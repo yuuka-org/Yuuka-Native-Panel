@@ -65,8 +65,15 @@ pm.max_requests = 500
 php_admin_value[open_basedir] = ${PANEL_ROOT}:/tmp:/proc
 php_admin_value[disable_functions] = exec,passthru,shell_exec,system,popen,pcntl_exec
 php_admin_flag[allow_url_fopen] = off
-php_admin_value[upload_max_filesize] = 32M
-php_admin_value[post_max_size] = 32M
+; Set to a generous static ceiling, matching Nginx's client_max_body_size
+; for the panel vhost - the REAL, admin-adjustable limit for File Manager
+; uploads/ZIP-extract is FILEMANAGER_MAX_UPLOAD_MB in .env (checked in
+; PHP before anything is written), not this ini value. This just needs to
+; stay out of the way so changing .env alone is enough, without ever
+; needing to touch php-fpm config or restart anything.
+php_admin_value[upload_max_filesize] = 512M
+php_admin_value[post_max_size] = 512M
+php_admin_value[memory_limit] = 512M
 php_admin_value[session.save_path] = ${PANEL_ROOT}/storage/sessions
 php_admin_value[error_log] = ${PANEL_ROOT}/storage/logs/php-fpm-error.log
 php_admin_flag[log_errors] = on
@@ -119,6 +126,8 @@ ACME_WEBROOT=/var/www/_letsencrypt
 
 LOG_PATH=${PANEL_ROOT}/storage/logs
 BACKUP_PATH=${PANEL_ROOT}/storage/backups
+
+FILEMANAGER_MAX_UPLOAD_MB=100
 EOF
 
     chown panel:panel "$env_file"
@@ -214,7 +223,7 @@ server {
     access_log /var/log/nginx/panel-${PANEL_DOMAIN}-access.log;
     error_log  /var/log/nginx/panel-${PANEL_DOMAIN}-error.log;
 
-    client_max_body_size 32m;
+    client_max_body_size 512m;
 
     location / {
         try_files \$uri \$uri/ /index.php?\$query_string;

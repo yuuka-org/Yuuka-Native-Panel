@@ -102,6 +102,48 @@ final class Validator
         return (bool) preg_match('#^[a-zA-Z0-9_./-]{1,255}$#', $value);
     }
 
+    /**
+     * A relative path INSIDE a File Manager scope (website document root or
+     * node app project dir). Unlike relativeScriptPath(), this allows
+     * spaces/unicode/most punctuation in real-world filenames - the actual
+     * escape-prevention guarantee comes from realpath containment
+     * (absolutePathWithin()) applied to the resolved path both here and
+     * again inside panel-exec.sh, not from a strict charset whitelist.
+     * Empty string is valid and means "scope root".
+     */
+    public static function relativeFilePath(string $value): bool
+    {
+        if ($value === '') {
+            return true;
+        }
+        if (str_contains($value, "\0") || str_contains($value, '..') || str_starts_with($value, '/')) {
+            return false;
+        }
+        return strlen($value) <= 4096;
+    }
+
+    /**
+     * A single path segment (filename/foldername only, no directory
+     * separators) - used for "new folder name" and rename targets, which
+     * are intentionally restricted to same-directory renames in v1.
+     */
+    public static function fileBaseName(string $value): bool
+    {
+        if ($value === '' || $value === '.' || $value === '..') {
+            return false;
+        }
+        if (str_contains($value, "\0") || str_contains($value, '/')) {
+            return false;
+        }
+        return strlen($value) <= 255;
+    }
+
+    /** website | nodeapp - the two File Manager scopes */
+    public static function fileManagerScope(string $value): bool
+    {
+        return in_array($value, ['website', 'nodeapp'], true);
+    }
+
     public static function sitename(string $value): bool
     {
         return (bool) preg_match('/^[a-zA-Z0-9._-]{1,200}$/', $value);

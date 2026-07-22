@@ -28,10 +28,21 @@ final class Executor
         'disk-usage',
         'fs-mkdir-website', 'fs-remove-website', 'fs-remove-nodeapp',
         'port-check',
+        'files-list', 'files-read', 'files-write', 'files-mkdir', 'files-delete',
+        'files-rename', 'files-extract-zip',
         'backup-tar-website', 'backup-tar-nodeapp', 'restore-tar-website', 'restore-tar-nodeapp',
         'cron-write', 'cron-delete',
         'log-tail', 'log-clear',
     ];
+
+    /**
+     * Subcommands whose successful stdout must be returned byte-for-byte
+     * (no trim()) because it can be arbitrary binary content (file
+     * downloads / file content for in-browser editing). trim() strips
+     * leading/trailing whitespace-class bytes including NUL, which would
+     * silently corrupt binary output.
+     */
+    private const RAW_OUTPUT_SUBCOMMANDS = ['files-read'];
 
     /**
      * @param string[] $args
@@ -75,10 +86,14 @@ final class Executor
 
         self::log($subcommand, $ok, "exit={$exitCode}");
 
+        $raw = in_array($subcommand, self::RAW_OUTPUT_SUBCOMMANDS, true);
+
         return [
             'ok' => $ok,
             'exitCode' => $exitCode,
-            'output' => trim($ok ? $stdout : ($stderr !== '' ? $stderr : $stdout)),
+            'output' => $ok
+                ? ($raw ? $stdout : trim($stdout))
+                : trim($stderr !== '' ? $stderr : $stdout),
         ];
     }
 
