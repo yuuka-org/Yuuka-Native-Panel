@@ -60,11 +60,48 @@ admin pertama ditampilkan **satu kali** — catat segera (lihat
 13. **Ringkasan akhir**: URL panel, username, password (ditampilkan sekali),
     daftar versi PHP/Node.js aktif, lokasi log instalasi.
 
-## Re-run untuk Update
+## Update Tanpa Mengulang Wizard: `update.sh`
 
-Tidak ada script "update" terpisah — `sudo bash install.sh` yang sama adalah
-cara resminya, karena setiap modul idempotent. Yang perlu diperhatikan saat
-re-run hanya untuk mendorong perubahan kode:
+Untuk server yang **sudah terinstall dan sedang dipakai** (terutama prod),
+`sudo bash install.sh` penuh biasanya bukan pilihan yang nyaman — dia akan
+menanyakan ulang domain/email/mode deployment/SSL/Cloudflare Tunnel dari
+awal. `update.sh` (di root repo, sejajar dengan `install.sh`) melakukan hal
+yang sama seperti re-run installer untuk bagian **kode panel saja**, tanpa
+wizard apa pun:
+
+```bash
+cd ~/Yuuka-Native-Panel   # clone repo yang kamu pakai
+sudo bash update.sh
+```
+
+Yang dilakukan (reuse fungsi yang sama persis dengan `install.sh`, lihat
+`modules/panel.sh`):
+1. `git pull` di clone tempat `update.sh` dijalankan.
+2. `module_panel_setup_installer_copy` — sinkronkan `/opt/yuuka-installer`
+   (dipakai [CLI `yp`](Yp-CLI.md)) + install/refresh binary `yp`.
+3. `module_panel_deploy_files` — rsync `panel-src/` ke `/opt/server-panel`,
+   langsung aktif tanpa restart apa pun.
+4. Kalau `yp` sudah tersedia: `yp repair panel` — regenerasi pool PHP-FPM
+   & vhost Nginx dari kode terbaru (**ini yang me-restart PHP-FPM & reload
+   Nginx** — lihat [CLI yp § repair](Yp-CLI.md), sub-detik downtime untuk
+   semua website di versi PHP yang sama).
+
+Aman dijalankan berkali-kali. Kalau `/opt/yuuka-installer` sempat rusak/
+belum ada (mis. error `rsync: change_dir "/opt/yuuka-installer/panel-src"
+failed`), `update.sh` otomatis memperbaikinya di langkah 2 — tidak perlu
+bootstrap manual.
+
+**Catatan**: langkah 3 hanya menyalin `panel-src/`. Kalau update itu juga
+menyentuh `modules/*.sh` di luar yang sudah tercakup `yp repair panel`
+(instalasi paket baru, perubahan MariaDB/Nginx/PHP/Node.js/Cloudflare),
+tetap perlu `yp custom-build <modul>` yang relevan atau `install.sh` penuh.
+
+## Re-run `install.sh` Penuh (Alternatif)
+
+`sudo bash install.sh` tetap aman dijalankan ulang kapan saja karena setiap
+modul idempotent — pilihan ini masuk akal kalau kamu memang perlu
+menjalankan ulang tahap lain (bukan sekadar update kode panel) atau lebih
+nyaman menjawab ulang wizard-nya. Yang perlu diperhatikan saat re-run:
 
 - **File PHP panel** (apa pun di `panel-src/`) otomatis ter-*rsync* ulang ke
   `/opt/server-panel` di tahap 9 — langsung aktif, tidak perlu restart apa
