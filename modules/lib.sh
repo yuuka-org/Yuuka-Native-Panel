@@ -248,7 +248,15 @@ service_enable_now() {
     # even though the unit is perfectly usable. `systemctl enable` itself
     # is the authoritative check - it fails loudly if the unit is unknown.
     if systemctl enable "$svc" >>"$INSTALL_LOG_FILE" 2>&1; then
-        systemctl start "$svc" >>"$INSTALL_LOG_FILE" 2>&1 || true
+        # `start` is a no-op on an already-active unit, so a re-run that
+        # rewrote the unit file (new token/config) would otherwise leave
+        # the OLD process running under the OLD config forever. `restart`
+        # is required to actually pick up the new ExecStart/EnvironmentFile.
+        if service_active "$svc"; then
+            systemctl restart "$svc" >>"$INSTALL_LOG_FILE" 2>&1 || true
+        else
+            systemctl start "$svc" >>"$INSTALL_LOG_FILE" 2>&1 || true
+        fi
         if service_active "$svc"; then
             log_ok "Service $svc aktif"
         else
