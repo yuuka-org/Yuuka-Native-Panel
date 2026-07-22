@@ -17,6 +17,7 @@ berbasis PHP native + Bootstrap 5 — tanpa Docker, tanpa Apache.
 9. [Konfigurasi (`.env` & State)](Konfigurasi.md) — semua environment variable dan file state installer
 10. [Troubleshooting](Troubleshooting.md) — masalah umum & cara diagnosa
 11. [Pemulihan Akun Admin](Pemulihan-Akun-Admin.md) — cara cek username & reset password lewat database
+12. [CLI `yp`](Yp-CLI.md) — CLI administrasi server via SSH (start/stop/restart, reset kredensial, repair, update, custom-build)
 
 ## Ringkasan Cepat
 

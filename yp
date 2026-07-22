@@ -1,0 +1,540 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# yp - Yuuka Panel administration CLI. Run as root via SSH:
+#   yp <aksi> <target> [args...]
+#
+# Reuses functions from modules/*.sh (the same code install.sh itself uses)
+# via a permanent installer copy at /opt/yuuka-installer, kept independent
+# of wherever the operator originally ran `install.sh` from - that clone
+# can be moved or deleted without breaking yp.
+# ==============================================================================
+set -uo pipefail
+
+INSTALLER_DIR="/opt/yuuka-installer"
+PANEL_ROOT="/opt/server-panel"
+PANEL_ENV="${PANEL_ROOT}/.env"
+
+if [[ "${EUID}" -ne 0 ]]; then
+    echo "yp harus dijalankan sebagai root (gunakan: sudo yp ...)" >&2
+    exit 1
+fi
+
+if [[ ! -f "${INSTALLER_DIR}/modules/lib.sh" ]]; then
+    echo "Installer tidak ditemukan di ${INSTALLER_DIR}." >&2
+    echo "Jalankan 'sudo bash install.sh' dari clone repo minimal sekali agar yp bisa dipakai." >&2
+    exit 1
+fi
+
+# shellcheck source=/dev/null
+source "${INSTALLER_DIR}/modules/lib.sh"
+# shellcheck source=/dev/null
+source "${INSTALLER_DIR}/modules/nginx.sh"
+# shellcheck source=/dev/null
+source "${INSTALLER_DIR}/modules/panel.sh"
+
+SCRIPT_DIR="$INSTALLER_DIR"
+export SCRIPT_DIR
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+env_get() {
+    # env_get <KEY> - read a single value from the deployed panel .env
+    local key="$1"
+    [[ -f "$PANEL_ENV" ]] || { printf ''; return 1; }
+    grep -E "^${key}=" "$PANEL_ENV" | head -1 | cut -d= -f2-
+}
+
+PANEL_DB_NAME="$(env_get DB_DATABASE)"
+PANEL_DB_NAME="${PANEL_DB_NAME:-server_panel}"
+
+mysql_root() {
+    mysql -u root "$@"
+}
+
+panel_vhost_file() {
+    find /etc/nginx/sites-available -maxdepth 1 -name 'panel-*.conf' 2>/dev/null | head -1
+}
+
+panel_php_fpm_service() {
+    local pool_file
+    pool_file=$(grep -rl '^user = panel' /etc/php/*/fpm/pool.d/panel.conf 2>/dev/null | head -1)
+    [[ -n "$pool_file" ]] || { printf ''; return 1; }
+    local ver
+    ver=$(echo "$pool_file" | sed -E 's#/etc/php/([^/]+)/fpm/pool\.d/panel\.conf#\1#')
+    printf 'php%s-fpm' "$ver"
+}
+
+RE_SERVICE='^(nginx|mariadb|cloudflared|php7\.4-fpm|php8\.0-fpm|php8\.1-fpm|php8\.2-fpm|php8\.3-fpm|php8\.4-fpm)$'
+
+require_service_whitelisted() {
+    [[ "$1" =~ $RE_SERVICE ]] || die "Service tidak diizinkan lewat yp: $1"
+}
+
+usage() {
+    cat <<'USAGE'
+Yuuka Panel CLI (yp) - dijalankan sebagai root via SSH
+
+Pemakaian: yp <aksi> <target> [args...]
+
+  yp start|stop|restart|status panel
+  yp start|stop|restart|status service <nama>
+  yp reset-password
+  yp reset-username
+  yp change-port panel <port>
+  yp repair panel [--reset-env]
+  yp update
+  yp version
+  yp custom-build <nginx|php|nodejs|mariadb|phpmyadmin|ssl|cloudflare|panel>
+  yp help
+USAGE
+}
+
+# ---------------------------------------------------------------------------
+# panel start/stop/restart/status
+# ---------------------------------------------------------------------------
+cmd_panel_status() {
+    log_step "Status Panel"
+    local vhost
+    vhost=$(panel_vhost_file)
+    if [[ -n "$vhost" ]]; then
+        local enabled_link="/etc/nginx/sites-enabled/$(basename "$vhost")"
+        if [[ -L "$enabled_link" ]]; then
+            log_ok "Vhost Nginx: aktif ($(basename "$vhost"))"
+        else
+            log_warn "Vhost Nginx: dinonaktifkan ($(basename "$vhost"))"
+        fi
+    else
+        log_warn "Vhost Nginx panel tidak ditemukan"
+    fi
+
+    if service_active nginx; then log_ok "nginx: aktif"; else log_warn "nginx: tidak aktif"; fi
+
+    local phpfpm
+    phpfpm=$(panel_php_fpm_service)
+    if [[ -n "$phpfpm" ]]; then
+        if service_active "$phpfpm"; then log_ok "${phpfpm}: aktif"; else log_warn "${phpfpm}: tidak aktif"; fi
+    else
+        log_warn "Pool PHP-FPM panel tidak ditemukan"
+    fi
+
+    local domain http_code
+    domain=$(grep -h 'server_name' "${vhost:-/dev/null}" 2>/dev/null | head -1 | awk '{print $2}' | tr -d ';')
+    http_code=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: ${domain:-localhost}" http://127.0.0.1/ 2>/dev/null || echo "000")
+    log_info "Response lokal (${domain:-?}): HTTP ${http_code}"
+}
+
+cmd_panel_toggle() {
+    local action="$1"
+    local vhost
+    vhost=$(panel_vhost_file)
+    [[ -n "$vhost" ]] || { log_warn "Vhost panel tidak ditemukan"; return 1; }
+    local enabled_link="/etc/nginx/sites-enabled/$(basename "$vhost")"
+    local phpfpm
+    phpfpm=$(panel_php_fpm_service)
+
+    case "$action" in
+        start)
+            ln -sf "$vhost" "$enabled_link"
+            nginx -t && systemctl reload nginx
+            [[ -n "$phpfpm" ]] && systemctl start "$phpfpm"
+            log_ok "Panel diaktifkan"
+            ;;
+        stop)
+            rm -f "$enabled_link"
+            if nginx -t; then systemctl reload nginx; fi
+            log_ok "Panel dinonaktifkan (vhost di-disable, PHP-FPM shared dibiarkan jalan)"
+            ;;
+        restart)
+            nginx -t && systemctl reload nginx
+            [[ -n "$phpfpm" ]] && systemctl restart "$phpfpm"
+            log_ok "Panel di-restart (nginx reload + php-fpm restart)"
+            ;;
+        *)
+            die "Aksi panel tidak dikenal: $action"
+            ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# service start/stop/restart/status - generic systemctl wrapper (whitelist)
+# ---------------------------------------------------------------------------
+cmd_service() {
+    local action="$1" svc="${2:-}"
+    [[ -n "$svc" ]] || die "Sebutkan nama service, contoh: yp status service nginx"
+    require_service_whitelisted "$svc"
+
+    case "$action" in
+        start)   systemctl start "$svc"   && log_ok "$svc: started" ;;
+        stop)    systemctl stop "$svc"    && log_ok "$svc: stopped" ;;
+        restart) systemctl restart "$svc" && log_ok "$svc: restarted" ;;
+        status)
+            if service_active "$svc"; then
+                log_ok "$svc: aktif"
+            else
+                log_warn "$svc: tidak aktif"
+            fi
+            systemctl status "$svc" --no-pager -l | head -10
+            ;;
+        *) die "Aksi service tidak dikenal: $action" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# reset-password / reset-username
+# ---------------------------------------------------------------------------
+print_panel_users() {
+    echo ""
+    printf "%-4s %-20s %-30s %-10s %-6s\n" "ID" "Username" "Email" "Role" "Aktif"
+    mysql_root -N -e "SELECT id, username, email, role, is_active FROM ${PANEL_DB_NAME}.panel_users ORDER BY id;" \
+        | while IFS=$'\t' read -r id username email role active; do
+            printf "%-4s %-20s %-30s %-10s %-6s\n" "$id" "$username" "$email" "$role" "$([[ "$active" == "1" ]] && echo ya || echo tidak)"
+        done
+    echo ""
+}
+
+cmd_reset_password() {
+    log_step "Reset Password Panel User"
+    print_panel_users
+    local username
+    read -r -p "Masukkan username yang mau direset passwordnya: " username
+    [[ -n "$username" ]] || { log_warn "Dibatalkan"; return 1; }
+
+    local escaped
+    escaped=$(mysql_escape "$username")
+    local exists
+    exists=$(mysql_root -N -e "SELECT COUNT(*) FROM ${PANEL_DB_NAME}.panel_users WHERE username='${escaped}';")
+    [[ "$exists" == "1" ]] || { log_warn "Username tidak ditemukan: $username"; return 1; }
+
+    local newpass generated=0
+    read -r -s -p "Password baru (kosongkan untuk generate otomatis): " newpass
+    echo ""
+    if [[ -z "$newpass" ]]; then
+        newpass=$(generate_password)
+        generated=1
+    fi
+
+    local hash
+    hash=$(php -r 'echo password_hash($argv[1], PASSWORD_BCRYPT);' "$newpass")
+
+    mysql_root -e "UPDATE ${PANEL_DB_NAME}.panel_users SET password_hash='${hash}' WHERE username='${escaped}';"
+    log_ok "Password untuk '${username}' berhasil direset."
+    if [[ "$generated" -eq 1 ]]; then
+        log_warn "Catat password ini sekarang, tidak akan ditampilkan lagi: ${newpass}"
+    fi
+}
+
+cmd_reset_username() {
+    log_step "Reset Username Panel User"
+    print_panel_users
+    local username newusername
+    read -r -p "Masukkan username yang mau diganti: " username
+    [[ -n "$username" ]] || { log_warn "Dibatalkan"; return 1; }
+    local escaped
+    escaped=$(mysql_escape "$username")
+    local exists
+    exists=$(mysql_root -N -e "SELECT COUNT(*) FROM ${PANEL_DB_NAME}.panel_users WHERE username='${escaped}';")
+    [[ "$exists" == "1" ]] || { log_warn "Username tidak ditemukan: $username"; return 1; }
+
+    read -r -p "Username baru: " newusername
+    [[ -n "$newusername" ]] || { log_warn "Dibatalkan"; return 1; }
+    if ! [[ "$newusername" =~ ^[a-zA-Z0-9_.-]{3,64}$ ]]; then
+        log_warn "Username baru tidak valid (huruf/angka/._- , 3-64 karakter)"
+        return 1
+    fi
+    local newescaped
+    newescaped=$(mysql_escape "$newusername")
+    local dup
+    dup=$(mysql_root -N -e "SELECT COUNT(*) FROM ${PANEL_DB_NAME}.panel_users WHERE username='${newescaped}';")
+    [[ "$dup" == "0" ]] || { log_warn "Username '${newusername}' sudah dipakai"; return 1; }
+
+    mysql_root -e "UPDATE ${PANEL_DB_NAME}.panel_users SET username='${newescaped}' WHERE username='${escaped}';"
+    log_ok "Username '${username}' berhasil diganti menjadi '${newusername}'."
+}
+
+# ---------------------------------------------------------------------------
+# change-port panel <port>
+# ---------------------------------------------------------------------------
+cmd_change_port_panel() {
+    local port="${1:-}"
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
+        die "Port tidak valid: ${port:-<kosong>}"
+    fi
+    local vhost
+    vhost=$(panel_vhost_file)
+    [[ -n "$vhost" ]] || die "Vhost panel tidak ditemukan"
+
+    local backup="${vhost}.bak.$(date +%Y%m%d%H%M%S)"
+    cp -a "$vhost" "$backup"
+    sed -i -E "s/listen [0-9]+;/listen ${port};/; s/listen \[::\]:[0-9]+;/listen [::]:${port};/" "$vhost"
+
+    if command_exists ufw; then
+        ufw allow "${port}/tcp" >/dev/null 2>&1 || true
+    fi
+
+    if nginx -t >/dev/null 2>&1; then
+        systemctl reload nginx
+        log_ok "Port panel (HTTP) diubah ke ${port}."
+        log_warn "Ini hanya mengubah blok 'listen 80'. Kalau SSL aktif, cek juga blok 'listen 443' di ${vhost} secara manual."
+        log_warn "Kalau pakai Cloudflare Tunnel, update juga origin service di Zero Trust Dashboard ke http://127.0.0.1:${port}."
+    else
+        cp -a "$backup" "$vhost"
+        log_error "nginx -t gagal, perubahan dibatalkan (backup dipulihkan)"
+        return 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# repair panel
+# ---------------------------------------------------------------------------
+cmd_repair_reset_env() {
+    log_warn "Regenerasi .env akan membuat APP_KEY baru."
+    log_warn "Environment variable Node.js yang sudah terenkripsi dengan APP_KEY LAMA tidak akan bisa dibaca lagi - perlu di-set ulang manual lewat menu Environment tiap app."
+    confirm "Lanjutkan regenerasi .env?" "N" || { log_info "Dibatalkan"; return 1; }
+
+    local vhost domain
+    vhost=$(panel_vhost_file)
+    domain=$(grep -h 'server_name' "${vhost:-/dev/null}" 2>/dev/null | head -1 | awk '{print $2}' | tr -d ';')
+    [[ -n "$domain" ]] || die "Tidak bisa mendeteksi domain panel dari vhost Nginx"
+
+    local deploy_mode
+    deploy_mode=$(mysql_root -N -e "SELECT setting_value FROM ${PANEL_DB_NAME}.settings WHERE setting_key='deployment_mode';" 2>/dev/null)
+    deploy_mode="${deploy_mode:-direct}"
+
+    local new_app_pass new_prov_pass app_key
+    new_app_pass=$(generate_password)
+    new_prov_pass=$(generate_password)
+    app_key=$(openssl rand -hex 32)
+
+    mysql_root -e "ALTER USER 'panel_app'@'localhost' IDENTIFIED BY '${new_app_pass}'; ALTER USER 'panel_provisioner'@'localhost' IDENTIFIED BY '${new_prov_pass}'; FLUSH PRIVILEGES;" \
+        || die "Gagal reset password MariaDB - .env TIDAK ditulis ulang (supaya tidak makin tidak sinkron)"
+
+    rm -f "$PANEL_ENV"
+    cat > "$PANEL_ENV" <<EOF
+APP_NAME="Yuuka Server Panel"
+APP_ENV=production
+APP_KEY=${app_key}
+APP_URL=https://${domain}
+APP_DEPLOYMENT_MODE=${deploy_mode}
+
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=${PANEL_DB_NAME}
+DB_USERNAME=panel_app
+DB_PASSWORD=${new_app_pass}
+
+DB_PROVISIONER_USERNAME=panel_provisioner
+DB_PROVISIONER_PASSWORD=${new_prov_pass}
+
+SESSION_LIFETIME=1800
+SESSION_IDLE_TIMEOUT=900
+SESSION_SECURE_COOKIE=1
+
+PANEL_EXEC_SCRIPT=${PANEL_ROOT}/scripts/panel-exec.sh
+NODEAPPS_HOME=/home/nodeapps
+NGINX_SITES_AVAILABLE=/etc/nginx/sites-available
+NGINX_SITES_ENABLED=/etc/nginx/sites-enabled
+ACME_WEBROOT=/var/www/_letsencrypt
+
+LOG_PATH=${PANEL_ROOT}/storage/logs
+BACKUP_PATH=${PANEL_ROOT}/storage/backups
+
+FILEMANAGER_MAX_UPLOAD_MB=100
+EOF
+    chown panel:panel "$PANEL_ENV"
+    chmod 600 "$PANEL_ENV"
+    log_ok ".env diregenerasi, password panel_app/panel_provisioner disinkronkan ulang di MariaDB (tidak akan hilang sinkron seperti bug lama)."
+}
+
+cmd_repair_panel() {
+    log_step "Perbaiki Panel"
+
+    if [[ ! -f "$PANEL_ENV" ]]; then
+        log_warn ".env tidak ditemukan di ${PANEL_ENV}"
+        if [[ "${1:-}" == "--reset-env" ]]; then
+            cmd_repair_reset_env
+        else
+            log_warn "Jalankan 'yp repair panel --reset-env' untuk regenerasi (password MariaDB akan disinkronkan ulang otomatis)."
+        fi
+    elif [[ "${1:-}" == "--reset-env" ]]; then
+        cmd_repair_reset_env
+    fi
+
+    log_info "Menerapkan ulang permission /opt/server-panel..."
+    chown -R panel:panel "$PANEL_ROOT"
+    find "$PANEL_ROOT" -type d -exec chmod 750 {} \;
+    find "$PANEL_ROOT" -type f -exec chmod 640 {} \;
+    chmod 750 "${PANEL_ROOT}/scripts/panel-exec.sh" 2>/dev/null || true
+    log_ok "Permission /opt/server-panel diterapkan ulang"
+
+    if id www-data &>/dev/null; then
+        usermod -a -G panel www-data
+        log_ok "www-data dipastikan ada di grup panel"
+    fi
+
+    local phpfpm
+    phpfpm=$(panel_php_fpm_service)
+    if [[ -n "$phpfpm" ]]; then
+        local ver="${phpfpm#php}"; ver="${ver%-fpm}"
+        PHP_DEFAULT_VERSION="$ver"
+        export PHP_DEFAULT_VERSION
+        module_panel_configure_fpm_pool
+        log_ok "Pool PHP-FPM panel diregenerasi & di-restart"
+    else
+        log_warn "Tidak bisa mendeteksi versi PHP pool panel - lewati regenerasi pool"
+    fi
+
+    local vhost domain
+    vhost=$(panel_vhost_file)
+    domain=$(grep -h 'server_name' "${vhost:-/dev/null}" 2>/dev/null | head -1 | awk '{print $2}' | tr -d ';')
+    if [[ -n "$domain" ]]; then
+        PANEL_DOMAIN="$domain"
+        export PANEL_DOMAIN
+        module_panel_nginx_vhost
+        log_ok "Vhost Nginx panel diregenerasi"
+    else
+        log_warn "Tidak bisa mendeteksi domain panel - lewati regenerasi vhost"
+    fi
+
+    log_ok "Perbaikan Panel selesai."
+}
+
+# ---------------------------------------------------------------------------
+# update
+# ---------------------------------------------------------------------------
+cmd_update() {
+    log_step "Update Yuuka Panel"
+    if [[ ! -d "${INSTALLER_DIR}/.git" ]]; then
+        log_warn "${INSTALLER_DIR} bukan git clone, tidak bisa auto-update lewat yp."
+        return 1
+    fi
+    if ! ( cd "$INSTALLER_DIR" && git pull ); then
+        log_error "git pull gagal"
+        return 1
+    fi
+
+    rsync -a --exclude 'storage/' --exclude '.env' "${INSTALLER_DIR}/panel-src/" "${PANEL_ROOT}/"
+    chown -R panel:panel "$PANEL_ROOT"
+    find "$PANEL_ROOT" -type d -exec chmod 750 {} \;
+    find "$PANEL_ROOT" -type f -exec chmod 640 {} \;
+    chmod 750 "${PANEL_ROOT}/scripts/panel-exec.sh" 2>/dev/null || true
+    log_ok "panel-src berhasil di-redeploy dari commit terbaru"
+    log_info "Kalau update ini menyentuh modules/*.sh (config sistem), jalankan juga: yp repair panel, atau yp custom-build <modul> yang relevan."
+}
+
+# ---------------------------------------------------------------------------
+# version
+# ---------------------------------------------------------------------------
+cmd_version() {
+    log_step "Versi Yuuka Panel"
+    if [[ -d "${INSTALLER_DIR}/.git" ]]; then
+        local commit commit_date
+        commit=$(git -C "$INSTALLER_DIR" rev-parse --short HEAD 2>/dev/null)
+        commit_date=$(git -C "$INSTALLER_DIR" log -1 --format=%cd --date=short 2>/dev/null)
+        log_info "Installer: commit ${commit} (${commit_date})"
+    fi
+    command_exists nginx && log_info "Nginx: $(nginx -v 2>&1 | sed 's/nginx version: //')"
+    command_exists mariadb && log_info "MariaDB: $(mariadb --version 2>/dev/null)"
+    local phpfpm
+    phpfpm=$(panel_php_fpm_service)
+    [[ -n "$phpfpm" ]] && log_info "PHP pool panel: ${phpfpm}"
+    command_exists cloudflared && log_info "cloudflared: $(cloudflared --version 2>&1 | head -1)"
+}
+
+# ---------------------------------------------------------------------------
+# custom-build <module>
+# ---------------------------------------------------------------------------
+cmd_custom_build() {
+    local module="${1:-}"
+    [[ -n "$module" ]] || die "Sebutkan modul: nginx|php|nodejs|mariadb|phpmyadmin|ssl|cloudflare|panel"
+
+    log_step "Custom Build: ${module}"
+    case "$module" in
+        nginx)
+            module_nginx_run_all
+            ;;
+        php)
+            # shellcheck source=/dev/null
+            source "${INSTALLER_DIR}/modules/php.sh"
+            module_php_run_all
+            ;;
+        nodejs)
+            # shellcheck source=/dev/null
+            source "${INSTALLER_DIR}/modules/nodejs.sh"
+            module_nodejs_run_all
+            ;;
+        mariadb)
+            # shellcheck source=/dev/null
+            source "${INSTALLER_DIR}/modules/mariadb.sh"
+            module_mariadb_run_all
+            ;;
+        phpmyadmin)
+            # shellcheck source=/dev/null
+            source "${INSTALLER_DIR}/modules/php.sh"
+            # shellcheck source=/dev/null
+            source "${INSTALLER_DIR}/modules/phpmyadmin.sh"
+            module_phpmyadmin_run_all
+            log_info "Kalau vhost phpMyAdmin belum pernah dikonfigurasi, lengkapi lewat 'sudo bash install.sh' tahap 8 (subdomain/path)."
+            ;;
+        ssl)
+            # shellcheck source=/dev/null
+            source "${INSTALLER_DIR}/modules/ssl.sh"
+            module_ssl_run_all
+            log_info "Ini hanya memastikan certbot terinstall + auto-renew aktif, tidak menerbitkan sertifikat baru. Gunakan menu Domain di panel untuk itu."
+            ;;
+        cloudflare)
+            # shellcheck source=/dev/null
+            source "${INSTALLER_DIR}/modules/cloudflare.sh"
+            module_cloudflare_run_all
+            ;;
+        panel)
+            module_panel_deploy_files
+            log_info "Untuk regenerasi pool PHP-FPM/vhost Nginx panel, gunakan: yp repair panel"
+            ;;
+        *)
+            die "Modul tidak dikenal: ${module}"
+            ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
+ACTION="${1:-}"
+TARGET="${2:-}"
+
+case "$ACTION" in
+    start|stop|restart)
+        case "$TARGET" in
+            panel) cmd_panel_toggle "$ACTION" ;;
+            service) cmd_service "$ACTION" "${3:-}" ;;
+            *) usage; exit 2 ;;
+        esac
+        ;;
+    status)
+        case "$TARGET" in
+            panel) cmd_panel_status ;;
+            service) cmd_service "$ACTION" "${3:-}" ;;
+            *) usage; exit 2 ;;
+        esac
+        ;;
+    reset-password) cmd_reset_password ;;
+    reset-username) cmd_reset_username ;;
+    change-port)
+        [[ "$TARGET" == "panel" ]] || { usage; exit 2; }
+        cmd_change_port_panel "${3:-}"
+        ;;
+    repair)
+        [[ "$TARGET" == "panel" ]] || { usage; exit 2; }
+        cmd_repair_panel "${3:-}"
+        ;;
+    update) cmd_update ;;
+    version) cmd_version ;;
+    custom-build) cmd_custom_build "$TARGET" ;;
+    help|--help|-h|"") usage ;;
+    *)
+        echo "Aksi tidak dikenal: ${ACTION}" >&2
+        usage
+        exit 2
+        ;;
+esac

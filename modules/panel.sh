@@ -6,6 +6,51 @@
 
 PANEL_ROOT="/opt/server-panel"
 PANEL_POOL_SOCK="/run/php/panel.sock"
+YP_INSTALLER_DIR="/opt/yuuka-installer"
+
+# Keeps a permanent copy of this installer (ideally a live git clone) at
+# YP_INSTALLER_DIR, independent of wherever the operator originally ran
+# `install.sh` from - the `yp` CLI (installed below) sources modules/*.sh
+# from this fixed location, so it keeps working even if the original
+# clone directory is later moved or deleted. Runs on every install.sh
+# execution (not state_mark-guarded) so both the copy and /usr/local/bin/yp
+# stay in sync with whatever version of the code is currently running.
+module_panel_setup_installer_copy() {
+    log_step "Menyiapkan salinan installer permanen untuk CLI 'yp'"
+
+    if [[ -d "${YP_INSTALLER_DIR}/.git" ]]; then
+        if git -C "$YP_INSTALLER_DIR" pull >>"$INSTALL_LOG_FILE" 2>&1; then
+            log_ok "${YP_INSTALLER_DIR} sudah ada (git clone), disinkronkan ke commit terbaru"
+        else
+            log_warn "git pull di ${YP_INSTALLER_DIR} gagal, melanjutkan dengan isi yang ada"
+        fi
+    elif [[ "$(realpath -m "$SCRIPT_DIR")" == "$(realpath -m "$YP_INSTALLER_DIR")" ]]; then
+        log_ok "Installer sudah berjalan langsung dari ${YP_INSTALLER_DIR}"
+    else
+        local remote_url=""
+        if command_exists git && git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            remote_url=$(git -C "$SCRIPT_DIR" remote get-url origin 2>/dev/null || true)
+        fi
+        rm -rf "$YP_INSTALLER_DIR"
+        mkdir -p "$(dirname "$YP_INSTALLER_DIR")"
+        if [[ -n "$remote_url" ]] && git clone "$remote_url" "$YP_INSTALLER_DIR" >>"$INSTALL_LOG_FILE" 2>&1; then
+            log_ok "Installer di-clone ke ${YP_INSTALLER_DIR} (independen dari ${SCRIPT_DIR})"
+        else
+            cp -a "$SCRIPT_DIR" "$YP_INSTALLER_DIR"
+            log_ok "Installer disalin ke ${YP_INSTALLER_DIR} (tanpa histori git - 'yp update' perlu sync manual kalau bukan clone git)"
+        fi
+    fi
+
+    # Install from YP_INSTALLER_DIR (not SCRIPT_DIR) - that's what `yp` will
+    # actually source modules/*.sh from at runtime, so the installed binary
+    # should always match that copy, not whatever SCRIPT_DIR happens to be.
+    if [[ -f "${YP_INSTALLER_DIR}/yp" ]]; then
+        install -m 755 "${YP_INSTALLER_DIR}/yp" /usr/local/bin/yp
+        log_ok "CLI 'yp' terpasang di /usr/local/bin/yp"
+    else
+        log_warn "File 'yp' tidak ditemukan di ${YP_INSTALLER_DIR}, CLI tidak terpasang"
+    fi
+}
 
 module_panel_deploy_files() {
     log_step "Deploy source panel ke ${PANEL_ROOT}"
@@ -312,6 +357,7 @@ EOF
 }
 
 module_panel_run_all() {
+    module_panel_setup_installer_copy
     module_panel_deploy_files
     module_panel_configure_fpm_pool
     module_panel_write_env
