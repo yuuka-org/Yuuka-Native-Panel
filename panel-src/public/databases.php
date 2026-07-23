@@ -38,6 +38,10 @@ $liveMap = [];
 foreach ($live as $row) {
     $liveMap[$row['name']] = $row['size_mb'];
 }
+$credentialsMap = [];
+foreach ($registry as $db) {
+    $credentialsMap[$db['db_name']] = DbCredentialsStore::get($db['db_name']);
+}
 
 $pageTitle = 'Database Management';
 include __DIR__ . '/partials/header.php';
@@ -56,15 +60,30 @@ include __DIR__ . '/partials/header.php';
 <div class="card stat-card">
   <div class="card-body p-0">
     <table class="table table-hover mb-0 align-middle">
-      <thead class="table-light"><tr><th>Database</th><th>User</th><th>Ukuran</th><th>Catatan</th><th>Dibuat</th><th class="text-end">Aksi</th></tr></thead>
+      <thead class="table-light"><tr><th>Database</th><th>User</th><th>Password</th><th>Ukuran</th><th>Catatan</th><th>Dibuat</th><th class="text-end">Aksi</th></tr></thead>
       <tbody>
       <?php if (empty($registry)): ?>
-        <tr><td colspan="6" class="text-center text-muted py-4">Belum ada database terdaftar</td></tr>
+        <tr><td colspan="7" class="text-center text-muted py-4">Belum ada database terdaftar</td></tr>
       <?php endif; ?>
-      <?php foreach ($registry as $db): ?>
+      <?php foreach ($registry as $db): $cred = $credentialsMap[$db['db_name']] ?? null; ?>
         <tr>
-          <td><code><?= e($db['db_name']) ?></code></td>
-          <td><?= e($db['db_user']) ?></td>
+          <td>
+            <code><?= e($db['db_name']) ?></code>
+            <button type="button" class="btn btn-sm btn-link p-0 ms-1" data-copy="<?= e($db['db_name']) ?>" title="Copy nama database"><i class="bi bi-clipboard"></i></button>
+          </td>
+          <td>
+            <?= e($db['db_user']) ?>
+            <button type="button" class="btn btn-sm btn-link p-0 ms-1" data-copy="<?= e($db['db_user']) ?>" title="Copy username"><i class="bi bi-clipboard"></i></button>
+          </td>
+          <td>
+            <?php if ($cred !== null): ?>
+              <span id="pw-<?= (int) $db['id'] ?>" class="font-monospace small" data-hidden="1" data-value="<?= e($cred['password']) ?>">••••••••</span>
+              <button type="button" class="btn btn-sm btn-link p-0 ms-1" data-toggle-secret="pw-<?= (int) $db['id'] ?>" title="Tampilkan/sembunyikan"><i class="bi bi-eye"></i></button>
+              <button type="button" class="btn btn-sm btn-link p-0 ms-1" data-copy="<?= e($cred['password']) ?>" title="Copy password"><i class="bi bi-clipboard"></i></button>
+            <?php else: ?>
+              <span class="text-muted small" title="Dibuat sebelum fitur ini ada - hapus &amp; buat ulang untuk menyimpan password">tidak tersedia</span>
+            <?php endif; ?>
+          </td>
           <td><?= isset($liveMap[$db['db_name']]) ? e((string) $liveMap[$db['db_name']]) . ' MB' : '-' ?></td>
           <td class="text-muted small"><?= e($db['note'] ?? '') ?></td>
           <td class="text-muted small"><?= e($db['created_at']) ?></td>

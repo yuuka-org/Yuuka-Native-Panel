@@ -4,7 +4,7 @@
 # ==============================================================================
 
 PHP_VERSIONS=("7.4" "8.0" "8.1" "8.2" "8.3" "8.4")
-PHP_EXTENSIONS=(bcmath curl fpm gd intl mbstring mysql opcache readline soap xml zip)
+PHP_EXTENSIONS=(bcmath curl fpm gd intl mbstring mysql opcache readline soap sqlite3 xml zip)
 PHP_OPTIONAL_EXTENSIONS=(redis imagick)
 PHP_INSTALLED_VERSIONS=()
 

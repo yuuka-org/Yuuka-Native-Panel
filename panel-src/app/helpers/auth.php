@@ -145,10 +145,27 @@ final class Auth
         $_SESSION['login_started_at'] = $_SESSION['login_started_at'] ?? $now;
         $_SESSION['last_activity'] = $now;
 
-        $lastRegen = $_SESSION['last_regen'] ?? 0;
-        if (($now - $lastRegen) > self::REGEN_INTERVAL_SECONDS) {
-            session_regenerate_id(true);
-            $_SESSION['last_regen'] = $now;
+        // Skip periodic session-id regeneration for background AJAX polling
+        // (dashboard.php's auto-refresh widgets call ajax_stats.php/ajax_pm2.php
+        // every few seconds via fetch() with X-Requested-With, see
+        // assets/js/app.js). Regenerating mid-session while multiple polls
+        // are concurrently in flight is a classic race: the browser can
+        // still be using the OLD session cookie on an already-dispatched
+        // request right after a DIFFERENT request just deleted that old
+        // session (session_regenerate_id(true) removes the old file
+        // immediately) - PHP silently starts a fresh, logged-out session
+        // for that stale cookie, which looks exactly like a random
+        // premature logout well before the real idle/lifetime timeout.
+        // The session-fixation defense this provides is secondary to the
+        // regeneration already done right after login in Auth::attempt(),
+        // so it's safe to only do it on real page navigations.
+        $isAjax = ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') === 'XMLHttpRequest';
+        if (!$isAjax) {
+            $lastRegen = $_SESSION['last_regen'] ?? 0;
+            if (($now - $lastRegen) > self::REGEN_INTERVAL_SECONDS) {
+                session_regenerate_id(true);
+                $_SESSION['last_regen'] = $now;
+            }
         }
     }
 }

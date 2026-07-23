@@ -36,6 +36,8 @@ final class DatabaseService
         );
         $stmt->execute(['n' => $dbName, 'u' => $dbUser, 'note' => $note, 'uid' => $userId]);
 
+        DbCredentialsStore::save($dbName, $dbUser, $password);
+
         ActivityLog::record($userId, 'database.create', "Database dibuat: {$dbName} (user: {$dbUser})");
     }
 
@@ -52,6 +54,8 @@ final class DatabaseService
         db_user_drop($row['db_user']);
 
         Database::app()->prepare('DELETE FROM databases_registry WHERE id = :id')->execute(['id' => $registryId]);
+
+        DbCredentialsStore::delete($row['db_name']);
 
         ActivityLog::record($userId, 'database.delete', "Database dihapus: {$row['db_name']}");
     }

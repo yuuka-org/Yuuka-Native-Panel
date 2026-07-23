@@ -25,6 +25,19 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   });
 
+  // Generic "copy to clipboard" button
+  document.querySelectorAll('[data-copy]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var value = btn.getAttribute('data-copy');
+      if (!value) return;
+      navigator.clipboard.writeText(value).then(function () {
+        var original = btn.innerHTML;
+        btn.innerHTML = '<i class="bi bi-check-lg"></i>';
+        setTimeout(function () { btn.innerHTML = original; }, 1200);
+      }).catch(function () {});
+    });
+  });
+
   // Confirm dialogs for destructive actions
   document.querySelectorAll('[data-confirm]').forEach(function (form) {
     form.addEventListener('submit', function (e) {
