@@ -137,23 +137,29 @@ final class AppInstallerService
 
             FileManagerService::extractZip('website', $domain, 'public', $zipBytes, $userId);
 
+            // Persisted into installed_apps below so WP Manager can query
+            // {prefix}options later without having to re-parse
+            // wp-config.php for every site.
+            $tablePrefix = null;
             if ($appSlug === 'wordpress') {
+                $tablePrefix = WordpressInstallerService::generateTablePrefix();
                 $salts = WordpressInstallerService::fetchSalts();
                 $wpConfig = WordpressInstallerService::buildConfig(
                     (string) $finalDbName,
                     (string) $finalDbUser,
                     (string) $finalDbPassword,
+                    $tablePrefix,
                     $salts
                 );
                 FileManagerService::writeFile('website', $domain, 'public/wp-config.php', $wpConfig, $userId);
             }
 
             $stmt = Database::app()->prepare(
-                'INSERT INTO installed_apps (website_id, app_slug, app_version, db_name, created_by)
-                 VALUES (:wid, :slug, :ver, :db, :uid)'
+                'INSERT INTO installed_apps (website_id, app_slug, app_version, table_prefix, db_name, created_by)
+                 VALUES (:wid, :slug, :ver, :prefix, :db, :uid)'
             );
             $stmt->execute([
-                'wid' => $websiteId, 'slug' => $appSlug, 'ver' => $version,
+                'wid' => $websiteId, 'slug' => $appSlug, 'ver' => $version, 'prefix' => $tablePrefix,
                 'db' => $finalDbName, 'uid' => $userId,
             ]);
 
@@ -303,8 +309,11 @@ final class AppInstallerService
      * phpBB), returns the input unchanged. Never called for the
      * generic/custom tier - an admin's own uploaded zip is extracted
      * exactly as they packaged it.
+     *
+     * Public because WpManagerService reuses this for WordPress core
+     * updates (same official zip shape as a fresh install).
      */
-    private static function stripSingleRootDir(string $zipBytes): string
+    public static function stripSingleRootDir(string $zipBytes): string
     {
         $srcTmp = tempnam(sys_get_temp_dir(), 'yuuka_zipin_');
         $dstTmp = tempnam(sys_get_temp_dir(), 'yuuka_zipout_');

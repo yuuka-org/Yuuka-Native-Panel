@@ -167,6 +167,19 @@ final class Validator
         return in_array($value, $whitelist, true);
     }
 
+    /**
+     * A WordPress.org plugin/theme directory slug - lowercase letters,
+     * digits and single hyphens between words (matches WordPress.org's own
+     * slug policy). Used before that slug is ever interpolated into
+     * https://api.wordpress.org/{plugins|themes}/info/1.0/{slug}.json, so
+     * this is the SSRF closure for that path, same role dbName() etc. play
+     * elsewhere in this file.
+     */
+    public static function wpSlug(string $value): bool
+    {
+        return strlen($value) <= 200 && (bool) preg_match('/^[a-z0-9]+(-[a-z0-9]+)*$/', $value);
+    }
+
     public static function healthCheckUrl(string $value): bool
     {
         $parts = parse_url($value);

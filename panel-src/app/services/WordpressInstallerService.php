@@ -8,8 +8,14 @@ declare(strict_types=1);
  */
 final class WordpressInstallerService
 {
-    /** @return array{bytes:string,version:string} */
-    public static function downloadLatest(): array
+    /**
+     * Version-check only, no download - lets a caller (WP Manager's "Cek
+     * update" button) find out whether a newer core version exists without
+     * paying for a multi-MB download just to compare version strings.
+     *
+     * @return array{version:string,download_url:string}
+     */
+    public static function resolveLatest(): array
     {
         $app = AppCatalog::get('wordpress');
         $body = AppInstallerService::fetchTextUrl($app['version_check_url'], 65536);
@@ -29,8 +35,15 @@ final class WordpressInstallerService
             throw new RuntimeException('URL unduhan WordPress tidak valid');
         }
 
-        $bytes = AppInstallerService::downloadFixedUrl($downloadUrl);
-        return ['bytes' => $bytes, 'version' => (string) $data['offers'][0]['version']];
+        return ['version' => (string) $data['offers'][0]['version'], 'download_url' => $downloadUrl];
+    }
+
+    /** @return array{bytes:string,version:string} */
+    public static function downloadLatest(): array
+    {
+        $latest = self::resolveLatest();
+        $bytes = AppInstallerService::downloadFixedUrl($latest['download_url']);
+        return ['bytes' => $bytes, 'version' => $latest['version']];
     }
 
     /**
@@ -69,13 +82,22 @@ final class WordpressInstallerService
         return $salts;
     }
 
-    public static function buildConfig(string $dbName, string $dbUser, string $dbPassword, string $saltsBlock): string
+    /**
+     * Generates a random table prefix for a new install - a plain string,
+     * not a secret (purely to avoid every WordPress site on the server
+     * sharing identical table names by coincidence). Split out from
+     * buildConfig() so the caller (AppInstallerService) can persist the
+     * same value into installed_apps.table_prefix - WP Manager needs to
+     * query {prefix}options later and previously had no way to recover
+     * this value except by re-parsing wp-config.php.
+     */
+    public static function generateTablePrefix(): string
     {
-        // Randomized per install, purely to avoid every WordPress site on
-        // the server sharing identical table names by coincidence - not a
-        // security boundary.
-        $prefix = 'wp_' . substr(bin2hex(random_bytes(3)), 0, 6) . '_';
+        return 'wp_' . substr(bin2hex(random_bytes(3)), 0, 6) . '_';
+    }
 
+    public static function buildConfig(string $dbName, string $dbUser, string $dbPassword, string $prefix, string $saltsBlock): string
+    {
         // var_export() on every dynamic value is what makes this safe
         // against breaking out of the PHP string literal regardless of
         // what characters end up in the (server-generated) password.

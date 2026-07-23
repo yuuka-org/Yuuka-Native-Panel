@@ -6,6 +6,7 @@ $links = [
     ['href' => '/dashboard.php', 'icon' => 'bi-speedometer2', 'label' => 'Dashboard', 'perm' => 'monitoring.view'],
     ['href' => '/websites.php', 'icon' => 'bi-globe2', 'label' => 'Website PHP', 'perm' => 'website.view'],
     ['href' => '/app_installer.php', 'icon' => 'bi-grid-3x3-gap', 'label' => 'App Installer', 'perm' => 'apps.view'],
+    ['href' => '/wp_manager.php', 'icon' => 'bi-wordpress', 'label' => 'WP Manager', 'perm' => 'wp.view'],
     ['href' => '/nodejs.php', 'icon' => 'bi-diagram-3', 'label' => 'Node.js Apps', 'perm' => 'nodejs.view'],
     ['href' => '/file_manager.php', 'icon' => 'bi-folder2-open', 'label' => 'File Manager', 'perm' => 'files.view'],
     ['href' => '/databases.php', 'icon' => 'bi-database', 'label' => 'Database', 'perm' => 'database.view'],
