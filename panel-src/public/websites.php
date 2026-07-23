@@ -41,6 +41,13 @@ $pageTitle = 'Website PHP';
 include __DIR__ . '/partials/header.php';
 ?>
 
+<?php if (Rbac::can($user['role'], 'nodejs.view')): ?>
+<div class="btn-group mb-3">
+  <a href="/websites.php" class="btn btn-sm btn-primary"><i class="bi bi-globe2 me-1"></i>PHP</a>
+  <a href="/nodejs.php" class="btn btn-sm btn-outline-secondary"><i class="bi bi-diagram-3 me-1"></i>Node.js</a>
+</div>
+<?php endif; ?>
+
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
     <h4 class="fw-bold mb-0">Website PHP</h4>

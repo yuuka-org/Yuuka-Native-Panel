@@ -4,10 +4,16 @@ $current = basename(currentPath());
 
 $links = [
     ['href' => '/dashboard.php', 'icon' => 'bi-speedometer2', 'label' => 'Dashboard', 'perm' => 'monitoring.view'],
-    ['href' => '/websites.php', 'icon' => 'bi-globe2', 'label' => 'Website PHP', 'perm' => 'website.view'],
+    // Single entry for both Website PHP and Node.js Apps - they share one
+    // sidebar slot with a PHP|Node.js toggle at the top of each page (see
+    // websites.php/nodejs.php). 'match' marks every basename that should
+    // keep this entry highlighted, since it no longer maps 1:1 to its own
+    // href like every other entry here.
+    ['href' => '/websites.php', 'icon' => 'bi-globe2', 'label' => 'Website', 'perm' => 'website.view',
+        'match' => ['websites.php', 'nodejs.php', 'nodejs_env.php', 'nodejs_logs.php', 'nodejs_health.php']],
     ['href' => '/app_installer.php', 'icon' => 'bi-grid-3x3-gap', 'label' => 'App Installer', 'perm' => 'apps.view'],
-    ['href' => '/wp_manager.php', 'icon' => 'bi-wordpress', 'label' => 'WP Manager', 'perm' => 'wp.view'],
-    ['href' => '/nodejs.php', 'icon' => 'bi-diagram-3', 'label' => 'Node.js Apps', 'perm' => 'nodejs.view'],
+    ['href' => '/wp_manager.php', 'icon' => 'bi-wordpress', 'label' => 'WP Manager', 'perm' => 'wp.view',
+        'match' => ['wp_manager.php', 'wp_manager_core.php', 'wp_manager_plugins.php', 'wp_manager_themes.php']],
     ['href' => '/file_manager.php', 'icon' => 'bi-folder2-open', 'label' => 'File Manager', 'perm' => 'files.view'],
     ['href' => '/databases.php', 'icon' => 'bi-database', 'label' => 'Database', 'perm' => 'database.view'],
     ['href' => '/domains.php', 'icon' => 'bi-hdd-network', 'label' => 'Domain', 'perm' => 'domain.manage'],
@@ -22,8 +28,9 @@ $links = [
 <ul class="sidebar-nav">
 <?php foreach ($links as $link): ?>
   <?php if (!Rbac::can($role, $link['perm'])) continue; ?>
+  <?php $matches = $link['match'] ?? [basename($link['href'])]; ?>
   <li>
-    <a href="<?= e($link['href']) ?>" class="<?= $current === basename($link['href']) ? 'active' : '' ?>">
+    <a href="<?= e($link['href']) ?>" class="<?= in_array($current, $matches, true) ? 'active' : '' ?>">
       <i class="bi <?= e($link['icon']) ?>"></i>
       <span><?= e($link['label']) ?></span>
     </a>
