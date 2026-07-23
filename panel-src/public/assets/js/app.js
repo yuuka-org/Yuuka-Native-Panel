@@ -1,4 +1,23 @@
 document.addEventListener('DOMContentLoaded', function () {
+  // Dark mode toggle - the theme itself is already applied synchronously
+  // by the inline script in partials/header.php's <head> (before first
+  // paint, so there's never a flash of the wrong theme); this just wires
+  // the button, updates its icon, and persists the choice for next time.
+  var themeToggleBtn = document.getElementById('themeToggle');
+  if (themeToggleBtn) {
+    var updateThemeIcon = function () {
+      var isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+      themeToggleBtn.innerHTML = isDark ? '<i class="bi bi-sun"></i>' : '<i class="bi bi-moon-stars"></i>';
+    };
+    updateThemeIcon();
+    themeToggleBtn.addEventListener('click', function () {
+      var next = document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-bs-theme', next);
+      localStorage.setItem('yuuka-theme', next);
+      updateThemeIcon();
+    });
+  }
+
   var toggle = document.getElementById('sidebarToggle');
   var sidebar = document.getElementById('appSidebar');
   if (toggle && sidebar) {

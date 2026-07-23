@@ -4,12 +4,23 @@ $pageTitle = $pageTitle ?? 'Dashboard';
 $currentUser = Auth::user();
 ?>
 <!DOCTYPE html>
-<html lang="id" data-bs-theme="light">
+<html lang="id">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="referrer" content="same-origin">
 <title><?= e($pageTitle) ?> - Yuuka Server Panel</title>
+<script>
+// Applied synchronously, before any CSS loads, so the page never flashes
+// the wrong theme on load - reads the admin's saved choice (set by the
+// toggle button in the topbar, see app.js), falling back to the OS/browser
+// preference on a first visit that hasn't chosen yet.
+(function () {
+  var saved = localStorage.getItem('yuuka-theme');
+  var theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-bs-theme', theme);
+})();
+</script>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
 <link href="/assets/css/app.css" rel="stylesheet">
@@ -33,6 +44,9 @@ $currentUser = Auth::user();
         <i class="bi bi-list"></i>
       </button>
       <div class="ms-auto d-flex align-items-center gap-3">
+        <button class="btn btn-sm btn-outline-secondary" id="themeToggle" type="button" title="Ganti mode gelap/terang">
+          <i class="bi bi-moon-stars"></i>
+        </button>
         <span class="badge text-bg-light border"><i class="bi bi-person-badge me-1"></i><?= e($currentUser['role'] ?? '') ?></span>
         <div class="dropdown">
           <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">

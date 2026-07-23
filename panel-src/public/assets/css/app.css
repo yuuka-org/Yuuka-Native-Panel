@@ -8,6 +8,28 @@ body {
   background-color: #f4f6fb;
 }
 
+/* Bootstrap 5.3's [data-bs-theme=dark] already re-themes every stock
+   component (.card, .table, .btn, .modal, .dropdown, forms, etc) via its
+   own CSS variables - only the custom classes below (app shell chrome)
+   need an explicit dark override. The sidebar itself is deliberately left
+   unchanged: it's a fixed brand-colored dark gradient in both themes. */
+[data-bs-theme="dark"] body {
+  background-color: #0f1115;
+}
+
+[data-bs-theme="dark"] .app-topbar {
+  background: #1a1d23;
+  border-bottom-color: #2a2d35;
+}
+
+[data-bs-theme="dark"] .app-footer {
+  color: #6b7280;
+}
+
+[data-bs-theme="dark"] .stat-card {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+}
+
 .app-shell {
   display: flex;
   min-height: 100vh;
