@@ -100,6 +100,35 @@ module_php_configure_pool() {
     fi
 }
 
+module_php_ensure_extensions() {
+    # Handles the case where PHP_EXTENSIONS grows a new entry (e.g. sqlite3
+    # for DbCredentialsStore) after a version was already installed on a
+    # server - module_php_run_all's "already installed, lewati" branch used
+    # to skip package installation entirely for such versions, so the new
+    # extension would silently never arrive no matter how many times
+    # 'update.sh'/'yp custom-build php' ran. apt_install() only touches
+    # packages that aren't already present, so this is a cheap no-op when
+    # nothing is missing.
+    local version="$1"
+    local missing=()
+    local ext pkg
+    for ext in "${PHP_EXTENSIONS[@]}"; do
+        pkg="php${version}-${ext}"
+        apt-cache show "$pkg" >/dev/null 2>&1 || continue
+        pkg_installed "$pkg" || missing+=("$pkg")
+    done
+
+    [[ ${#missing[@]} -eq 0 ]] && return 0
+
+    log_info "PHP ${version}: extension baru terdeteksi, memasang: ${missing[*]}"
+    if apt_install "${missing[@]}"; then
+        systemctl restart "php${version}-fpm" 2>/dev/null || true
+        log_ok "Extension PHP ${version} dilengkapi: ${missing[*]}"
+    else
+        log_warn "Gagal memasang sebagian extension PHP ${version}: ${missing[*]}"
+    fi
+}
+
 module_php_select_default() {
     log_step "Memilih versi PHP default"
 
@@ -132,6 +161,7 @@ module_php_run_all() {
         if state_has "php:installed:${v}" && pkg_installed "php${v}-fpm"; then
             log_ok "PHP ${v} sudah terinstall sebelumnya, lewati"
             PHP_INSTALLED_VERSIONS+=("$v")
+            module_php_ensure_extensions "$v"
             continue
         fi
         module_php_install_version "$v" || true
