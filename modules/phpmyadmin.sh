@@ -147,6 +147,34 @@ location ^~ /phpmyadmin/ {
         return 1
     fi
 
+    # Persist the resulting URL into the panel's own settings table -
+    # previously this was never saved anywhere the panel app could read,
+    # so the "URL phpMyAdmin" field on the Pengaturan page stayed blank
+    # forever unless an admin noticed and typed it in by hand. Defaults to
+    # http:// since SSL for this domain/path isn't necessarily issued yet
+    # at this point in the install - editable afterwards on Pengaturan.
+    local pma_url
+    if [[ "$access_mode" == "subdomain" ]]; then
+        pma_url="http://${domain}"
+    else
+        pma_url="http://${domain}/phpmyadmin"
+    fi
+    if [[ -n "${PANEL_APP_DB_NAME:-}" ]] && mysql -u root -e "SELECT 1" >/dev/null 2>&1; then
+        local escaped_url
+        escaped_url=$(mysql_escape "$pma_url")
+        if mysql -u root "$PANEL_APP_DB_NAME" -e \
+            "INSERT INTO settings (setting_key, setting_value) VALUES ('phpmyadmin_url', '${escaped_url}')
+             ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value);" >>"$INSTALL_LOG_FILE" 2>&1; then
+            log_ok "URL phpMyAdmin disimpan ke Pengaturan panel: ${pma_url}"
+        else
+            log_warn "Gagal menyimpan URL phpMyAdmin ke database - isi manual di menu Pengaturan panel"
+        fi
+    fi
+
+    if [[ "$access_mode" == "path" ]]; then
+        log_warn "Mode 'path' butuh langkah manual: tambahkan 'include snippets/includes/phpmyadmin.conf;' ke server block yang diinginkan (mis. vhost panel), lalu 'sudo nginx -t && sudo systemctl reload nginx' - tanpa ini phpMyAdmin belum benar-benar bisa diakses."
+    fi
+
     state_mark "phpmyadmin:nginx_generated"
 }
 
