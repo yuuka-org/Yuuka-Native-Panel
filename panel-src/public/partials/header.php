@@ -18,6 +18,12 @@ $currentUser = Auth::user();
 (function () {
   var theme = localStorage.getItem('yuuka-theme') || 'light';
   document.documentElement.setAttribute('data-bs-theme', theme);
+  // Applied on <html> (exists before <body> is parsed) so the sidebar
+  // never flashes wide-then-narrow on load - see app.css's
+  // `html.sidebar-collapsed` rules and the toggle button in the topbar.
+  if (localStorage.getItem('yuuka-sidebar-collapsed') === '1') {
+    document.documentElement.classList.add('sidebar-collapsed');
+  }
 })();
 </script>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -41,6 +47,10 @@ $currentUser = Auth::user();
     <header class="app-topbar">
       <button class="btn btn-sm btn-outline-secondary d-lg-none" id="sidebarToggle" type="button">
         <i class="bi bi-list"></i>
+      </button>
+      <button class="btn btn-sm btn-outline-secondary d-none d-lg-inline-flex" id="sidebarCollapseToggle" type="button" title="Ciutkan/lebarkan sidebar">
+        <i class="bi bi-chevron-bar-left" id="sidebarCollapseIconExpanded"></i>
+        <i class="bi bi-chevron-bar-right d-none" id="sidebarCollapseIconCollapsed"></i>
       </button>
       <div class="ms-auto d-flex align-items-center gap-3">
         <button class="btn btn-sm btn-outline-secondary" id="themeToggle" type="button" title="Ganti mode gelap/terang">

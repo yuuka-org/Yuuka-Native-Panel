@@ -1,5 +1,6 @@
 :root {
   --sidebar-width: 250px;
+  --sidebar-collapsed-width: 76px;
   --brand: #4f46e5;
   --brand-dark: #3730a3;
 }
@@ -55,8 +56,9 @@ body {
   left: 0;
   bottom: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   z-index: 1030;
-  transition: transform 0.2s ease;
+  transition: transform 0.2s ease, width 0.2s ease;
 }
 
 .sidebar-brand {
@@ -68,6 +70,7 @@ body {
   font-size: 1.1rem;
   color: #fff;
   border-bottom: 1px solid rgba(255,255,255,0.1);
+  white-space: nowrap;
 }
 
 .sidebar-nav {
@@ -86,6 +89,7 @@ body {
   text-decoration: none;
   font-size: 0.92rem;
   margin-bottom: 0.15rem;
+  white-space: nowrap;
   transition: background 0.15s ease, color 0.15s ease;
 }
 
@@ -105,6 +109,40 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  transition: margin-left 0.2s ease;
+}
+
+/* Desktop-only sidebar minisize (icon-only). Guarded to lg+ so a
+   collapsed preference saved from a desktop session never shrinks the
+   off-canvas mobile sidebar (which is either fully hidden or fully shown
+   via .show, never meant to be narrow - see the max-width query below). */
+@media (min-width: 992px) {
+  html.sidebar-collapsed .app-sidebar {
+    width: var(--sidebar-collapsed-width);
+  }
+  html.sidebar-collapsed .app-main {
+    margin-left: var(--sidebar-collapsed-width);
+  }
+  html.sidebar-collapsed .sidebar-brand {
+    justify-content: center;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+  html.sidebar-collapsed .sidebar-brand span,
+  html.sidebar-collapsed .sidebar-nav li a span {
+    display: none;
+  }
+  html.sidebar-collapsed .sidebar-nav li a {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  html.sidebar-collapsed #sidebarCollapseIconExpanded {
+    display: none;
+  }
+  html.sidebar-collapsed #sidebarCollapseIconCollapsed {
+    display: inline-block !important;
+  }
 }
 
 .app-topbar {

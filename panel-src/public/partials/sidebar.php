@@ -30,7 +30,7 @@ $links = [
   <?php if (!Rbac::can($role, $link['perm'])) continue; ?>
   <?php $matches = $link['match'] ?? [basename($link['href'])]; ?>
   <li>
-    <a href="<?= e($link['href']) ?>" class="<?= in_array($current, $matches, true) ? 'active' : '' ?>">
+    <a href="<?= e($link['href']) ?>" class="<?= in_array($current, $matches, true) ? 'active' : '' ?>" title="<?= e($link['label']) ?>">
       <i class="bi <?= e($link['icon']) ?>"></i>
       <span><?= e($link['label']) ?></span>
     </a>

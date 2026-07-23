@@ -26,6 +26,18 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
+  // Desktop-only sidebar minisize toggle (icon-only). The collapsed state
+  // itself is already applied to <html> synchronously by the inline
+  // script in partials/header.php's <head> (avoids a flash of the wide
+  // sidebar on load); this just wires the button and persists the choice.
+  var collapseToggle = document.getElementById('sidebarCollapseToggle');
+  if (collapseToggle) {
+    collapseToggle.addEventListener('click', function () {
+      var collapsed = document.documentElement.classList.toggle('sidebar-collapsed');
+      localStorage.setItem('yuuka-sidebar-collapsed', collapsed ? '1' : '0');
+    });
+  }
+
   // Generic show/hide toggle for masked secret values (env vars, etc.)
   document.querySelectorAll('[data-toggle-secret]').forEach(function (btn) {
     btn.addEventListener('click', function () {
