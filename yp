@@ -486,7 +486,34 @@ cmd_custom_build() {
             # shellcheck source=/dev/null
             source "${INSTALLER_DIR}/modules/phpmyadmin.sh"
             module_phpmyadmin_run_all
-            log_info "Kalau vhost phpMyAdmin belum pernah dikonfigurasi, lengkapi lewat 'sudo bash install.sh' tahap 8 (subdomain/path)."
+
+            local vhost domain phpfpm ver
+            vhost=$(panel_vhost_file)
+            domain=$(grep -h 'server_name' "${vhost:-/dev/null}" 2>/dev/null | head -1 | awk '{print $2}' | tr -d ';')
+            if [[ -z "$domain" ]]; then
+                log_warn "Tidak bisa mendeteksi domain panel - lewati konfigurasi Nginx/pool phpMyAdmin (jalankan 'sudo bash install.sh' tahap 8 manual kalau perlu)"
+            else
+                PANEL_DOMAIN="$domain"
+                export PANEL_DOMAIN
+                phpfpm=$(panel_php_fpm_service)
+                ver="${phpfpm#php}"; ver="${ver%-fpm}"
+                [[ -z "$ver" ]] && ver="8.3"
+
+                echo ""
+                echo "Bagaimana phpMyAdmin ingin diakses?"
+                echo "  [1] Subdomain terpisah (pma.domainanda.com)"
+                echo "  [2] Path di bawah domain panel (https://${PANEL_DOMAIN}/phpmyadmin)"
+                local pma_choice pma_domain
+                read -r -p "Pilihan (1/2) [1]: " pma_choice
+                pma_choice="${pma_choice:-1}"
+                if [[ "$pma_choice" == "1" ]]; then
+                    read -r -p "Subdomain phpMyAdmin [pma.${PANEL_DOMAIN#panel.}]: " pma_domain
+                    pma_domain="${pma_domain:-pma.${PANEL_DOMAIN#panel.}}"
+                    module_phpmyadmin_generate_nginx "$ver" "subdomain" "$pma_domain"
+                else
+                    module_phpmyadmin_generate_nginx "$ver" "path" "$PANEL_DOMAIN"
+                fi
+            fi
             ;;
         ssl)
             # shellcheck source=/dev/null

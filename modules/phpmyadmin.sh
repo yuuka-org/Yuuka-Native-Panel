@@ -7,6 +7,14 @@
 PHPMYADMIN_VERSION="${PHPMYADMIN_VERSION:-5.2.1}"
 PHPMYADMIN_ROOT="/usr/share/phpmyadmin"
 PHPMYADMIN_TMP_DIR="/var/lib/phpmyadmin/tmp"
+PHPMYADMIN_POOL_SOCK="/run/php/phpmyadmin.sock"
+# Shared with the panel's own PHP-FPM pool for signon SSO (see
+# pma_redirect.php) - a dedicated pool is required because the default
+# 'www' pool phpMyAdmin would otherwise use has no relationship to the
+# panel's sandboxed session storage (panel's open_basedir cannot reach
+# the distro-default session.save_path a generic pool would use, and vice
+# versa a generic pool cannot reach the panel's storage/ directory).
+PHPMYADMIN_SIGNON_SESSION_DIR="/opt/server-panel/storage/pma-signon"
 
 module_phpmyadmin_download() {
     log_step "Download & install phpMyAdmin ${PHPMYADMIN_VERSION}"
@@ -52,7 +60,9 @@ declare(strict_types=1);
 
 \$i = 0;
 \$i++;
-\$cfg['Servers'][\$i]['auth_type']     = 'cookie';
+\$cfg['Servers'][\$i]['auth_type']     = 'signon';
+\$cfg['Servers'][\$i]['SignonSession'] = 'PMASignon';
+\$cfg['Servers'][\$i]['SignonURL']     = 'https://${PANEL_DOMAIN}/login.php';
 \$cfg['Servers'][\$i]['host']          = '127.0.0.1';
 \$cfg['Servers'][\$i]['port']          = '3306';
 \$cfg['Servers'][\$i]['compress']      = false;
@@ -74,6 +84,55 @@ EOF
     state_mark "phpmyadmin:configured"
 }
 
+# Dedicated PHP-FPM pool for phpMyAdmin (instead of the default 'www'
+# pool) so it can share a session directory with the panel's own pool for
+# signon SSO (see pma_redirect.php). Runs as www-data (matching
+# phpMyAdmin's existing file ownership) - www-data is already a member of
+# the 'panel' group (see module_panel_deploy_files in modules/panel.sh),
+# so it can read/write PHPMYADMIN_SIGNON_SESSION_DIR when that directory
+# is owned panel:panel with group-write permission.
+module_phpmyadmin_configure_fpm_pool() {
+    local php_version="$1"
+    log_step "Konfigurasi PHP-FPM pool khusus phpMyAdmin (PHP ${php_version})"
+
+    mkdir -p "$PHPMYADMIN_SIGNON_SESSION_DIR"
+    chown panel:panel "$PHPMYADMIN_SIGNON_SESSION_DIR"
+    chmod 770 "$PHPMYADMIN_SIGNON_SESSION_DIR"
+    if id www-data &>/dev/null; then
+        usermod -a -G panel www-data
+    fi
+
+    local pool_file="/etc/php/${php_version}/fpm/pool.d/phpmyadmin.conf"
+    write_file_if_changed "$pool_file" <<EOF
+[phpmyadmin]
+user = www-data
+group = www-data
+listen = ${PHPMYADMIN_POOL_SOCK}
+listen.owner = www-data
+listen.group = www-data
+listen.mode = 0660
+
+pm = dynamic
+pm.max_children = 6
+pm.start_servers = 1
+pm.min_spare_servers = 1
+pm.max_spare_servers = 2
+pm.max_requests = 500
+
+; Session save_path is the directory shared with the panel's PHP-FPM
+; pool for signon SSO - see pma_redirect.php and
+; PHPMYADMIN_SIGNON_SESSION_DIR above.
+php_admin_value[session.save_path] = ${PHPMYADMIN_SIGNON_SESSION_DIR}
+php_admin_value[open_basedir] = ${PHPMYADMIN_ROOT}:${PHPMYADMIN_SIGNON_SESSION_DIR}:${PHPMYADMIN_TMP_DIR}:/tmp
+php_admin_value[error_log] = /var/log/php-phpmyadmin-fpm.log
+php_admin_flag[log_errors] = on
+EOF
+
+    systemctl restart "php${php_version}-fpm"
+    log_ok "Pool 'phpmyadmin' aktif pada php${php_version}-fpm (${PHPMYADMIN_POOL_SOCK})"
+    state_mark "phpmyadmin:fpm_pool"
+}
+
 # Registers phpMyAdmin under a chosen PHP-FPM version + access mode.
 # This is invoked interactively from install.sh after PHP & panel domain are known.
 module_phpmyadmin_generate_nginx() {
@@ -83,7 +142,9 @@ module_phpmyadmin_generate_nginx() {
 
     log_step "Generate konfigurasi Nginx untuk phpMyAdmin (${access_mode})"
 
-    local sock="/run/php/php${php_version}-fpm.sock"
+    module_phpmyadmin_configure_fpm_pool "$php_version"
+
+    local sock="$PHPMYADMIN_POOL_SOCK"
     local conf_name
     local conf_content
 

@@ -38,9 +38,14 @@ $liveMap = [];
 foreach ($live as $row) {
     $liveMap[$row['name']] = $row['size_mb'];
 }
+// Only fetched/decrypted for roles that can actually manage databases -
+// a Viewer (read-only monitoring by design) must not be able to read or
+// copy a raw credential that grants full read-write MariaDB access.
 $credentialsMap = [];
-foreach ($registry as $db) {
-    $credentialsMap[$db['db_name']] = DbCredentialsStore::get($db['db_name']);
+if (Rbac::can($user['role'], 'database.manage')) {
+    foreach ($registry as $db) {
+        $credentialsMap[$db['db_name']] = DbCredentialsStore::get($db['db_name']);
+    }
 }
 
 $pageTitle = 'Database Management';
@@ -80,6 +85,8 @@ include __DIR__ . '/partials/header.php';
               <span id="pw-<?= (int) $db['id'] ?>" class="font-monospace small" data-hidden="1" data-value="<?= e($cred['password']) ?>">••••••••</span>
               <button type="button" class="btn btn-sm btn-link p-0 ms-1" data-toggle-secret="pw-<?= (int) $db['id'] ?>" title="Tampilkan/sembunyikan"><i class="bi bi-eye"></i></button>
               <button type="button" class="btn btn-sm btn-link p-0 ms-1" data-copy="<?= e($cred['password']) ?>" title="Copy password"><i class="bi bi-clipboard"></i></button>
+            <?php elseif (!Rbac::can($user['role'], 'database.manage')): ?>
+              <span class="text-muted small">••••••••</span>
             <?php else: ?>
               <span class="text-muted small" title="Dibuat sebelum fitur ini ada - hapus &amp; buat ulang untuk menyimpan password">tidak tersedia</span>
             <?php endif; ?>
