@@ -4,6 +4,7 @@ require __DIR__ . '/../bootstrap.php';
 Auth::requireLogin();
 
 $summary = SystemService::summary();
+$serverInfo = SystemService::serverInfo();
 $services = SystemService::serviceStatuses();
 $nodejsStatus = NodeService::combinedStatus();
 $websiteCount = count(NginxService::listWebsites());
@@ -14,7 +15,7 @@ $pageTitle = 'Dashboard';
 include __DIR__ . '/partials/header.php';
 ?>
 
-<div class="d-flex justify-content-between align-items-center mb-4">
+<div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h4 class="fw-bold mb-0">Dashboard</h4>
     <p class="text-muted mb-0">Ringkasan status server secara real-time</p>
@@ -22,91 +23,122 @@ include __DIR__ . '/partials/header.php';
   <div id="statsBlock" data-refresh-url="/ajax_stats.php" data-refresh-interval="5000"></div>
 </div>
 
+<div class="card stat-card mb-4">
+  <div class="card-body py-3">
+    <div class="server-info-strip">
+      <span><span class="label">Hostname</span><?= e($serverInfo['hostname']) ?></span>
+      <span><span class="label">OS</span><?= e($serverInfo['os']) ?></span>
+      <span><span class="label">Kernel</span><?= e($serverInfo['kernel']) ?></span>
+      <span><span class="label">PHP</span><?= e($serverInfo['php_version']) ?></span>
+      <span><span class="label">Uptime</span><?= e($summary['uptime']) ?></span>
+      <span><span class="label">Waktu Server</span><span id="serverClock">-</span></span>
+    </div>
+  </div>
+</div>
+
 <div class="row g-3 mb-4" id="statCards">
   <div class="col-6 col-lg-3">
-    <div class="card stat-card">
-      <div class="card-body">
-        <div class="text-muted small">CPU Usage</div>
-        <div class="stat-value" id="cpuValue"><?= e((string) $summary['cpu_percent']) ?>%</div>
-        <div class="progress mt-2" style="height:6px;"><div class="progress-bar bg-primary" id="cpuBar" style="width:<?= (float)$summary['cpu_percent'] ?>%"></div></div>
+    <div class="card stat-card h-100">
+      <div class="card-body text-center">
+        <div class="gauge" id="cpuGauge"><span class="gauge-value" id="cpuValue"><?= e((string) $summary['cpu_percent']) ?>%</span></div>
+        <div class="text-muted small mt-2">CPU Usage</div>
       </div>
     </div>
   </div>
   <div class="col-6 col-lg-3">
-    <div class="card stat-card">
-      <div class="card-body">
-        <div class="text-muted small">RAM Usage</div>
-        <div class="stat-value" id="ramValue"><?= e((string) $summary['ram']['percent']) ?>%</div>
+    <div class="card stat-card h-100">
+      <div class="card-body text-center">
+        <div class="gauge" id="ramGauge"><span class="gauge-value" id="ramValue"><?= e((string) $summary['ram']['percent']) ?>%</span></div>
+        <div class="text-muted small mt-2">RAM Usage</div>
         <div class="small text-muted" id="ramDetail"><?= e((string) $summary['ram']['used_mb']) ?> / <?= e((string) $summary['ram']['total_mb']) ?> MB</div>
       </div>
     </div>
   </div>
   <div class="col-6 col-lg-3">
-    <div class="card stat-card">
-      <div class="card-body">
-        <div class="text-muted small">Disk Usage</div>
-        <div class="stat-value" id="diskValue"><?= e((string) $summary['disk']['percent']) ?>%</div>
+    <div class="card stat-card h-100">
+      <div class="card-body text-center">
+        <div class="gauge" id="diskGauge"><span class="gauge-value" id="diskValue"><?= e((string) $summary['disk']['percent']) ?>%</span></div>
+        <div class="text-muted small mt-2">Disk Usage</div>
         <div class="small text-muted" id="diskDetail"><?= e((string) $summary['disk']['used_gb']) ?> / <?= e((string) $summary['disk']['total_gb']) ?> GB</div>
       </div>
     </div>
   </div>
   <div class="col-6 col-lg-3">
-    <div class="card stat-card">
-      <div class="card-body">
-        <div class="text-muted small">Load Average</div>
+    <div class="card stat-card h-100">
+      <div class="card-body d-flex flex-column align-items-center justify-content-center h-100">
+        <i class="bi bi-graph-up fs-1 text-primary mb-2"></i>
         <div class="stat-value" id="loadValue"><?= e(implode(' / ', array_map(fn($v) => round($v, 2), $summary['load']))) ?></div>
-        <div class="small text-muted">Uptime: <?= e($summary['uptime']) ?></div>
+        <div class="text-muted small">Load Average (1/5/15m)</div>
       </div>
     </div>
   </div>
 </div>
 
 <div class="row g-3 mb-4">
-  <div class="col-lg-6">
-    <div class="card stat-card h-100">
-      <div class="card-header bg-white fw-semibold">Status Layanan</div>
-      <div class="card-body">
-        <ul class="list-group list-group-flush">
-          <?php foreach ($services as $name => $status): ?>
-            <li class="list-group-item d-flex justify-content-between align-items-center px-0">
-              <span><?= e($name) ?></span>
-              <span><span class="status-dot <?= e($status) ?>"></span><?= e($status) ?></span>
-            </li>
-          <?php endforeach; ?>
-        </ul>
+  <div class="col-6 col-lg-3">
+    <div class="card stat-card">
+      <div class="quick-count-tile">
+        <div class="icon-box bg-primary"><i class="bi bi-globe2"></i></div>
+        <div>
+          <div class="fs-4 fw-bold"><?= e((string) $websiteCount) ?></div>
+          <div class="text-muted small">Website PHP</div>
+        </div>
       </div>
     </div>
   </div>
-  <div class="col-lg-6">
-    <div class="card stat-card h-100">
-      <div class="card-header bg-white fw-semibold">Ringkasan</div>
-      <div class="card-body">
-        <div class="row text-center g-3">
-          <div class="col-4">
-            <div class="fs-4 fw-bold"><?= e((string) $websiteCount) ?></div>
-            <div class="text-muted small">Website PHP</div>
-          </div>
-          <div class="col-4">
-            <div class="fs-4 fw-bold"><?= e((string) count($nodejsStatus['managed'])) ?></div>
-            <div class="text-muted small">Aplikasi Node.js</div>
-          </div>
-          <div class="col-4">
-            <div class="fs-4 fw-bold"><?= e((string) $dbCount) ?></div>
-            <div class="text-muted small">Database</div>
-          </div>
-        </div>
-        <hr>
-        <div class="d-flex justify-content-between align-items-center">
-          <span>Cloudflare Tunnel</span>
-          <span>
-            <?php if (!$cloudflare['configured']): ?>
-              <span class="badge text-bg-secondary">Not Configured</span>
-            <?php else: ?>
-              <span class="status-dot <?= e($cloudflare['status']) ?>"></span><?= e($cloudflare['status']) ?>
-            <?php endif; ?>
-          </span>
+  <div class="col-6 col-lg-3">
+    <div class="card stat-card">
+      <div class="quick-count-tile">
+        <div class="icon-box bg-success"><i class="bi bi-diagram-3"></i></div>
+        <div>
+          <div class="fs-4 fw-bold"><?= e((string) count($nodejsStatus['managed'])) ?></div>
+          <div class="text-muted small">Aplikasi Node.js</div>
         </div>
       </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card stat-card">
+      <div class="quick-count-tile">
+        <div class="icon-box bg-warning"><i class="bi bi-database"></i></div>
+        <div>
+          <div class="fs-4 fw-bold"><?= e((string) $dbCount) ?></div>
+          <div class="text-muted small">Database</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card stat-card">
+      <div class="quick-count-tile">
+        <div class="icon-box bg-info"><i class="bi bi-cloud"></i></div>
+        <div>
+          <div class="fs-5 fw-bold">
+            <?php if (!$cloudflare['configured']): ?>
+              <span class="text-muted fs-6">Belum diatur</span>
+            <?php else: ?>
+              <span class="status-dot <?= e($cloudflare['status']) ?>"></span><?= e(ucfirst($cloudflare['status'])) ?>
+            <?php endif; ?>
+          </div>
+          <div class="text-muted small">Cloudflare Tunnel</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card stat-card mb-4">
+  <div class="card-header bg-white fw-semibold">Status Layanan</div>
+  <div class="card-body">
+    <div class="row g-2">
+      <?php foreach ($services as $name => $status): ?>
+        <div class="col-6 col-md-3">
+          <div class="d-flex justify-content-between align-items-center border rounded px-3 py-2">
+            <span class="small"><?= e($name) ?></span>
+            <span class="small"><span class="status-dot <?= e($status) ?>"></span><?= e($status) ?></span>
+          </div>
+        </div>
+      <?php endforeach; ?>
     </div>
   </div>
 </div>
@@ -142,16 +174,52 @@ include __DIR__ . '/partials/header.php';
 </div>
 
 <script>
+// Color-codes a gauge ring the same way aaPanel does: green under 60%,
+// orange 60-85%, red above that - a quick "does this need attention"
+// signal without having to read the exact number.
+function gaugeColorFor(percent) {
+  if (percent >= 85) return '#ef4444';
+  if (percent >= 60) return '#f59e0b';
+  return '#22c55e';
+}
+function setGauge(id, valueId, percent) {
+  var gauge = document.getElementById(id);
+  var value = document.getElementById(valueId);
+  if (!gauge || !value) return;
+  gauge.style.setProperty('--percent', Math.max(0, Math.min(100, percent)));
+  gauge.style.setProperty('--gauge-color', gaugeColorFor(percent));
+  value.textContent = percent + '%';
+}
+setGauge('cpuGauge', 'cpuValue', <?= (float) $summary['cpu_percent'] ?>);
+setGauge('ramGauge', 'ramValue', <?= (float) $summary['ram']['percent'] ?>);
+setGauge('diskGauge', 'diskValue', <?= (float) $summary['disk']['percent'] ?>);
+
 document.getElementById('statsBlock').addEventListener('panel:refresh', function (e) {
   var d = e.detail;
   if (!d || !d.ok) return;
-  document.getElementById('cpuValue').textContent = d.cpu_percent + '%';
-  document.getElementById('cpuBar').style.width = d.cpu_percent + '%';
-  document.getElementById('ramValue').textContent = d.ram.percent + '%';
+  setGauge('cpuGauge', 'cpuValue', d.cpu_percent);
+  setGauge('ramGauge', 'ramValue', d.ram.percent);
   document.getElementById('ramDetail').textContent = d.ram.used_mb + ' / ' + d.ram.total_mb + ' MB';
-  document.getElementById('diskValue').textContent = d.disk.percent + '%';
+  setGauge('diskGauge', 'diskValue', d.disk.percent);
   document.getElementById('diskDetail').textContent = d.disk.used_gb + ' / ' + d.disk.total_gb + ' GB';
   document.getElementById('loadValue').textContent = d.load.map(function(v){return Math.round(v*100)/100;}).join(' / ');
 });
+
+// Ticks forward client-side from the server's actual clock reading at
+// render time (bootstrap.php sets UTC as the app's canonical timezone),
+// so this is genuinely "server time", not just the visitor's browser
+// clock relabeled - no repeated AJAX call needed to keep it live.
+(function () {
+  var el = document.getElementById('serverClock');
+  if (!el) return;
+  var serverEpochMsAtRender = <?= time() * 1000 ?>;
+  var clientMsAtRender = Date.now();
+  var tick = function () {
+    var now = new Date(serverEpochMsAtRender + (Date.now() - clientMsAtRender));
+    el.textContent = now.toLocaleString('id-ID', { hour12: false, timeZone: 'UTC' }) + ' UTC';
+  };
+  tick();
+  setInterval(tick, 1000);
+})();
 </script>
 <?php include __DIR__ . '/partials/footer.php'; ?>

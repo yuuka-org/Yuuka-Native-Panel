@@ -124,6 +124,25 @@ function sys_uptime_human(): string
     return "{$days}h {$hours}j {$minutes}m";
 }
 
+/** Distro name (e.g. "Ubuntu 22.04.4 LTS") - read once per page load, not part of the 5s AJAX refresh. */
+function sys_os_pretty_name(): string
+{
+    $lines = @file('/etc/os-release');
+    if ($lines !== false) {
+        foreach ($lines as $line) {
+            if (preg_match('/^PRETTY_NAME="?([^"\n]+)"?/', $line, $m)) {
+                return trim($m[1]);
+            }
+        }
+    }
+    return php_uname('s');
+}
+
+function sys_kernel_version(): string
+{
+    return php_uname('r');
+}
+
 function sys_service_status(string $serviceName): string
 {
     if (!Validator::serviceName($serviceName)) {

@@ -173,6 +173,76 @@ body {
   font-family: monospace;
 }
 
+/* Circular resource gauges (Dashboard) - pure CSS conic-gradient, no chart
+   library needed. --percent/--gauge-color are set inline/via JS per
+   gauge; --track-color follows the current theme so the unfilled ring
+   segment doesn't look like a light-mode leftover in dark mode. */
+.gauge {
+  --percent: 0;
+  --gauge-color: var(--brand);
+  --track-color: #e5e7eb;
+  width: 108px;
+  height: 108px;
+  border-radius: 50%;
+  background: conic-gradient(var(--gauge-color) calc(var(--percent) * 1%), var(--track-color) 0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  margin: 0 auto;
+  transition: background 0.3s ease;
+}
+
+[data-bs-theme="dark"] .gauge {
+  --track-color: #2a2d35;
+}
+
+.gauge::before {
+  content: '';
+  position: absolute;
+  inset: 12px;
+  border-radius: 50%;
+  background: var(--bs-body-bg);
+}
+
+.gauge-value {
+  position: relative;
+  z-index: 1;
+  font-weight: 700;
+  font-size: 1.15rem;
+}
+
+.server-info-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 2rem;
+  font-size: 0.85rem;
+}
+
+.server-info-strip .label {
+  color: var(--bs-secondary-color, #6c757d);
+  margin-right: 0.35rem;
+}
+
+.quick-count-tile {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 1rem;
+}
+
+.quick-count-tile .icon-box {
+  width: 46px;
+  height: 46px;
+  border-radius: 0.7rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.3rem;
+  color: #fff;
+  flex-shrink: 0;
+}
+
 @media (max-width: 991.98px) {
   .app-sidebar {
     transform: translateX(-100%);

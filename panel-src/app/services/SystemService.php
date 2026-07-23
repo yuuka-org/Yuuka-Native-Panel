@@ -15,6 +15,23 @@ final class SystemService
         ];
     }
 
+    /**
+     * Static-ish server identity info (OS, kernel, hostname) - fetched once
+     * per page load, unlike summary() which is polled every 5s by the
+     * dashboard's AJAX refresh. None of this changes without a reboot.
+     *
+     * @return array{os:string,kernel:string,hostname:string,php_version:string}
+     */
+    public static function serverInfo(): array
+    {
+        return [
+            'os' => sys_os_pretty_name(),
+            'kernel' => sys_kernel_version(),
+            'hostname' => gethostname() ?: 'unknown',
+            'php_version' => PHP_VERSION,
+        ];
+    }
+
     /** @return array<string,string> serviceName => active|inactive|failed|unknown */
     public static function serviceStatuses(): array
     {
