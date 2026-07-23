@@ -31,6 +31,8 @@ NODEAPPS_BASE="/home/nodeapps/apps"
 NODEAPPS_HOME="/home/nodeapps"
 BACKUP_BASE="/opt/server-panel/storage/backups"
 ACME_WEBROOT="/var/www/_letsencrypt"
+INSTALLER_DIR="/opt/yuuka-installer"
+SELF_UPDATE_LOG="/opt/server-panel/storage/logs/self-update.log"
 
 mkdir -p "$(dirname "$AUDIT_LOG")"
 audit() {
@@ -72,6 +74,11 @@ RE_EMAIL='^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
 RE_DBNAME='^[a-zA-Z0-9_]{1,64}$'
 RE_LINES='^[0-9]{1,4}$'
 RE_PORT='^[0-9]{1,5}$'
+# Same whitelist op_service_status already enforces via its own case
+# statement - factored into a regex here for op_service_restart, which is
+# a mutating action and deserves the exact same explicit require_match
+# pattern used everywhere else in this file.
+RE_RESTARTABLE_SERVICE='^(nginx|mariadb|cloudflared|php7\.4-fpm|php8\.0-fpm|php8\.1-fpm|php8\.2-fpm|php8\.3-fpm|php8\.4-fpm)$'
 
 # ---------------------------------------------------------------------------
 # Nginx operations
@@ -277,6 +284,95 @@ op_service_status() {
         *) fail "Service tidak diizinkan: $svc" ;;
     esac
     systemctl is-active "$svc" 2>/dev/null || true
+}
+
+# Deferred via systemd-run (NOT `& disown`) - a plain backgrounded job stays
+# in the calling PHP-FPM pool's cgroup, and that pool's unit uses systemd's
+# default KillMode=control-group, which kills every process still in that
+# cgroup (reparenting to PID 1 does NOT change cgroup membership) the
+# moment the pool itself is restarted. Since restarting THIS pool is
+# exactly what this operation can trigger (transitively, via
+# service-restart on the panel's own php-fpm, or via installer-self-update
+# -> update.sh -> yp repair panel), a plain `&` job would be killed
+# mid-restart. `systemd-run` places the job in its own transient unit under
+# system.slice, fully decoupled from the caller's cgroup - the only
+# primitive here that is actually immune to that kill.
+op_service_restart() {
+    local svc="$1"
+    require_match "$svc" "$RE_RESTARTABLE_SERVICE" "service"
+    local unit="yuuka-panel-restart-$(echo "$svc" | tr -c 'a-zA-Z0-9' '-')"
+    systemd-run --unit="$unit" --collect \
+        --description="Yuuka Panel: restart ${svc}" \
+        -- /bin/bash -c "sleep 1; systemctl restart '${svc}'" \
+        || fail "Gagal menjadwalkan restart ${svc}"
+    echo "OK: restart ${svc} dijadwalkan"
+}
+
+# ---------------------------------------------------------------------------
+# Installer self-update - version info / update-check are read-only;
+# self-update actually runs update.sh (the same script an operator already
+# runs manually over SSH) rather than reimplementing its steps here, so a
+# fix shipped in update.sh/modules/*.sh/yp itself is never silently skipped
+# by a UI-triggered update (see plan notes: `yp update` alone never
+# reinstalls /usr/local/bin/yp, only update.sh's
+# module_panel_setup_installer_copy does).
+# ---------------------------------------------------------------------------
+op_installer_version_info() {
+    local commit="" commit_date=""
+    if [[ -d "${INSTALLER_DIR}/.git" ]]; then
+        commit=$(git -C "$INSTALLER_DIR" rev-parse --short HEAD 2>/dev/null)
+        commit_date=$(git -C "$INSTALLER_DIR" log -1 --format=%cd --date=short 2>/dev/null)
+    fi
+    echo "commit:${commit}"
+    echo "commit_date:${commit_date}"
+    echo "nginx:$(nginx -v 2>&1 | sed 's/nginx version: //')"
+    echo "mariadb:$(mariadb --version 2>/dev/null)"
+    echo "cloudflared:$(cloudflared --version 2>/dev/null | head -1)"
+}
+
+op_installer_check_update() {
+    [[ -d "${INSTALLER_DIR}/.git" ]] || fail "Installer bukan git clone"
+    GIT_TERMINAL_PROMPT=0 git -C "$INSTALLER_DIR" fetch --quiet origin \
+        || fail "git fetch gagal (cek koneksi/kredensial di server)"
+    local behind
+    behind=$(git -C "$INSTALLER_DIR" rev-list HEAD..origin/master --count 2>/dev/null) || behind="0"
+    echo "behind:${behind}"
+}
+
+op_installer_self_update_status() {
+    systemctl is-active yuuka-panel-self-update.service 2>/dev/null || true
+}
+
+op_installer_self_update() {
+    [[ -d "${INSTALLER_DIR}/.git" ]] || fail "Installer bukan git clone"
+
+    # Fast-forward only, checked BEFORE update.sh is ever invoked - a
+    # non-linear history (needs a real merge) or a stuck credential prompt
+    # must fail clean here, not partway through update.sh with the panel
+    # pool possibly already mid-restart.
+    GIT_TERMINAL_PROMPT=0 git -C "$INSTALLER_DIR" fetch --quiet origin \
+        || fail "git fetch gagal (cek koneksi/kredensial di server)"
+    git -C "$INSTALLER_DIR" merge --ff-only --quiet \
+        || fail "git merge --ff-only gagal - riwayat tidak linear, perlu penanganan manual lewat SSH"
+
+    mkdir -p "$(dirname "$SELF_UPDATE_LOG")"
+
+    # --collect (CollectMode=inactive-or-failed) auto-removes the unit once
+    # it finishes - and a fixed --unit name IS the lock: systemd-run refuses
+    # to start a second unit with the same name while one is still active,
+    # so there is no separate lock file to go stale.
+    # NOTE: \$(date ...) and \$? below are escaped so they're evaluated
+    # INSIDE the scheduled bash -c at its own run time - if left
+    # unescaped, panel-exec.sh's own shell would substitute them
+    # immediately while building this string, making both timestamps (and
+    # the "exit=" code) reflect the moment the update was SCHEDULED, not
+    # when it actually started/finished.
+    systemd-run --unit=yuuka-panel-self-update --collect \
+        --description="Yuuka Panel self-update" \
+        -- /bin/bash -c "export NONINTERACTIVE=1; { echo \"=== \$(date -Iseconds) update dimulai ===\"; timeout 900 bash '${INSTALLER_DIR}/update.sh'; echo \"=== \$(date -Iseconds) update selesai (exit=\$?) ===\"; } >>'${SELF_UPDATE_LOG}' 2>&1" \
+        < /dev/null \
+        || fail "Update sudah berjalan (unit yuuka-panel-self-update masih aktif) atau gagal dijadwalkan"
+    echo "OK: update dimulai di background, log: ${SELF_UPDATE_LOG}"
 }
 
 # ---------------------------------------------------------------------------
@@ -733,6 +829,9 @@ op_log_tail() {
         deployment)
             path="/var/log/yuuka-installer/deployment.log"
             ;;
+        self-update)
+            path="$SELF_UPDATE_LOG"
+            ;;
         *) fail "Log key tidak dikenal: $logkey" ;;
     esac
 
@@ -786,6 +885,11 @@ case "$SUBCOMMAND" in
     certbot-issue)         op_certbot_issue "$@" ;;
     certbot-remove)        op_certbot_remove "$@" ;;
     service-status)        op_service_status "$@" ;;
+    service-restart)       op_service_restart "$@" ;;
+    installer-version-info)       op_installer_version_info ;;
+    installer-check-update)       op_installer_check_update ;;
+    installer-self-update)        op_installer_self_update ;;
+    installer-self-update-status) op_installer_self_update_status ;;
     mysqldump-db)          op_mysqldump_db "$@" ;;
     mysql-restore-db)      op_mysql_restore_db "$@" ;;
     cloudflared-status)    op_cloudflared_status ;;

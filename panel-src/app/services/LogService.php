@@ -44,6 +44,11 @@ final class LogService
         return self::tail('deployment', $lines);
     }
 
+    public static function selfUpdateLog(int $lines = 200): string
+    {
+        return self::tail('self-update', $lines);
+    }
+
     public static function clearNginxAccess(string $domain): void
     {
         if (!Validator::domain($domain)) {

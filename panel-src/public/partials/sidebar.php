@@ -21,6 +21,7 @@ $links = [
     ['href' => '/backups.php', 'icon' => 'bi-cloud-arrow-down', 'label' => 'Backup', 'perm' => 'backup.view'],
     ['href' => '/logs.php', 'icon' => 'bi-file-text', 'label' => 'Log', 'perm' => 'logs.view'],
     ['href' => '/cloudflare.php', 'icon' => 'bi-cloud', 'label' => 'Cloudflare Tunnel', 'perm' => 'monitoring.view'],
+    ['href' => '/system.php', 'icon' => 'bi-arrow-repeat', 'label' => 'Sistem', 'perm' => 'monitoring.view'],
     ['href' => '/users.php', 'icon' => 'bi-people', 'label' => 'Manajemen User', 'perm' => 'users.manage'],
     ['href' => '/settings.php', 'icon' => 'bi-sliders', 'label' => 'Pengaturan', 'perm' => 'settings.manage'],
 ];

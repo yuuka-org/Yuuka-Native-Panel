@@ -152,3 +152,86 @@ function sys_service_status(string $serviceName): string
     $status = strtolower(trim($result['output']));
     return in_array($status, ['active', 'inactive', 'failed', 'activating'], true) ? $status : 'unknown';
 }
+
+/**
+ * Restarts a whitelisted system service. Deferred (~1s) and run in its own
+ * systemd unit server-side (panel-exec.sh's op_service_restart) rather than
+ * synchronously in this request - restarting the panel's OWN PHP-FPM pool
+ * is one of the services this can target, so this call may return
+ * successfully for a request whose own worker process is about to be
+ * killed. Callers that trigger this from a POST handler should send their
+ * response and call fastcgi_finish_request() BEFORE calling this, not
+ * after, so the client is guaranteed to have the full response already.
+ */
+function sys_service_restart(string $serviceName): bool
+{
+    if (!Validator::serviceName($serviceName)) {
+        throw new InvalidArgumentException('Service tidak dikenal');
+    }
+    $result = Executor::run('service-restart', [$serviceName], null, 10);
+    if (!$result['ok']) {
+        throw new RuntimeException('Gagal menjadwalkan restart: ' . $result['output']);
+    }
+    return true;
+}
+
+/** Parses the `key:value` per-line output panel-exec.sh's installer-* ops emit. */
+function sys_parse_kv_lines(string $output): array
+{
+    $data = [];
+    foreach (explode("\n", $output) as $line) {
+        $pos = strpos($line, ':');
+        if ($pos === false) {
+            continue;
+        }
+        $data[substr($line, 0, $pos)] = trim(substr($line, $pos + 1));
+    }
+    return $data;
+}
+
+/** @return array{commit:string,commit_date:string,nginx:string,mariadb:string,cloudflared:string} */
+function sys_installer_version_info(): array
+{
+    $result = Executor::run('installer-version-info', [], null, 15);
+    $data = $result['ok'] ? sys_parse_kv_lines($result['output']) : [];
+    return [
+        'commit' => $data['commit'] ?? '',
+        'commit_date' => $data['commit_date'] ?? '',
+        'nginx' => $data['nginx'] ?? '',
+        'mariadb' => $data['mariadb'] ?? '',
+        'cloudflared' => $data['cloudflared'] ?? '',
+    ];
+}
+
+/** @return array{ok:bool,behind:int} ok=false means the check itself failed (network/git), not "0 behind". */
+function sys_installer_check_update(): array
+{
+    $result = Executor::run('installer-check-update', [], null, 30);
+    if (!$result['ok']) {
+        return ['ok' => false, 'behind' => 0];
+    }
+    $data = sys_parse_kv_lines($result['output']);
+    return ['ok' => true, 'behind' => (int) ($data['behind'] ?? 0)];
+}
+
+/** "active" while an update is currently running, "inactive"/"" otherwise. */
+function sys_installer_self_update_status(): string
+{
+    $result = Executor::run('installer-self-update-status', [], null, 10);
+    return trim($result['output']);
+}
+
+/**
+ * Triggers the background self-update (runs update.sh - see panel-exec.sh's
+ * op_installer_self_update for why this calls update.sh itself rather than
+ * reimplementing its steps). Returns immediately; the caller polls
+ * sys_installer_self_update_status() / LogService::selfUpdateLog() for
+ * progress, it does not wait for completion.
+ */
+function sys_installer_self_update(): void
+{
+    $result = Executor::run('installer-self-update', [], null, 30);
+    if (!$result['ok']) {
+        throw new RuntimeException('Gagal memulai update: ' . $result['output']);
+    }
+}
