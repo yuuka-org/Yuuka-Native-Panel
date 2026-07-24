@@ -669,15 +669,6 @@ include __DIR__ . '/partials/header.php';
 
 <?php else: ?>
 
-  <nav aria-label="breadcrumb" class="mb-3">
-    <ol class="breadcrumb bg-white border rounded px-3 py-2 mb-0">
-      <li class="breadcrumb-item"><a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>"><i class="bi bi-hdd"></i> root</a></li>
-      <?php foreach (fm_breadcrumbs($currentPath) as $i => $crumb): ?>
-        <li class="breadcrumb-item"><a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&path=<?= urlencode($crumb['path']) ?>"><?= e($crumb['label']) ?></a></li>
-      <?php endforeach; ?>
-    </ol>
-  </nav>
-
   <?php
   try {
       $entries = FileManagerService::listDir($scope, $name, $currentPath);
@@ -692,6 +683,34 @@ include __DIR__ . '/partials/header.php';
   $clipboard = $_SESSION['fm_clipboard'] ?? null;
   $clipboardFamilyMatches = is_array($clipboard) && fm_scope_family((string) $clipboard['scope']) === fm_scope_family($scope);
   ?>
+
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <nav aria-label="breadcrumb" class="mb-0">
+      <ol class="breadcrumb bg-white border rounded px-3 py-2 mb-0">
+        <li class="breadcrumb-item"><a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>"><i class="bi bi-hdd"></i> root</a></li>
+        <?php foreach (fm_breadcrumbs($currentPath) as $i => $crumb): ?>
+          <li class="breadcrumb-item"><a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&path=<?= urlencode($crumb['path']) ?>"><?= e($crumb['label']) ?></a></li>
+        <?php endforeach; ?>
+      </ol>
+    </nav>
+
+    <form method="get" class="d-flex gap-1" id="fmSearchForm" style="max-width:260px">
+      <input type="hidden" name="scope" value="<?= e($scope) ?>">
+      <input type="hidden" name="name" value="<?= e($name) ?>">
+      <input type="text" name="search" class="form-control form-control-sm" placeholder="Cari nama file...">
+      <button class="btn btn-outline-secondary btn-sm"><i class="bi bi-search"></i></button>
+    </form>
+
+    <?php if ($canManage): ?>
+    <div class="d-none align-items-center gap-2 p-2 bg-body-tertiary rounded" id="bulkToolbar">
+      <span class="small text-muted" id="bulkCount"></span>
+      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="fmSetBulkAction('copy_to_clipboard')"><i class="bi bi-clipboard me-1"></i>Salin</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="fmSetBulkAction('cut_to_clipboard')"><i class="bi bi-scissors me-1"></i>Potong</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#chmodModal"><i class="bi bi-shield-lock me-1"></i>Ubah Izin</button>
+      <button type="button" class="btn btn-sm btn-outline-danger" onclick="fmConfirmBulkDelete()"><i class="bi bi-trash me-1"></i>Hapus</button>
+    </div>
+    <?php endif; ?>
+  </div>
 
   <form method="post" id="bulkForm">
     <?= Csrf::field() ?>
@@ -712,12 +731,6 @@ include __DIR__ . '/partials/header.php';
         <i class="bi bi-eye<?= $showHidden ? '-slash' : '' ?> me-1"></i><?= $showHidden ? 'Sembunyikan' : 'Tampilkan' ?> File Tersembunyi
       </a>
       <a href="?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&trash=1" class="btn btn-outline-secondary btn-sm"><i class="bi bi-trash3 me-1"></i>Recycle Bin</a>
-      <form method="get" class="d-flex gap-1 ms-auto" style="max-width:260px">
-        <input type="hidden" name="scope" value="<?= e($scope) ?>">
-        <input type="hidden" name="name" value="<?= e($name) ?>">
-        <input type="text" name="search" class="form-control form-control-sm" placeholder="Cari nama file...">
-        <button class="btn btn-outline-secondary btn-sm"><i class="bi bi-search"></i></button>
-      </form>
     </div>
 
     <?php if ($canManage && is_array($clipboard)): ?>
@@ -731,16 +744,6 @@ include __DIR__ . '/partials/header.php';
         <?php endif; ?>
         <button type="button" class="btn btn-sm btn-outline-secondary" onclick="fmSetBulkAction('clear_clipboard')">Batal</button>
       </span>
-    </div>
-    <?php endif; ?>
-
-    <?php if ($canManage): ?>
-    <div class="d-none align-items-center gap-2 mb-2 p-2 bg-body-tertiary rounded" id="bulkToolbar">
-      <span class="small text-muted" id="bulkCount"></span>
-      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="fmSetBulkAction('copy_to_clipboard')"><i class="bi bi-clipboard me-1"></i>Salin</button>
-      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="fmSetBulkAction('cut_to_clipboard')"><i class="bi bi-scissors me-1"></i>Potong</button>
-      <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#chmodModal"><i class="bi bi-shield-lock me-1"></i>Ubah Izin</button>
-      <button type="button" class="btn btn-sm btn-outline-danger" onclick="fmConfirmBulkDelete()"><i class="bi bi-trash me-1"></i>Hapus</button>
     </div>
     <?php endif; ?>
 
@@ -993,6 +996,7 @@ include __DIR__ . '/partials/header.php';
     var checks = document.querySelectorAll('.fm-check');
     var toolbar = document.getElementById('bulkToolbar');
     var countLabel = document.getElementById('bulkCount');
+    var searchForm = document.getElementById('fmSearchForm');
 
     function updateToolbar() {
       if (!toolbar) return;
@@ -1001,9 +1005,11 @@ include __DIR__ . '/partials/header.php';
         toolbar.classList.remove('d-none');
         toolbar.classList.add('d-flex');
         countLabel.textContent = checked.length + ' dipilih';
+        if (searchForm) searchForm.classList.add('d-none');
       } else {
         toolbar.classList.add('d-none');
         toolbar.classList.remove('d-flex');
+        if (searchForm) searchForm.classList.remove('d-none');
       }
     }
     if (selectAll) {
