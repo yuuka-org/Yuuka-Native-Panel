@@ -42,6 +42,31 @@ final class FileManagerService
         return Validator::fileManagerRootScope($scope);
     }
 
+    /**
+     * True when $relPath is a bare top-level entry inside a root-browse
+     * scope (www/nodeapps) that no longer matches any registered website/
+     * app. Deleting a website/app via the proper menu removes its DB row
+     * and Nginx/PM2 config but deliberately leaves the files on disk -
+     * panel-exec.sh's root-scope guard blocks ANY top-level folder
+     * mutation there (it has no DB access to tell "still registered"
+     * apart from "leftover orphan"), so only when this returns true do the
+     * FileManagerService methods below pass the "orphan-confirmed" marker
+     * that lets panel-exec.sh bypass that guard for this one call.
+     */
+    private static function isOrphanedRootEntry(string $scope, string $relPath): bool
+    {
+        if (!self::isRootScope($scope) || $relPath === '' || str_contains($relPath, '/')) {
+            return false;
+        }
+        if ($scope === 'www') {
+            $stmt = Database::app()->prepare('SELECT 1 FROM websites WHERE domain = :v');
+        } else {
+            $stmt = Database::app()->prepare('SELECT 1 FROM nodejs_apps WHERE app_name = :v');
+        }
+        $stmt->execute(['v' => $relPath]);
+        return $stmt->fetch() === false;
+    }
+
     private static function assertPath(string $relPath): void
     {
         if (!Validator::relativeFilePath($relPath)) {
@@ -167,7 +192,11 @@ final class FileManagerService
             throw new InvalidArgumentException('Tidak bisa menghapus direktori utama');
         }
 
-        $result = Executor::run('files-delete', [$scope, $name, $relPath], null, 30);
+        $args = [$scope, $name, $relPath];
+        if (self::isOrphanedRootEntry($scope, $relPath)) {
+            $args[] = 'orphan-confirmed';
+        }
+        $result = Executor::run('files-delete', $args, null, 30);
         if (!$result['ok']) {
             throw new RuntimeException('Gagal menghapus: ' . $result['output']);
         }
@@ -186,7 +215,11 @@ final class FileManagerService
             throw new InvalidArgumentException('Nama baru tidak valid');
         }
 
-        $result = Executor::run('files-rename', [$scope, $name, $relPath, $newName], null, 15);
+        $args = [$scope, $name, $relPath, $newName];
+        if (self::isOrphanedRootEntry($scope, $relPath)) {
+            $args[] = 'orphan-confirmed';
+        }
+        $result = Executor::run('files-rename', $args, null, 15);
         if (!$result['ok']) {
             throw new RuntimeException('Gagal mengganti nama: ' . $result['output']);
         }
@@ -259,7 +292,11 @@ final class FileManagerService
         ?int $userId
     ): void {
         self::assertCopyMoveArgs($srcScope, $srcName, $srcRelPath, $destScope, $destName, $destRelPath);
-        $result = Executor::run('files-copy', [$srcScope, $srcName, $srcRelPath, $destScope, $destName, $destRelPath], null, 60);
+        $args = [$srcScope, $srcName, $srcRelPath, $destScope, $destName, $destRelPath];
+        if (self::isOrphanedRootEntry($srcScope, $srcRelPath)) {
+            $args[] = 'orphan-confirmed';
+        }
+        $result = Executor::run('files-copy', $args, null, 60);
         if (!$result['ok']) {
             throw new RuntimeException('Gagal menyalin: ' . $result['output']);
         }
@@ -276,7 +313,11 @@ final class FileManagerService
         ?int $userId
     ): void {
         self::assertCopyMoveArgs($srcScope, $srcName, $srcRelPath, $destScope, $destName, $destRelPath);
-        $result = Executor::run('files-move', [$srcScope, $srcName, $srcRelPath, $destScope, $destName, $destRelPath], null, 60);
+        $args = [$srcScope, $srcName, $srcRelPath, $destScope, $destName, $destRelPath];
+        if (self::isOrphanedRootEntry($srcScope, $srcRelPath)) {
+            $args[] = 'orphan-confirmed';
+        }
+        $result = Executor::run('files-move', $args, null, 60);
         if (!$result['ok']) {
             throw new RuntimeException('Gagal memindahkan: ' . $result['output']);
         }
@@ -311,7 +352,11 @@ final class FileManagerService
             throw new InvalidArgumentException('Mode izin tidak valid (3 digit oktal, tanpa izin tulis untuk \'other\')');
         }
 
-        $result = Executor::run('files-chmod', [$scope, $name, $relPath, $mode], null, 15);
+        $args = [$scope, $name, $relPath, $mode];
+        if (self::isOrphanedRootEntry($scope, $relPath)) {
+            $args[] = 'orphan-confirmed';
+        }
+        $result = Executor::run('files-chmod', $args, null, 15);
         if (!$result['ok']) {
             throw new RuntimeException('Gagal mengubah izin: ' . $result['output']);
         }

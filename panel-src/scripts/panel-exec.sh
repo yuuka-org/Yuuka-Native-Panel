@@ -641,9 +641,9 @@ fm_encode_trash_name() {
 # empty this one item" instead - that's how op_files_trash_delete reuses
 # this same function rather than duplicating the rm -rf logic.
 op_files_delete() {
-    local scope="$1" name="$2" relpath="$3"
+    local scope="$1" name="$2" relpath="$3" orphan_confirmed="${4:-}"
     [[ -n "$relpath" ]] || fail "Refusing to delete scope root"
-    if fm_is_root_scope "$scope" && [[ "$relpath" != */* ]]; then
+    if fm_is_root_scope "$scope" && [[ "$relpath" != */* ]] && [[ "$orphan_confirmed" != "orphan-confirmed" ]]; then
         fail "Tidak bisa menghapus folder website/aplikasi lewat mode 'Jelajahi semua' - gunakan menu Hapus Website/Aplikasi supaya database & konfigurasi ikut dibersihkan"
     fi
     local target
@@ -676,10 +676,10 @@ op_files_delete() {
 }
 
 op_files_rename() {
-    local scope="$1" name="$2" relpath="$3" newbasename="$4"
+    local scope="$1" name="$2" relpath="$3" newbasename="$4" orphan_confirmed="${5:-}"
     [[ -n "$relpath" ]] || fail "Path sumber wajib diisi"
     fm_require_basename "$newbasename" "nama baru"
-    if fm_is_root_scope "$scope" && [[ "$relpath" != */* ]]; then
+    if fm_is_root_scope "$scope" && [[ "$relpath" != */* ]] && [[ "$orphan_confirmed" != "orphan-confirmed" ]]; then
         fail "Tidak bisa mengganti nama folder website/aplikasi lewat mode 'Jelajahi semua' - itu akan memutus koneksi ke domain/PM2 yang sudah terdaftar"
     fi
     local target
@@ -775,7 +775,7 @@ fm_scope_family() {
 }
 
 _fm_copy_or_move() {
-    local mode="$1" src_scope="$2" src_name="$3" src_relpath="$4" dest_scope="$5" dest_name="$6" dest_relpath="$7"
+    local mode="$1" src_scope="$2" src_name="$3" src_relpath="$4" dest_scope="$5" dest_name="$6" dest_relpath="$7" orphan_confirmed="${8:-}"
 
     require_match "$src_scope" "$RE_FM_SCOPE" "src scope"
     require_match "$dest_scope" "$RE_FM_SCOPE" "dest scope"
@@ -787,7 +787,7 @@ _fm_copy_or_move() {
     dest_family=$(fm_scope_family "$dest_scope")
     [[ "$src_family" == "$dest_family" ]] || fail "Tidak bisa memindahkan/menyalin antara Website dan Node.js App"
 
-    if fm_is_root_scope "$src_scope" && [[ "$src_relpath" != */* ]]; then
+    if fm_is_root_scope "$src_scope" && [[ "$src_relpath" != */* ]] && [[ "$orphan_confirmed" != "orphan-confirmed" ]]; then
         fail "Tidak bisa memindahkan/menyalin folder website/aplikasi lewat mode 'Jelajahi semua' - gunakan menu Hapus/Kelola Website/Aplikasi"
     fi
     case "$src_relpath" in
@@ -840,13 +840,13 @@ RE_CHMOD_MODE='^[0-7][0-7][0-7]$'
 # the one class that genuinely includes a different principal (another
 # site/app's owner if ever isolated, or unrelated system processes).
 op_files_chmod() {
-    local scope="$1" name="$2" relpath="$3" mode="$4"
+    local scope="$1" name="$2" relpath="$3" mode="$4" orphan_confirmed="${5:-}"
     require_match "$mode" "$RE_CHMOD_MODE" "mode"
     case "${mode: -1}" in
         2|3|6|7) fail "Mode tidak diizinkan: 'other' (dunia) tidak boleh punya izin tulis" ;;
     esac
     [[ -n "$relpath" ]] || fail "Path wajib diisi"
-    if fm_is_root_scope "$scope" && [[ "$relpath" != */* ]]; then
+    if fm_is_root_scope "$scope" && [[ "$relpath" != */* ]] && [[ "$orphan_confirmed" != "orphan-confirmed" ]]; then
         fail "Tidak bisa mengubah izin folder website/aplikasi lewat mode 'Jelajahi semua'"
     fi
     local target base
