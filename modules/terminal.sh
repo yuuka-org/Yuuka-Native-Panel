@@ -269,12 +269,30 @@ location = /internal/terminal_auth.php {
 location ^~ /terminal/ {
     auth_request /internal/terminal_auth.php;
     include ${NGINX_SNIPPETS}/proxy-params.conf;
-    proxy_pass http://127.0.0.1:${TERMINAL_PORT}/;
+    # No URI part after the host:port (deliberately no trailing slash) -
+    # this makes nginx forward the ORIGINAL request URI unchanged
+    # (including the /terminal/ prefix). ttyd is started with -b /terminal
+    # (see module_terminal_systemd_unit) specifically because it needs to
+    # see that same prefix to generate correct asset/WebSocket URLs - a
+    # trailing slash here would strip the prefix before forwarding,
+    # leaving ttyd unable to match anything and returning a bare 404
+    # (confirmed on a real test server).
+    proxy_pass http://127.0.0.1:${TERMINAL_PORT};
 }
 EOF
 
     log_ok "Snippet Nginx Terminal dibuat di ${NGINX_SNIPPETS}/includes/terminal.conf"
-    log_warn "Jalankan 'sudo yp repair panel' sekali lagi setelah ini supaya vhost panel meng-include Terminal (sama seperti phpMyAdmin mode path)."
+
+    # Reloading here picks up CONTENT changes to this snippet on a re-run
+    # (e.g. this fix) as long as the panel vhost already includes it - it
+    # does NOT solve the very-first-time chicken-and-egg (the panel vhost
+    # itself only gains the `include` line the next time it's
+    # regenerated), hence the log_warn below still applies for a truly
+    # fresh setup.
+    if nginx -t >>"$INSTALL_LOG_FILE" 2>&1; then
+        systemctl reload nginx
+    fi
+    log_warn "Kalau ini pertama kali setup Terminal, jalankan 'sudo yp repair panel' sekali lagi setelah ini supaya vhost panel meng-include Terminal (sama seperti phpMyAdmin mode path)."
 
     state_mark "terminal:nginx_generated"
 }
