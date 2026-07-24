@@ -214,6 +214,56 @@ function fm_breadcrumbs(string $relPath): array
     return $crumbs;
 }
 
+/**
+ * Bootstrap Icons ships a dedicated bi-filetype-* glyph for each of these
+ * extensions (confirmed in the 1.11.x set already loaded via CDN in
+ * header.php) - far more recognizable at a glance than the single generic
+ * file icon every row used before. Falls back to a generic file/archive
+ * icon for anything not in this list rather than guessing.
+ */
+function fm_file_icon(string $filename): string
+{
+    $ext = strtolower((string) pathinfo($filename, PATHINFO_EXTENSION));
+    $aliases = ['yaml' => 'yml', 'jpeg' => 'jpg', 'htm' => 'html'];
+    $ext = $aliases[$ext] ?? $ext;
+
+    static $known = [
+        'php', 'js', 'jsx', 'tsx', 'json', 'css', 'scss', 'sass', 'html', 'xml',
+        'py', 'rb', 'java', 'cs', 'sh', 'sql', 'yml', 'md', 'mdx', 'txt', 'csv',
+        'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'pdf', 'key',
+        'jpg', 'png', 'gif', 'bmp', 'svg', 'psd', 'ai', 'raw', 'tiff', 'heic', 'heif',
+        'mp3', 'wav', 'aac', 'm4p', 'mp4', 'mov',
+        'ttf', 'otf', 'woff', 'exe',
+    ];
+    if (in_array($ext, $known, true)) {
+        return "bi-filetype-{$ext}";
+    }
+    if (in_array($ext, ['zip', 'gz', 'tar', 'rar', '7z'], true)) {
+        return 'bi-file-earmark-zip';
+    }
+    return 'bi-file-earmark-text';
+}
+
+/** Light color-coding by file category - purely visual, no logic depends on it. */
+function fm_file_icon_color(string $filename): string
+{
+    $ext = strtolower((string) pathinfo($filename, PATHINFO_EXTENSION));
+    static $groups = [
+        'text-info' => ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'psd', 'ai', 'raw', 'tiff', 'heic', 'heif'],
+        'text-warning' => ['zip', 'gz', 'tar', 'rar', '7z'],
+        'text-danger' => ['pdf'],
+        'text-primary' => ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'key'],
+        'text-success' => ['php', 'js', 'jsx', 'tsx', 'json', 'css', 'scss', 'sass', 'html', 'htm', 'xml', 'py', 'rb', 'java', 'cs', 'sh', 'sql', 'yml', 'yaml', 'md', 'mdx'],
+        'text-secondary' => ['mp3', 'wav', 'aac', 'm4p', 'mp4', 'mov'],
+    ];
+    foreach ($groups as $color => $exts) {
+        if (in_array($ext, $exts, true)) {
+            return $color;
+        }
+    }
+    return 'text-muted';
+}
+
 function fm_human_size(int $bytes): string
 {
     if ($bytes < 1024) {
@@ -316,7 +366,7 @@ include __DIR__ . '/partials/header.php';
 
   <div class="card stat-card">
     <div class="card-header bg-white d-flex justify-content-between align-items-center">
-      <span class="fw-semibold"><i class="bi bi-file-earmark-code me-1"></i><?= e($editFile) ?></span>
+      <span class="fw-semibold"><i class="bi <?= e(fm_file_icon($editFile)) ?> <?= e(fm_file_icon_color($editFile)) ?> me-1"></i><?= e($editFile) ?></span>
       <a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&path=<?= urlencode(dirname($editFile) === '.' ? '' : dirname($editFile)) ?>" class="btn btn-sm btn-outline-secondary">
         <i class="bi bi-x-lg me-1"></i>Tutup
       </a>
@@ -393,7 +443,7 @@ include __DIR__ . '/partials/header.php';
                   </a>
                 <?php else: ?>
                   <a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&edit=<?= urlencode($entryRelPath) ?>">
-                    <i class="bi bi-file-earmark-text me-1"></i><?= e($entry['name']) ?>
+                    <i class="bi <?= e(fm_file_icon($entry['name'])) ?> <?= e(fm_file_icon_color($entry['name'])) ?> me-1"></i><?= e($entry['name']) ?>
                   </a>
                 <?php endif; ?>
               </td>
