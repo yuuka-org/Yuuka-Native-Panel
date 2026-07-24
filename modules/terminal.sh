@@ -116,7 +116,16 @@ module_terminal_install_packages() {
     # restrictions (see module_terminal_check_userns above) fail exactly
     # here, not later when an admin actually tries to use the terminal -
     # catching it now with a clear message beats a silently broken feature.
-    if bwrap --unshare-all --die-with-parent --ro-bind /usr /usr --proc /proc --dev /dev /usr/bin/true >>"$INSTALL_LOG_FILE" 2>&1; then
+    # /lib + /lib64 must be bound too, matching the real systemd unit's
+    # bind set - without them the dynamic linker itself
+    # (/lib64/ld-linux-x86-64.so.2) is unreachable inside the sandbox, and
+    # execve() fails with a misleading "No such file or directory" on the
+    # binary being run (confirmed on a real test server) even though
+    # namespace creation itself succeeded fine.
+    if bwrap --unshare-all --die-with-parent \
+        --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib --ro-bind-try /lib64 /lib64 \
+        --proc /proc --dev /dev \
+        /usr/bin/true >>"$INSTALL_LOG_FILE" 2>&1; then
         log_ok "bwrap bisa membuat sandbox namespace (smoke test lolos)"
     else
         log_error "bwrap GAGAL membuat sandbox namespace - kemungkinan AppArmor/userns dibatasi kernel. Terminal di Panel TIDAK akan berfungsi sampai ini diperbaiki manual di server (cek 'dmesg | tail' setelah mencoba lagi)."
