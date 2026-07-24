@@ -180,6 +180,21 @@ final class Validator
         return strlen($value) <= 200 && (bool) preg_match('/^[a-z0-9]+(-[a-z0-9]+)*$/', $value);
     }
 
+    /**
+     * File Manager chmod mode - exactly 3 octal digits (structurally
+     * rejects a 4th digit, i.e. setuid/setgid/sticky, not just "not
+     * offered in the UI"), and the last digit (other/world) may not have
+     * the write bit set. Mirrors panel-exec.sh's op_files_chmod exactly -
+     * validated at both layers like every other rule in this file.
+     */
+    public static function chmodMode(string $value): bool
+    {
+        if (!preg_match('/^[0-7]{3}$/', $value)) {
+            return false;
+        }
+        return !in_array($value[2], ['2', '3', '6', '7'], true);
+    }
+
     public static function healthCheckUrl(string $value): bool
     {
         $parts = parse_url($value);

@@ -55,7 +55,7 @@ final class FileManagerService
     }
 
     /**
-     * @return array<int,array{name:string,type:string,size:int,mtime:int}>
+     * @return array<int,array{name:string,type:string,size:int,mtime:int,mode:string}>
      *         sorted directories first, then alphabetically.
      */
     public static function listDir(string $scope, string $name, string $relPath): array
@@ -69,20 +69,25 @@ final class FileManagerService
         }
 
         $entries = [];
-        foreach (explode("\n", $result['output']) as $line) {
-            if ($line === '') {
+        // NUL-terminated records (see panel-exec.sh's op_files_list) -
+        // split on "\0", not "\n": a filename can legally contain a
+        // literal newline byte, which would otherwise make one real
+        // record look like two rows to explode("\n", ...).
+        foreach (explode("\0", $result['output']) as $record) {
+            if ($record === '') {
                 continue;
             }
-            $parts = explode("\t", $line, 4);
-            if (count($parts) !== 4) {
+            $parts = explode("\t", $record, 5);
+            if (count($parts) !== 5) {
                 continue;
             }
-            [$type, $size, $mtime, $entryName] = $parts;
+            [$type, $size, $mtime, $mode, $entryName] = $parts;
             $entries[] = [
                 'name' => $entryName,
                 'type' => $type === 'd' ? 'dir' : 'file',
                 'size' => (int) $size,
                 'mtime' => (int) $mtime,
+                'mode' => $mode,
             ];
         }
 
@@ -204,5 +209,183 @@ final class FileManagerService
             throw new RuntimeException('Gagal mengekstrak ZIP: ' . $result['output']);
         }
         ActivityLog::record($userId, 'files.extract_zip', "ZIP diekstrak ke: {$scope}/{$name}/{$relPath}");
+    }
+
+    /** @return array<int,array{name:string,relPath:string,type:string,size:int,mtime:int}> */
+    public static function search(string $scope, string $name, string $query): array
+    {
+        self::assertScope($scope, $name);
+        $query = trim($query);
+        if ($query === '') {
+            throw new InvalidArgumentException('Kata kunci pencarian wajib diisi');
+        }
+        if (strlen($query) > 200) {
+            throw new InvalidArgumentException('Kata kunci terlalu panjang');
+        }
+
+        $result = Executor::run('files-search', [$scope, $name, $query], null, 30);
+        if (!$result['ok']) {
+            throw new RuntimeException('Gagal mencari file: ' . $result['output']);
+        }
+
+        $entries = [];
+        foreach (explode("\0", $result['output']) as $record) {
+            if ($record === '') {
+                continue;
+            }
+            $parts = explode("\t", $record, 4);
+            if (count($parts) !== 4) {
+                continue;
+            }
+            [$type, $size, $mtime, $relPath] = $parts;
+            $entries[] = [
+                'name' => basename($relPath),
+                'relPath' => $relPath,
+                'type' => $type === 'd' ? 'dir' : 'file',
+                'size' => (int) $size,
+                'mtime' => (int) $mtime,
+            ];
+        }
+        return $entries;
+    }
+
+    public static function copy(
+        string $srcScope,
+        string $srcName,
+        string $srcRelPath,
+        string $destScope,
+        string $destName,
+        string $destRelPath,
+        ?int $userId
+    ): void {
+        self::assertCopyMoveArgs($srcScope, $srcName, $srcRelPath, $destScope, $destName, $destRelPath);
+        $result = Executor::run('files-copy', [$srcScope, $srcName, $srcRelPath, $destScope, $destName, $destRelPath], null, 60);
+        if (!$result['ok']) {
+            throw new RuntimeException('Gagal menyalin: ' . $result['output']);
+        }
+        ActivityLog::record($userId, 'files.copy', "Salin: {$srcScope}/{$srcName}/{$srcRelPath} -> {$destScope}/{$destName}/{$destRelPath}");
+    }
+
+    public static function move(
+        string $srcScope,
+        string $srcName,
+        string $srcRelPath,
+        string $destScope,
+        string $destName,
+        string $destRelPath,
+        ?int $userId
+    ): void {
+        self::assertCopyMoveArgs($srcScope, $srcName, $srcRelPath, $destScope, $destName, $destRelPath);
+        $result = Executor::run('files-move', [$srcScope, $srcName, $srcRelPath, $destScope, $destName, $destRelPath], null, 60);
+        if (!$result['ok']) {
+            throw new RuntimeException('Gagal memindahkan: ' . $result['output']);
+        }
+        ActivityLog::record($userId, 'files.move', "Pindah: {$srcScope}/{$srcName}/{$srcRelPath} -> {$destScope}/{$destName}/{$destRelPath}");
+    }
+
+    private static function assertCopyMoveArgs(
+        string $srcScope,
+        string $srcName,
+        string $srcRelPath,
+        string $destScope,
+        string $destName,
+        string $destRelPath
+    ): void {
+        self::assertScope($srcScope, $srcName);
+        self::assertScope($destScope, $destName);
+        self::assertPath($srcRelPath);
+        self::assertPath($destRelPath);
+        if ($srcRelPath === '' || $destRelPath === '') {
+            throw new InvalidArgumentException('Path sumber dan tujuan wajib diisi');
+        }
+    }
+
+    public static function chmod(string $scope, string $name, string $relPath, string $mode, ?int $userId): void
+    {
+        self::assertScope($scope, $name);
+        self::assertPath($relPath);
+        if ($relPath === '') {
+            throw new InvalidArgumentException('Path wajib diisi');
+        }
+        if (!Validator::chmodMode($mode)) {
+            throw new InvalidArgumentException('Mode izin tidak valid (3 digit oktal, tanpa izin tulis untuk \'other\')');
+        }
+
+        $result = Executor::run('files-chmod', [$scope, $name, $relPath, $mode], null, 15);
+        if (!$result['ok']) {
+            throw new RuntimeException('Gagal mengubah izin: ' . $result['output']);
+        }
+        ActivityLog::record($userId, 'files.chmod', "Ubah izin {$scope}/{$name}/{$relPath} ke {$mode}");
+    }
+
+    /** @return array<int,array{name:string,type:string,size:int,mtime:int,origPath:string}> */
+    public static function trashList(string $scope, string $name): array
+    {
+        self::assertScope($scope, $name);
+
+        $result = Executor::run('files-trash-list', [$scope, $name], null, 15);
+        if (!$result['ok']) {
+            throw new RuntimeException('Gagal membaca Recycle Bin: ' . $result['output']);
+        }
+
+        $entries = [];
+        foreach (explode("\0", $result['output']) as $record) {
+            if ($record === '') {
+                continue;
+            }
+            $parts = explode("\t", $record, 5);
+            if (count($parts) !== 5) {
+                continue;
+            }
+            [$type, $size, $mtime, $entryName, $origPath] = $parts;
+            $entries[] = [
+                'name' => $entryName,
+                'type' => $type === 'd' ? 'dir' : 'file',
+                'size' => (int) $size,
+                'mtime' => (int) $mtime,
+                'origPath' => $origPath,
+            ];
+        }
+        usort($entries, static fn(array $a, array $b): int => $b['mtime'] <=> $a['mtime']);
+        return $entries;
+    }
+
+    public static function trashRestore(string $scope, string $name, string $trashEntry, ?int $userId): void
+    {
+        self::assertScope($scope, $name);
+        if (!Validator::fileBaseName($trashEntry)) {
+            throw new InvalidArgumentException('Item trash tidak valid');
+        }
+
+        $result = Executor::run('files-trash-restore', [$scope, $name, $trashEntry], null, 30);
+        if (!$result['ok']) {
+            throw new RuntimeException('Gagal memulihkan: ' . $result['output']);
+        }
+        ActivityLog::record($userId, 'files.trash_restore', "Pulihkan dari Recycle Bin: {$scope}/{$name}/{$trashEntry}");
+    }
+
+    public static function trashDelete(string $scope, string $name, string $trashEntry, ?int $userId): void
+    {
+        self::assertScope($scope, $name);
+        if (!Validator::fileBaseName($trashEntry)) {
+            throw new InvalidArgumentException('Item trash tidak valid');
+        }
+
+        $result = Executor::run('files-trash-delete', [$scope, $name, $trashEntry], null, 30);
+        if (!$result['ok']) {
+            throw new RuntimeException('Gagal menghapus permanen: ' . $result['output']);
+        }
+        ActivityLog::record($userId, 'files.trash_delete', "Hapus permanen dari Recycle Bin: {$scope}/{$name}/{$trashEntry}");
+    }
+
+    public static function trashEmpty(string $scope, string $name, ?int $userId): void
+    {
+        self::assertScope($scope, $name);
+
+        $result = Executor::run('files-trash-empty', [$scope, $name], null, 60);
+        if (!$result['ok']) {
+            throw new RuntimeException('Gagal mengosongkan Recycle Bin: ' . $result['output']);
+        }
+        ActivityLog::record($userId, 'files.trash_empty', "Kosongkan Recycle Bin: {$scope}/{$name}");
     }
 }

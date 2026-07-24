@@ -570,7 +570,16 @@ op_files_list() {
     local target
     target=$(fm_resolve_target "$scope" "$name" "$relpath")
     [[ -d "$target" ]] || fail "Direktori tidak ditemukan: $relpath"
-    find "$target" -mindepth 1 -maxdepth 1 -printf '%y\t%s\t%T@\t%f\n' 2>/dev/null
+    # NUL-terminated (\0), NOT newline - a filename legally containing a
+    # literal \n byte (Linux allows any byte except NUL and /) could
+    # otherwise make ONE find record look like TWO rows once explode()'d
+    # on "\n" in PHP, one of them fully attacker-controlled (fake type/
+    # size/name) - already reachable today via "Upload & Extract ZIP"
+    # (zip entry names can contain \n). NUL is the one byte that truly
+    # cannot appear in a filename, closing this rather than narrowing it.
+    # .trash is Recycle Bin storage (see op_files_delete) - never shown
+    # in normal listings regardless of caller.
+    find "$target" -mindepth 1 -maxdepth 1 -not -name '.trash' -printf '%y\t%s\t%T@\t%m\t%f\0' 2>/dev/null
 }
 
 op_files_read() {
@@ -622,6 +631,15 @@ op_files_mkdir() {
     echo "OK: mkdir $relpath"
 }
 
+fm_encode_trash_name() {
+    printf '%s' "$1" | tr '/' '__'
+}
+
+# Soft-delete: moves into a hidden ${base}/.trash/ (Recycle Bin) instead of
+# rm -rf, restorable via op_files_trash_restore. Deleting something that's
+# ALREADY inside .trash (relpath starts with ".trash") means "permanently
+# empty this one item" instead - that's how op_files_trash_delete reuses
+# this same function rather than duplicating the rm -rf logic.
 op_files_delete() {
     local scope="$1" name="$2" relpath="$3"
     [[ -n "$relpath" ]] || fail "Refusing to delete scope root"
@@ -634,8 +652,27 @@ op_files_delete() {
     base=$(fm_resolve_base "$scope" "$name")
     [[ "$target" == "$base" ]] && fail "Refusing to delete scope root"
     [[ -e "$target" ]] || fail "Target tidak ditemukan: $relpath"
-    rm -rf -- "$target"
-    echo "OK: deleted $relpath"
+
+    case "$relpath" in
+        .trash|.trash/*)
+            rm -rf -- "$target"
+            echo "OK: permanently deleted $relpath"
+            return 0
+            ;;
+    esac
+
+    local owner trash_dir trash_name
+    owner=$(fm_owner_for_scope "$scope")
+    trash_dir="${base}/.trash"
+    mkdir -p "$trash_dir"
+    chown "$owner" "$trash_dir"
+    chmod 750 "$trash_dir"
+
+    trash_name="$(date +%Y%m%d%H%M%S%N)_$$_$(fm_encode_trash_name "$relpath")"
+    mv -- "$target" "${trash_dir}/${trash_name}"
+    printf '%s' "$relpath" > "${trash_dir}/${trash_name}.origpath"
+    chown "$owner" "${trash_dir}/${trash_name}.origpath"
+    echo "OK: moved to trash: $relpath"
 }
 
 op_files_rename() {
@@ -721,6 +758,217 @@ op_files_extract_zip() {
     echo "OK: extracted zip to ${relpath:-/}"
 }
 
+# Normalizes a File Manager scope to its "family" (website vs nodeapp) -
+# www/nodeapps (root-browse) are just variants of the same family as
+# website/nodeapp. Used to gate cross-scope copy/move below: every
+# website is www-data:www-data regardless of domain, every node app is
+# nodeapps:nodeapps regardless of name (no per-site/per-tenant Unix user
+# isolation exists anywhere in this codebase) - so copying/moving between
+# two DIFFERENT websites (or two different node apps) never crosses a
+# Unix ownership boundary, only website<->nodeapp would.
+fm_scope_family() {
+    case "$1" in
+        website|www)      printf 'website' ;;
+        nodeapp|nodeapps) printf 'nodeapp' ;;
+        *) fail "Scope tidak dikenal: $1" ;;
+    esac
+}
+
+_fm_copy_or_move() {
+    local mode="$1" src_scope="$2" src_name="$3" src_relpath="$4" dest_scope="$5" dest_name="$6" dest_relpath="$7"
+
+    require_match "$src_scope" "$RE_FM_SCOPE" "src scope"
+    require_match "$dest_scope" "$RE_FM_SCOPE" "dest scope"
+    [[ -n "$src_relpath" ]] || fail "Path sumber wajib diisi"
+    [[ -n "$dest_relpath" ]] || fail "Path tujuan wajib diisi"
+
+    local src_family dest_family
+    src_family=$(fm_scope_family "$src_scope")
+    dest_family=$(fm_scope_family "$dest_scope")
+    [[ "$src_family" == "$dest_family" ]] || fail "Tidak bisa memindahkan/menyalin antara Website dan Node.js App"
+
+    if fm_is_root_scope "$src_scope" && [[ "$src_relpath" != */* ]]; then
+        fail "Tidak bisa memindahkan/menyalin folder website/aplikasi lewat mode 'Jelajahi semua' - gunakan menu Hapus/Kelola Website/Aplikasi"
+    fi
+    case "$src_relpath" in
+        .trash|.trash/*) fail "Tidak bisa menyalin/memindahkan isi Recycle Bin" ;;
+    esac
+
+    local src_target src_base
+    src_target=$(fm_resolve_target "$src_scope" "$src_name" "$src_relpath")
+    src_base=$(fm_resolve_base "$src_scope" "$src_name")
+    [[ "$src_target" == "$src_base" ]] && fail "Tidak bisa memindahkan/menyalin folder utama"
+    [[ -e "$src_target" ]] || fail "Sumber tidak ditemukan: $src_relpath"
+
+    local dest_target dest_base
+    dest_target=$(fm_resolve_target "$dest_scope" "$dest_name" "$dest_relpath")
+    dest_base=$(fm_resolve_base "$dest_scope" "$dest_name")
+    [[ -e "$dest_target" ]] && fail "Sudah ada item di tujuan: $dest_relpath"
+
+    # Refuse a self-referential copy/move (dest nested inside src) - `cp
+    # -a` into your own descendant can recurse into corrupted/unbounded
+    # output rather than failing cleanly.
+    local src_target_slash="${src_target}/"
+    case "${dest_target}/" in
+        "$src_target_slash"*) fail "Tujuan tidak boleh berada di dalam sumber itu sendiri" ;;
+    esac
+
+    mkdir -p "$(dirname "$dest_target")"
+    if [[ "$mode" == "copy" ]]; then
+        cp -a -- "$src_target" "$dest_target"
+    else
+        mv -- "$src_target" "$dest_target"
+    fi
+
+    local dest_owner
+    dest_owner=$(fm_owner_for_scope "$dest_scope")
+    chown -R "$dest_owner" "$dest_target"
+    echo "OK: ${mode} $src_relpath -> $dest_relpath"
+}
+
+op_files_copy() { _fm_copy_or_move "copy" "$@"; }
+op_files_move() { _fm_copy_or_move "move" "$@"; }
+
+RE_CHMOD_MODE='^[0-7][0-7][0-7]$'
+
+# Mode must be EXACTLY 3 octal digits - this structurally rejects a 4th
+# digit (setuid/setgid/sticky bit) via the regex itself, not just "not
+# offered in the UI". The last digit (other/world) may not have the
+# write bit set (2/3/6/7 rejected) - owner and group here are ALWAYS the
+# shared service account (www-data or nodeapps, never a per-site user),
+# so restricting those digits wouldn't add any real isolation; "other" is
+# the one class that genuinely includes a different principal (another
+# site/app's owner if ever isolated, or unrelated system processes).
+op_files_chmod() {
+    local scope="$1" name="$2" relpath="$3" mode="$4"
+    require_match "$mode" "$RE_CHMOD_MODE" "mode"
+    case "${mode: -1}" in
+        2|3|6|7) fail "Mode tidak diizinkan: 'other' (dunia) tidak boleh punya izin tulis" ;;
+    esac
+    [[ -n "$relpath" ]] || fail "Path wajib diisi"
+    if fm_is_root_scope "$scope" && [[ "$relpath" != */* ]]; then
+        fail "Tidak bisa mengubah izin folder website/aplikasi lewat mode 'Jelajahi semua'"
+    fi
+    local target base
+    target=$(fm_resolve_target "$scope" "$name" "$relpath")
+    base=$(fm_resolve_base "$scope" "$name")
+    [[ "$target" == "$base" ]] && fail "Tidak bisa mengubah izin folder utama"
+    [[ -e "$target" ]] || fail "Target tidak ditemukan: $relpath"
+    chmod "$mode" -- "$target"
+    echo "OK: chmod $mode $relpath"
+}
+
+FM_SEARCH_TIMEOUT_SECONDS=20
+FM_SEARCH_MAX_RESULTS=500
+
+op_files_search() {
+    local scope="$1" name="$2" query="$3"
+    require_match "$scope" "$RE_FM_SCOPE" "scope"
+    [[ -n "$query" ]] || fail "Kata kunci pencarian wajib diisi"
+    [[ ${#query} -le 200 ]] || fail "Kata kunci terlalu panjang"
+    local base
+    base=$(fm_resolve_base "$scope" "$name")
+
+    # Escapes find's OWN glob metacharacters (*, ?, [, ]) so a search for
+    # e.g. "photo[1]" or "report*" is a literal substring match, not a
+    # find(1) glob pattern - this is about search-result CORRECTNESS, not
+    # a security boundary (Executor::run()'s array-form proc_open already
+    # means $query never reaches a shell no matter what it contains).
+    local escaped
+    escaped=$(printf '%s' "$query" | sed 's/[]*?[]/\\&/g')
+
+    # timeout wraps the actual find process here (server-side) rather
+    # than relying on Executor::run()'s stream_set_timeout() alone, which
+    # only stops PHP from waiting on the pipe - it does not guarantee the
+    # sudo-spawned find itself gets killed. %P (path relative to $base,
+    # not just the basename) since results can be nested anywhere.
+    timeout "$FM_SEARCH_TIMEOUT_SECONDS" find "$base" -mindepth 1 \
+        -not -path "${base}/.trash" -not -path "${base}/.trash/*" \
+        -iname "*${escaped}*" \
+        -printf '%y\t%s\t%T@\t%P\0' 2>/dev/null \
+        | head -z -n "$FM_SEARCH_MAX_RESULTS"
+}
+
+# ---------------------------------------------------------------------------
+# Recycle Bin - .trash/ lives INSIDE each scope's own base directory (see
+# op_files_delete), never a centralized location, so it never crosses the
+# Unix ownership boundary the rest of File Manager already respects.
+# ---------------------------------------------------------------------------
+op_files_trash_list() {
+    local scope="$1" name="$2"
+    local base trash_dir
+    base=$(fm_resolve_base "$scope" "$name")
+    trash_dir="${base}/.trash"
+    [[ -d "$trash_dir" ]] || return 0
+
+    local entry entry_base origpath mtime size type
+    shopt -s nullglob
+    for entry in "$trash_dir"/*; do
+        case "$entry" in *.origpath) continue ;; esac
+        entry_base=$(basename "$entry")
+        origpath=""
+        [[ -f "${entry}.origpath" ]] && origpath=$(cat "${entry}.origpath" 2>/dev/null)
+        mtime=$(stat -c '%Y' "$entry" 2>/dev/null || echo 0)
+        size=$(stat -c '%s' "$entry" 2>/dev/null || echo 0)
+        type="f"
+        [[ -d "$entry" ]] && type="d"
+        printf '%s\t%s\t%s\t%s\t%s\0' "$type" "$size" "$mtime" "$entry_base" "$origpath"
+    done
+    shopt -u nullglob
+}
+
+op_files_trash_restore() {
+    local scope="$1" name="$2" trash_entry="$3"
+    fm_require_basename "$trash_entry" "trash entry"
+    local base trash_dir target sidecar origpath dest
+    base=$(fm_resolve_base "$scope" "$name")
+    trash_dir="${base}/.trash"
+    target="${trash_dir}/${trash_entry}"
+    sidecar="${target}.origpath"
+    [[ -e "$target" ]] || fail "Item trash tidak ditemukan: $trash_entry"
+    [[ -f "$sidecar" ]] || fail "Info lokasi asal tidak ditemukan untuk: $trash_entry"
+    origpath=$(cat "$sidecar")
+    fm_require_safe_relpath "$origpath" "lokasi asal"
+    # require_path_within (realpath-based containment), NOT just a string
+    # '..' check - closes off traversal/symlink escape even from a
+    # corrupted/crafted sidecar file, same guarantee the zip-slip guard
+    # in op_files_extract_zip already relies on.
+    dest=$(require_path_within "${base}/${origpath}" "$base")
+    [[ -e "$dest" ]] && fail "Sudah ada item di lokasi asal ($origpath) - pindahkan/hapus dulu yang ada, baru restore"
+    mkdir -p "$(dirname "$dest")"
+    mv -- "$target" "$dest"
+    rm -f "$sidecar"
+    local owner
+    owner=$(fm_owner_for_scope "$scope")
+    chown -R "$owner" "$dest"
+    echo "OK: restored $trash_entry -> $origpath"
+}
+
+op_files_trash_delete() {
+    local scope="$1" name="$2" trash_entry="$3"
+    fm_require_basename "$trash_entry" "trash entry"
+    local base trash_dir target
+    base=$(fm_resolve_base "$scope" "$name")
+    trash_dir="${base}/.trash"
+    target="${trash_dir}/${trash_entry}"
+    [[ -e "$target" ]] || fail "Item trash tidak ditemukan: $trash_entry"
+    rm -rf -- "$target" "${target}.origpath"
+    echo "OK: permanently deleted $trash_entry"
+}
+
+op_files_trash_empty() {
+    local scope="$1" name="$2"
+    local base trash_dir
+    base=$(fm_resolve_base "$scope" "$name")
+    trash_dir="${base}/.trash"
+    if [[ -d "$trash_dir" ]]; then
+        shopt -s dotglob nullglob
+        rm -rf -- "$trash_dir"/*
+        shopt -u dotglob nullglob
+    fi
+    echo "OK: trash emptied"
+}
+
 # ---------------------------------------------------------------------------
 # File backup / restore (tar) for website document roots and Node.js apps -
 # needed because 'panel' cannot read files owned by www-data/nodeapps.
@@ -732,7 +980,11 @@ op_backup_tar_website() {
     local src="${WWW_BASE}/${domain}"
     [[ -d "$src" ]] || fail "Direktori website tidak ditemukan: $src"
     mkdir -p "$(dirname "$outfile")"
-    tar -czf "$outfile" -C "$WWW_BASE" "$domain"
+    # Excludes Recycle Bin contents (see op_files_delete) - without this,
+    # backups grow forever (trash never auto-expires) AND restoring a
+    # backup would resurrect files the admin deliberately deleted before
+    # that backup was taken.
+    tar -czf "$outfile" --exclude="${domain}/.trash" -C "$WWW_BASE" "$domain"
     chown panel:panel "$outfile"
     chmod 640 "$outfile"
     echo "OK: backup ${domain} -> ${outfile}"
@@ -745,7 +997,7 @@ op_backup_tar_nodeapp() {
     local src="${NODEAPPS_BASE}/${app}"
     [[ -d "$src" ]] || fail "Direktori aplikasi tidak ditemukan: $src"
     mkdir -p "$(dirname "$outfile")"
-    tar -czf "$outfile" -C "$NODEAPPS_BASE" "$app"
+    tar -czf "$outfile" --exclude="${app}/.trash" -C "$NODEAPPS_BASE" "$app"
     chown panel:panel "$outfile"
     chmod 640 "$outfile"
     echo "OK: backup ${app} -> ${outfile}"
@@ -909,6 +1161,14 @@ case "$SUBCOMMAND" in
     files-delete)          op_files_delete "$@" ;;
     files-rename)          op_files_rename "$@" ;;
     files-extract-zip)     op_files_extract_zip "$@" ;;
+    files-copy)            op_files_copy "$@" ;;
+    files-move)            op_files_move "$@" ;;
+    files-chmod)           op_files_chmod "$@" ;;
+    files-search)          op_files_search "$@" ;;
+    files-trash-list)      op_files_trash_list "$@" ;;
+    files-trash-restore)   op_files_trash_restore "$@" ;;
+    files-trash-delete)    op_files_trash_delete "$@" ;;
+    files-trash-empty)     op_files_trash_empty "$@" ;;
     backup-tar-website)    op_backup_tar_website "$@" ;;
     backup-tar-nodeapp)    op_backup_tar_nodeapp "$@" ;;
     restore-tar-website)   op_restore_tar_website "$@" ;;

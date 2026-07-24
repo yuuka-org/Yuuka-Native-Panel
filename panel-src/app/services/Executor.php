@@ -32,6 +32,8 @@ final class Executor
         'port-check',
         'files-list', 'files-read', 'files-write', 'files-mkdir', 'files-delete',
         'files-rename', 'files-extract-zip',
+        'files-copy', 'files-move', 'files-chmod', 'files-search',
+        'files-trash-list', 'files-trash-restore', 'files-trash-delete', 'files-trash-empty',
         'backup-tar-website', 'backup-tar-nodeapp', 'restore-tar-website', 'restore-tar-nodeapp',
         'cron-write', 'cron-delete',
         'log-tail', 'log-clear',
@@ -40,11 +42,16 @@ final class Executor
     /**
      * Subcommands whose successful stdout must be returned byte-for-byte
      * (no trim()) because it can be arbitrary binary content (file
-     * downloads / file content for in-browser editing). trim() strips
-     * leading/trailing whitespace-class bytes including NUL, which would
-     * silently corrupt binary output.
+     * downloads / file content for in-browser editing) OR NUL-terminated
+     * listing records (files-list/files-search/files-trash-list - see
+     * panel-exec.sh's op_files_list comment on why NUL, not newline, is
+     * the record separator there). trim()'s default charlist includes
+     * "\0", so without this exemption it would silently strip the FINAL
+     * record's trailing NUL terminator (and, in the rarer case, a
+     * legitimate trailing whitespace byte in the last field), corrupting
+     * exactly one entry per call in a way that's easy to miss in testing.
      */
-    private const RAW_OUTPUT_SUBCOMMANDS = ['files-read'];
+    private const RAW_OUTPUT_SUBCOMMANDS = ['files-read', 'files-list', 'files-search', 'files-trash-list'];
 
     /**
      * @param string[] $args
