@@ -89,6 +89,8 @@ Pemakaian: yp <aksi> <target> [args...]
   yp reset-password
   yp reset-username
   yp change-port panel <port>
+  yp security-entrance [<path>|off]
+  yp basicauth [off]
   yp repair panel [--reset-env]
   yp update
   yp version
@@ -287,6 +289,124 @@ cmd_change_port_panel() {
     else
         cp -a "$backup" "$vhost"
         log_error "nginx -t gagal, perubahan dibatalkan (backup dipulihkan)"
+        return 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# security-entrance [<path>|off] - the ONLY way back in if Settings >
+# General's Security Entrance gets misconfigured (wrong/forgotten secret
+# path = /login.php returns 404 for everyone, including the admin trying
+# to fix it from the UI - that page requires being logged in). Bypasses
+# the panel and panel-exec.sh entirely: writes straight to MariaDB (same
+# as reset-password/reset-username) and regenerates the one Nginx snippet
+# involved, independent of whether the panel/PHP-FPM are even reachable.
+# ---------------------------------------------------------------------------
+RE_SECURITY_ENTRANCE_PATH='^[a-zA-Z0-9_-]{3,64}$'
+
+cmd_security_entrance() {
+    local arg="${1:-}"
+    local snippet="${NGINX_SNIPPETS}/includes/security-entrance.conf"
+
+    if [[ -z "$arg" ]]; then
+        local current
+        current=$(mysql_root -N -e "SELECT setting_value FROM ${PANEL_DB_NAME}.settings WHERE setting_key='security_entrance_path';" 2>/dev/null)
+        if [[ -n "$current" ]]; then
+            log_info "Security Entrance aktif, path saat ini: /${current}"
+        else
+            log_info "Security Entrance tidak aktif (login lewat /login.php seperti biasa)."
+        fi
+        log_info "Pakai 'yp security-entrance <path-baru>' untuk mengganti, atau 'yp security-entrance off' untuk menonaktifkan."
+        return 0
+    fi
+
+    if [[ "$arg" == "off" ]]; then
+        rm -f "$snippet"
+        mysql_root -e "INSERT INTO ${PANEL_DB_NAME}.settings (setting_key, setting_value) VALUES ('security_entrance_path', '') ON DUPLICATE KEY UPDATE setting_value='';" 2>/dev/null || true
+        if nginx -t >/dev/null 2>&1; then
+            systemctl reload nginx
+            log_ok "Security Entrance dinonaktifkan - login kembali lewat /login.php."
+        else
+            log_error "nginx -t gagal setelah menonaktifkan Security Entrance - cek manual: nginx -t"
+            return 1
+        fi
+        return 0
+    fi
+
+    if ! [[ "$arg" =~ $RE_SECURITY_ENTRANCE_PATH ]]; then
+        die "Path tidak valid (huruf/angka/-/_, 3-64 karakter): $arg"
+    fi
+
+    mkdir -p "$(dirname "$snippet")"
+    local prev_snippet=""
+    if [[ -f "$snippet" ]]; then
+        prev_snippet=$(mktemp)
+        cp -a "$snippet" "$prev_snippet"
+    fi
+
+    cat > "$snippet" <<EOF
+location = /login.php {
+    internal;
+    include snippets/fastcgi-php.conf;
+    fastcgi_pass unix:${PANEL_POOL_SOCK};
+    fastcgi_param SCRIPT_FILENAME ${PANEL_ROOT}/public/login.php;
+}
+location = /${arg} {
+    rewrite ^ /login.php last;
+}
+EOF
+
+    if nginx -t >/dev/null 2>&1; then
+        local escaped
+        escaped=$(mysql_escape "$arg")
+        mysql_root -e "INSERT INTO ${PANEL_DB_NAME}.settings (setting_key, setting_value) VALUES ('security_entrance_path', '${escaped}') ON DUPLICATE KEY UPDATE setting_value='${escaped}';" 2>/dev/null || true
+        systemctl reload nginx
+        log_ok "Security Entrance aktif - login sekarang lewat: /${arg}"
+        log_warn "Catat path ini sekarang. Kalau lupa, jalankan 'yp security-entrance' (tanpa argumen) via SSH untuk melihatnya lagi, atau 'yp security-entrance off' untuk menonaktifkan."
+    else
+        if [[ -n "$prev_snippet" ]]; then mv "$prev_snippet" "$snippet"; else rm -f "$snippet"; fi
+        log_error "nginx -t gagal, perubahan dibatalkan"
+        return 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# basicauth [off] - same escape-hatch idea as security-entrance, for the
+# smaller (but real) risk of forgetting the BasicAuth credentials set in
+# Settings > General: with no argument, shows whether it's on; with "off",
+# tears down the htpasswd file + Nginx snippet directly, no login needed.
+# Setting/changing the username+password still has to happen from the UI
+# (needs PHP's password_hash() to produce a bcrypt hash panel-exec.sh's
+# regex accepts) - this command only ever disables.
+# ---------------------------------------------------------------------------
+cmd_basicauth() {
+    local arg="${1:-}"
+    local snippet="${NGINX_SNIPPETS}/includes/panel-basicauth.conf"
+    local htpasswd="/etc/nginx/panel.htpasswd"
+
+    if [[ -z "$arg" ]]; then
+        local current
+        current=$(mysql_root -N -e "SELECT setting_value FROM ${PANEL_DB_NAME}.settings WHERE setting_key='basicauth_username';" 2>/dev/null)
+        if [[ -f "$snippet" && -n "$current" ]]; then
+            log_info "BasicAuth aktif, username: ${current}"
+        else
+            log_info "BasicAuth tidak aktif."
+        fi
+        log_info "Pakai 'yp basicauth off' untuk menonaktifkan (ubah username/password tetap lewat Settings > General di UI)."
+        return 0
+    fi
+
+    if [[ "$arg" != "off" ]]; then
+        die "Argumen tidak dikenal: $arg (pakai 'yp basicauth off')"
+    fi
+
+    rm -f "$snippet" "$htpasswd"
+    mysql_root -e "INSERT INTO ${PANEL_DB_NAME}.settings (setting_key, setting_value) VALUES ('basicauth_enabled', '0') ON DUPLICATE KEY UPDATE setting_value='0';" 2>/dev/null || true
+    if nginx -t >/dev/null 2>&1; then
+        systemctl reload nginx
+        log_ok "BasicAuth dinonaktifkan."
+    else
+        log_error "nginx -t gagal setelah menonaktifkan BasicAuth - cek manual: nginx -t"
         return 1
     fi
 }
@@ -587,6 +707,8 @@ case "$ACTION" in
         [[ "$TARGET" == "panel" ]] || { usage; exit 2; }
         cmd_change_port_panel "${3:-}"
         ;;
+    security-entrance) cmd_security_entrance "$TARGET" ;;
+    basicauth) cmd_basicauth "$TARGET" ;;
     repair)
         [[ "$TARGET" == "panel" ]] || { usage; exit 2; }
         cmd_repair_panel "${3:-}"

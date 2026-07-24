@@ -22,6 +22,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $loginTitle = SettingsService::get('panel_login_title', 'Yuuka Server Panel');
 $loginLogo = SettingsService::get('panel_login_logo');
+
+// Settings > General > Security Entrance: when set, /login.php itself is
+// nginx-blocked for direct external requests (see security-entrance.conf,
+// written by panel-exec.sh's op_panel_security_entrance_set) - only
+// reachable via an internal rewrite from the secret path. The form MUST
+// submit back to that same secret path, not /login.php directly, or the
+// POST would 404 exactly like a direct GET would.
+$securityEntrancePath = SettingsService::get('security_entrance_path');
+$loginFormAction = $securityEntrancePath !== '' ? '/' . $securityEntrancePath : '/login.php';
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -56,7 +65,7 @@ $loginLogo = SettingsService::get('panel_login_logo');
       <p class="text-muted small">Masuk untuk mengelola server Anda</p>
     </div>
     <?php include __DIR__ . '/partials/flash.php'; ?>
-    <form method="post" action="/login.php">
+    <form method="post" action="<?= e($loginFormAction) ?>">
       <?= Csrf::field() ?>
       <div class="mb-3">
         <label class="form-label">Username</label>

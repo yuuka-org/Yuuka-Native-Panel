@@ -30,6 +30,37 @@ $restartAlertMessage = empty($restartOffenders)
     ? ''
     : 'Restart count tinggi (>' . $restartAlertThreshold . '): ' . implode(', ', $restartOffenders);
 
+// Webhook notification (Settings > Alarm) - separate from the on-page
+// banner above, server-side/page-load only so it can never fire from the
+// 5s AJAX refresh loop. No-ops instantly if no webhook URL is configured.
+AlarmNotifier::checkAndNotify($summary, $nodejsStatus);
+
+// Widget show/hide + order (Settings > Page) - defaults match the
+// dashboard's original fixed layout exactly, so a panel that's never
+// touched this setting renders identically to before. Each widget's HTML
+// is captured via ob_start()/ob_get_clean() below (the blocks themselves
+// are unchanged) rather than restructured into callables, then echoed
+// back out in configured order - the simplest option that doesn't force
+// rewriting every widget's existing markup/PHP into a different shape.
+$widgetDefaults = [
+    'server_info' => ['visible' => true, 'order' => 1],
+    'alarm_banner' => ['visible' => true, 'order' => 2],
+    'gauges' => ['visible' => true, 'order' => 3],
+    'quick_count' => ['visible' => true, 'order' => 4],
+    'services_status' => ['visible' => true, 'order' => 5],
+    'nodejs_table' => ['visible' => true, 'order' => 6],
+];
+$widgetConfig = $widgetDefaults;
+$widgetConfigDecoded = json_decode(SettingsService::get('dashboard_widget_config'), true);
+if (is_array($widgetConfigDecoded)) {
+    foreach ($widgetDefaults as $widgetId => $default) {
+        if (isset($widgetConfigDecoded[$widgetId]) && is_array($widgetConfigDecoded[$widgetId])) {
+            $widgetConfig[$widgetId]['visible'] = (bool) ($widgetConfigDecoded[$widgetId]['visible'] ?? $default['visible']);
+            $widgetConfig[$widgetId]['order'] = (int) ($widgetConfigDecoded[$widgetId]['order'] ?? $default['order']);
+        }
+    }
+}
+
 $pageTitle = 'Dashboard';
 include __DIR__ . '/partials/header.php';
 ?>
@@ -42,8 +73,14 @@ include __DIR__ . '/partials/header.php';
   <div id="statsBlock" data-refresh-url="/ajax_stats.php" data-refresh-interval="5000"></div>
 </div>
 
-<div id="alarmBanner"></div>
+<?php
+$widgetHtml = [];
 
+ob_start(); ?>
+<div id="alarmBanner"></div>
+<?php $widgetHtml['alarm_banner'] = ob_get_clean();
+
+ob_start(); ?>
 <div class="card stat-card mb-4">
   <div class="card-body py-3">
     <div class="server-info-strip">
@@ -56,7 +93,9 @@ include __DIR__ . '/partials/header.php';
     </div>
   </div>
 </div>
+<?php $widgetHtml['server_info'] = ob_get_clean();
 
+ob_start(); ?>
 <div class="row g-3 mb-4" id="statCards">
   <div class="col-6 col-lg-3">
     <div class="card stat-card h-100">
@@ -94,7 +133,9 @@ include __DIR__ . '/partials/header.php';
     </div>
   </div>
 </div>
+<?php $widgetHtml['gauges'] = ob_get_clean();
 
+ob_start(); ?>
 <div class="row g-3 mb-4">
   <div class="col-6 col-lg-3">
     <div class="card stat-card">
@@ -147,7 +188,9 @@ include __DIR__ . '/partials/header.php';
     </div>
   </div>
 </div>
+<?php $widgetHtml['quick_count'] = ob_get_clean();
 
+ob_start(); ?>
 <div class="card stat-card mb-4">
   <div class="card-header bg-white fw-semibold">Status Layanan</div>
   <div class="card-body">
@@ -163,7 +206,9 @@ include __DIR__ . '/partials/header.php';
     </div>
   </div>
 </div>
+<?php $widgetHtml['services_status'] = ob_get_clean();
 
+ob_start(); ?>
 <div class="card stat-card">
   <div class="card-header bg-white fw-semibold d-flex justify-content-between align-items-center">
     <span>Aplikasi Node.js (via PM2)</span>
@@ -193,6 +238,15 @@ include __DIR__ . '/partials/header.php';
     </div>
   </div>
 </div>
+<?php $widgetHtml['nodejs_table'] = ob_get_clean();
+
+uasort($widgetConfig, static fn(array $a, array $b): int => $a['order'] <=> $b['order']);
+foreach ($widgetConfig as $widgetId => $cfg) {
+    if ($cfg['visible'] && isset($widgetHtml[$widgetId])) {
+        echo $widgetHtml[$widgetId];
+    }
+}
+?>
 
 <script>
 // Color-codes a gauge ring the same way aaPanel does: green under 60%,

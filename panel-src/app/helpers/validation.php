@@ -203,4 +203,16 @@ final class Validator
         }
         return in_array($parts['scheme'], ['http', 'https'], true);
     }
+
+    /**
+     * Settings > General's Security Entrance path - mirrors
+     * panel-exec.sh's RE_SECURITY_ENTRANCE_PATH exactly (validated at
+     * both layers, same as every other privileged operation in this
+     * codebase). Deliberately narrow (alnum/dash/underscore only) since
+     * this becomes a literal Nginx `location =` path segment.
+     */
+    public static function securityEntrancePath(string $value): bool
+    {
+        return (bool) preg_match('/^[a-zA-Z0-9_-]{3,64}$/', $value);
+    }
 }

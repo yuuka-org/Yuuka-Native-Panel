@@ -24,6 +24,14 @@ final class SettingsService
         'php_default_version',
         'panel_login_title',
         'panel_login_logo',
+        'session_idle_timeout',
+        'session_lifetime',
+        'alarm_webhook_url',
+        'alarm_last_notified_at',
+        'dashboard_widget_config',
+        'security_entrance_path',
+        'basicauth_enabled',
+        'basicauth_username',
     ];
 
     public static function get(string $key, string $default = ''): string

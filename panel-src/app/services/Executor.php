@@ -37,6 +37,7 @@ final class Executor
         'backup-tar-website', 'backup-tar-nodeapp', 'restore-tar-website', 'restore-tar-nodeapp',
         'cron-write', 'cron-delete',
         'log-tail', 'log-clear',
+        'panel-basicauth-set', 'panel-security-entrance-set',
     ];
 
     /**
