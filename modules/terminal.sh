@@ -33,10 +33,22 @@ TERMINAL_SYSTEMD_UNIT="panelterm-ttyd"
 # ---------------------------------------------------------------------------
 # Ubuntu 24.04 restricts unprivileged user namespaces (CLONE_NEWUSER) via
 # AppArmor by default - plain `bwrap` fails outright ("Permission denied"
-# during uid map setup) unless the bwrap-userns-restrict profile Ubuntu
-# ships is loaded. Re-detects the OS itself (rather than trusting a
-# possibly-unset global from module_system_check_ubuntu) so this also
-# works when invoked standalone via `yp custom-build terminal`.
+# during uid map setup) unless this is lifted. Originally this tried
+# loading Ubuntu's own `bwrap-userns-restrict` AppArmor profile - confirmed
+# on a real 24.04 test server that this profile file does not always exist
+# under /etc/apparmor.d/ (varies by point release/apparmor package
+# version), making that approach unreliable. The actual underlying kernel
+# control is the `kernel.apparmor_restrict_unprivileged_userns` sysctl
+# (confirmed working directly on that same server) - disabling it matches
+# 20.04/22.04's default behavior (neither of those ever restricted this),
+# so this doesn't open a NEW hole beyond what this codebase already
+# supports on the other two officially-supported Ubuntu versions, it just
+# brings 24.04 in line with them for this one kernel feature. Persisted via
+# sysctl.d so it survives reboots, not just set live.
+#
+# Re-detects the OS itself (rather than trusting a possibly-unset global
+# from module_system_check_ubuntu) so this also works when invoked
+# standalone via `yp custom-build terminal`.
 # ---------------------------------------------------------------------------
 module_terminal_check_userns() {
     log_step "Memeriksa dukungan user namespace untuk bubblewrap"
@@ -48,19 +60,28 @@ module_terminal_check_userns() {
     fi
 
     if [[ "$version_id" == "24.04" ]]; then
-        log_info "Ubuntu 24.04 terdeteksi - AppArmor membatasi unprivileged user namespace secara default, memuat profile bwrap-userns-restrict"
-        if [[ -f /etc/apparmor.d/bwrap-userns-restrict ]]; then
-            if command_exists apparmor_parser; then
-                if apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict >>"$INSTALL_LOG_FILE" 2>&1; then
-                    log_ok "Profile AppArmor bwrap-userns-restrict dimuat"
+        log_info "Ubuntu 24.04 terdeteksi - AppArmor bisa membatasi unprivileged user namespace secara default"
+
+        if [[ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            local current
+            current=$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo "1")
+            if [[ "$current" != "0" ]]; then
+                if sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 >>"$INSTALL_LOG_FILE" 2>&1; then
+                    write_file_if_changed /etc/sysctl.d/99-yuuka-terminal-userns.conf <<'SYSCTLEOF'
+# Allows unprivileged user namespaces (needed by bubblewrap for Terminal
+# di Panel's sandbox) - matches Ubuntu 20.04/22.04's default behavior
+# (neither ever restricted this). See modules/terminal.sh.
+kernel.apparmor_restrict_unprivileged_userns = 0
+SYSCTLEOF
+                    log_ok "kernel.apparmor_restrict_unprivileged_userns diset ke 0 (persisten lewat sysctl.d)"
                 else
-                    log_warn "Gagal memuat profile AppArmor bwrap-userns-restrict - Terminal mungkin tidak berfungsi, cek manual: sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict"
+                    log_warn "Gagal set sysctl kernel.apparmor_restrict_unprivileged_userns - Terminal mungkin tidak berfungsi, cek manual: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"
                 fi
             else
-                log_warn "apparmor_parser tidak ditemukan (paket apparmor mungkin belum lengkap) - lewati pemuatan profile, Terminal mungkin tidak berfungsi"
+                log_ok "kernel.apparmor_restrict_unprivileged_userns sudah 0"
             fi
         else
-            log_warn "Profile /etc/apparmor.d/bwrap-userns-restrict tidak ditemukan - Terminal mungkin tidak berfungsi di Ubuntu 24.04 ini, cek update paket 'apparmor'"
+            log_info "Sysctl apparmor_restrict_unprivileged_userns tidak ditemukan di kernel ini - kemungkinan tidak dibatasi, lanjut"
         fi
     fi
 
