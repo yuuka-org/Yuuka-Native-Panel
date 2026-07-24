@@ -237,6 +237,23 @@ if (isset($_GET['download']) && $_GET['download'] !== '') {
     exit;
 }
 
+// Editor popup content fetch - the editor never navigates to its own page,
+// it opens over fetch() from wherever the user currently is (browse/search
+// results), so this always answers in JSON.
+if (isset($_GET['ajax_edit']) && $_GET['ajax_edit'] !== '') {
+    Rbac::require('files.view');
+    $ajaxEditPath = (string) $_GET['ajax_edit'];
+    try {
+        $ajaxEditContent = FileManagerService::readFile($scope, $name, $ajaxEditPath);
+        if (!FileManagerService::looksLikeText($ajaxEditContent)) {
+            jsonResponse(['ok' => false, 'error' => 'File ini terdeteksi biner, tidak bisa diedit sebagai teks. Gunakan Download.'], 400);
+        }
+        jsonResponse(['ok' => true, 'name' => basename($ajaxEditPath), 'relPath' => $ajaxEditPath, 'content' => $ajaxEditContent]);
+    } catch (InvalidArgumentException|RuntimeException $e) {
+        jsonResponse(['ok' => false, 'error' => $e->getMessage()], 400);
+    }
+}
+
 $canManage = Rbac::can($user['role'], 'files.manage');
 $isAjax = ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') === 'XMLHttpRequest';
 
@@ -254,6 +271,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             Rbac::require('files.manage');
             $fileName = fm_do_upload($scope, $name, $path, $user['id']);
             jsonResponse(['ok' => true, 'name' => $fileName]);
+        } catch (InvalidArgumentException|RuntimeException $e) {
+            jsonResponse(['ok' => false, 'error' => $e->getMessage()], 400);
+        }
+    }
+
+    // Editor popup save: content never touches PHP-rendered HTML (the
+    // editor loads/saves purely over fetch()), so this always answers in
+    // JSON regardless of $isAjax - there is no non-AJAX caller for it.
+    if ($action === 'save_file') {
+        try {
+            Rbac::require('files.manage');
+            $filePath = (string) ($_POST['file'] ?? '');
+            FileManagerService::writeFile($scope, $name, $filePath, (string) ($_POST['content'] ?? ''), $user['id']);
+            jsonResponse(['ok' => true]);
         } catch (InvalidArgumentException|RuntimeException $e) {
             jsonResponse(['ok' => false, 'error' => $e->getMessage()], 400);
         }
@@ -337,22 +368,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             Rbac::require('files.manage');
             FileManagerService::trashEmpty($scope, $name, $user['id']);
             flash('success', 'Recycle Bin dikosongkan.');
-        } elseif ($action === 'save_file') {
-            Rbac::require('files.manage');
-            $filePath = (string) ($_POST['file'] ?? '');
-            FileManagerService::writeFile($scope, $name, $filePath, (string) ($_POST['content'] ?? ''), $user['id']);
-            flash('success', 'File berhasil disimpan.');
-            redirect('/file_manager.php?scope=' . urlencode($scope) . '&name=' . urlencode($name) . '&edit=' . urlencode($filePath));
         }
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
-        // save_file has no 'path' field (edit view only tracks the file
-        // itself) - on failure, send the user back to the file they were
-        // editing instead of the generic redirect, which would otherwise
-        // bounce them to the scope root and look like their edit vanished.
-        if ($action === 'save_file' && (string) ($_POST['file'] ?? '') !== '') {
-            redirect('/file_manager.php?scope=' . urlencode($scope) . '&name=' . urlencode($name) . '&edit=' . urlencode((string) $_POST['file']));
-        }
     }
 
     if (in_array($action, ['trash_restore', 'trash_delete', 'trash_empty'], true)) {
@@ -361,14 +379,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect('/file_manager.php?scope=' . urlencode($scope) . '&name=' . urlencode($name) . '&path=' . urlencode($path));
 }
 
-$editFile = isset($_GET['edit']) ? (string) $_GET['edit'] : null;
 $currentPath = (string) ($_GET['path'] ?? '');
 $showHidden = ($_GET['show_hidden'] ?? '') === '1';
 $searchQuery = trim((string) ($_GET['search'] ?? ''));
 $showTrash = ($_GET['trash'] ?? '') === '1';
-
-$extraHeadHtml = '';
-$extraBodyHtml = '';
 
 function fm_breadcrumbs(string $relPath): array
 {
@@ -451,22 +465,14 @@ function fm_human_size(int $bytes): string
     return $bytes . ' B';
 }
 
-if ($editFile !== null) {
-    try {
-        $fileContent = FileManagerService::readFile($scope, $name, $editFile);
-    } catch (InvalidArgumentException|RuntimeException $e) {
-        flash('error', $e->getMessage());
-        redirect('/file_manager.php?scope=' . urlencode($scope) . '&name=' . urlencode($name));
-    }
-    if (!FileManagerService::looksLikeText($fileContent)) {
-        flash('error', 'File ini terdeteksi biner, tidak bisa diedit sebagai teks. Gunakan Download.');
-        redirect('/file_manager.php?scope=' . urlencode($scope) . '&name=' . urlencode($name) . '&path=' . urlencode(dirname($editFile) === '.' ? '' : dirname($editFile)));
-    }
+// The editor is a popup reachable from any view (browse/search results) -
+// its content loads/saves purely over fetch(), never by navigating to a
+// dedicated page - so CodeMirror is always available, not gated behind a
+// GET param.
+$extraHeadHtml = '<link rel="stylesheet" href="/assets/vendor/codemirror/lib/codemirror.css">'
+    . '<style>.CodeMirror{height:60vh;border:1px solid var(--bs-border-color);border-radius:.375rem;font-size:.875rem;}</style>';
 
-    $extraHeadHtml = '<link rel="stylesheet" href="/assets/vendor/codemirror/lib/codemirror.css">'
-        . '<style>.CodeMirror{height:65vh;border:1px solid var(--bs-border-color);border-radius:.375rem;font-size:.875rem;}</style>';
-
-    $extraBodyHtml = <<<'HTML'
+$extraBodyHtml = <<<HTML
 <script src="/assets/vendor/codemirror/lib/codemirror.js"></script>
 <script src="/assets/vendor/codemirror/mode/xml/xml.js"></script>
 <script src="/assets/vendor/codemirror/mode/javascript/javascript.js"></script>
@@ -486,9 +492,7 @@ if ($editFile !== null) {
 (function () {
   var el = document.getElementById('editorArea');
   if (!el || typeof CodeMirror === 'undefined') { return; }
-  var fileName = el.getAttribute('data-filename') || '';
-  var base = fileName.toLowerCase();
-  var ext = base.includes('.') ? base.split('.').pop() : '';
+
   var MODE_BY_EXT = {
     php: 'application/x-httpd-php', phtml: 'application/x-httpd-php',
     js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
@@ -502,10 +506,14 @@ if ($editFile !== null) {
     md: 'markdown', markdown: 'markdown',
     py: 'python'
   };
-  var mode = MODE_BY_EXT[ext] || null;
-  if (base === 'dockerfile') { mode = 'dockerfile'; }
+  function modeForFilename(fileName) {
+    var base = (fileName || '').toLowerCase();
+    if (base === 'dockerfile') { return 'dockerfile'; }
+    var ext = base.includes('.') ? base.split('.').pop() : '';
+    return MODE_BY_EXT[ext] || null;
+  }
+
   var cm = CodeMirror.fromTextArea(el, {
-    mode: mode,
     lineNumbers: true,
     lineWrapping: true,
     matchBrackets: true,
@@ -516,65 +524,115 @@ if ($editFile !== null) {
   cm.on('change', function () { cm.save(); });
 
   var modalEl = document.getElementById('editorModal');
-  if (modalEl && typeof bootstrap !== 'undefined') {
+  var bsModal = (modalEl && typeof bootstrap !== 'undefined') ? new bootstrap.Modal(modalEl) : null;
+  if (modalEl) {
     modalEl.addEventListener('shown.bs.modal', function () { cm.refresh(); cm.focus(); });
-    new bootstrap.Modal(modalEl, { backdrop: 'static', keyboard: false }).show();
   }
 
-  document.addEventListener('keydown', function (e) {
-    if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's') { return; }
-    e.preventDefault();
+  function setSaveMsg(kind, text) {
+    var msg = document.getElementById('editorSaveMsg');
+    if (!msg) { return; }
+    msg.classList.remove('d-none', 'alert-success', 'alert-danger');
+    if (!kind) { msg.classList.add('d-none'); return; }
+    msg.classList.add(kind === 'error' ? 'alert-danger' : 'alert-success');
+    msg.textContent = text;
+  }
+
+  window.fmOpenEditor = function (relPath) {
+    var url = window.location.pathname + '?scope={$scope}&name={$name}&ajax_edit=' + encodeURIComponent(relPath);
+    fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data.ok) { alert(data.error || 'Gagal membuka file'); return; }
+        var titleEl = document.getElementById('editorModalFileName');
+        if (titleEl) { titleEl.textContent = data.relPath; }
+        var fileField = document.getElementById('editorFileField');
+        if (fileField) { fileField.value = data.relPath; }
+        cm.setValue(data.content);
+        cm.setOption('mode', modeForFilename(data.name));
+        setSaveMsg(null, '');
+        if (bsModal) { bsModal.show(); }
+      })
+      .catch(function () { alert('Gagal membuka file (jaringan)'); });
+  };
+
+  window.fmSaveEditor = function () {
     var form = document.getElementById('editorForm');
     if (!form) { return; }
     cm.save();
-    form.submit();
+    var fd = new FormData(form);
+    fetch(window.location.pathname + '?scope={$scope}&name={$name}', {
+      method: 'POST',
+      body: fd,
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.ok) {
+          setSaveMsg('success', 'Tersimpan.');
+        } else {
+          setSaveMsg('error', data.error || 'Gagal menyimpan');
+        }
+        setTimeout(function () { setSaveMsg(null, ''); }, 2500);
+      })
+      .catch(function () { setSaveMsg('error', 'Gagal menyimpan (jaringan)'); });
+  };
+
+  document.addEventListener('keydown', function (e) {
+    if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's') { return; }
+    if (!modalEl || !modalEl.classList.contains('show')) { return; }
+    e.preventDefault();
+    window.fmSaveEditor();
+  });
+
+  document.addEventListener('click', function (e) {
+    var target = e.target.closest('[data-fm-open-file]');
+    if (!target) { return; }
+    e.preventDefault();
+    window.fmOpenEditor(target.getAttribute('data-fm-open-file'));
   });
 })();
 </script>
 HTML;
-}
 
 $pageTitle = 'File Manager';
 include __DIR__ . '/partials/header.php';
 ?>
 
-<?php if ($editFile !== null):
-  $editCloseUrl = '/file_manager.php?scope=' . urlencode($scope) . '&name=' . urlencode($name) . '&path=' . urlencode(dirname($editFile) === '.' ? '' : dirname($editFile));
-?>
-
-  <div class="modal fade" id="editorModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
-    <div class="modal-dialog modal-xl">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title"><i class="bi <?= e(fm_file_icon($editFile)) ?> <?= e(fm_file_icon_color($editFile)) ?> me-1"></i><?= e($editFile) ?></h5>
-          <a href="<?= e($editCloseUrl) ?>" class="btn-close" aria-label="Tutup"></a>
-        </div>
-        <div class="modal-body">
-          <?php if ($canManage): ?>
-          <form method="post" id="editorForm">
-            <?= Csrf::field() ?>
-            <input type="hidden" name="scope" value="<?= e($scope) ?>">
-            <input type="hidden" name="name" value="<?= e($name) ?>">
-            <input type="hidden" name="action" value="save_file">
-            <input type="hidden" name="file" value="<?= e($editFile) ?>">
-            <textarea id="editorArea" name="content" data-filename="<?= e(basename($editFile)) ?>"><?= e($fileContent) ?></textarea>
-          </form>
-          <?php else: ?>
-            <textarea id="editorArea" readonly data-filename="<?= e(basename($editFile)) ?>"><?= e($fileContent) ?></textarea>
-            <p class="text-muted small mt-2 mb-0">Mode baca saja - kamu tidak memiliki izin untuk mengedit file.</p>
-          <?php endif; ?>
-        </div>
-        <div class="modal-footer">
-          <a href="<?= e($editCloseUrl) ?>" class="btn btn-secondary"><?= $canManage ? 'Batal' : 'Tutup' ?></a>
-          <?php if ($canManage): ?>
-          <button type="submit" form="editorForm" class="btn btn-primary"><i class="bi bi-save me-1"></i>Simpan <kbd class="ms-1">Ctrl+S</kbd></button>
-          <?php endif; ?>
-        </div>
+<div class="modal fade" id="editorModal" tabindex="-1">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-file-earmark-text me-1"></i><span id="editorModalFileName"></span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+      </div>
+      <div class="modal-body">
+        <div id="editorSaveMsg" class="alert d-none py-2 mb-2"></div>
+        <?php if ($canManage): ?>
+        <form id="editorForm" onsubmit="return false;">
+          <?= Csrf::field() ?>
+          <input type="hidden" name="scope" value="<?= e($scope) ?>">
+          <input type="hidden" name="name" value="<?= e($name) ?>">
+          <input type="hidden" name="action" value="save_file">
+          <input type="hidden" name="file" id="editorFileField" value="">
+          <textarea id="editorArea" name="content"></textarea>
+        </form>
+        <?php else: ?>
+          <textarea id="editorArea" readonly></textarea>
+          <p class="text-muted small mt-2 mb-0">Mode baca saja - kamu tidak memiliki izin untuk mengedit file.</p>
+        <?php endif; ?>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>
+        <?php if ($canManage): ?>
+        <button type="button" class="btn btn-primary" onclick="fmSaveEditor()"><i class="bi bi-save me-1"></i>Simpan <kbd class="ms-1">Ctrl+S</kbd></button>
+        <?php endif; ?>
       </div>
     </div>
   </div>
+</div>
 
-<?php elseif ($showTrash):
+<?php if ($showTrash):
 
   try {
       $trashEntries = FileManagerService::trashList($scope, $name);
@@ -679,7 +737,7 @@ include __DIR__ . '/partials/header.php';
                 <?php if ($isDir): ?>
                   <a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&path=<?= urlencode($r['relPath']) ?>"><i class="bi bi-folder-fill text-warning me-1"></i><?= e($r['name']) ?></a>
                 <?php else: ?>
-                  <a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&edit=<?= urlencode($r['relPath']) ?>"><i class="bi <?= e(fm_file_icon($r['name'])) ?> <?= e(fm_file_icon_color($r['name'])) ?> me-1"></i><?= e($r['name']) ?></a>
+                  <a href="#" data-fm-open-file="<?= e($r['relPath']) ?>"><i class="bi <?= e(fm_file_icon($r['name'])) ?> <?= e(fm_file_icon_color($r['name'])) ?> me-1"></i><?= e($r['name']) ?></a>
                 <?php endif; ?>
               </td>
               <td class="text-muted small">/<?= e($parentPath) ?></td>
@@ -710,13 +768,16 @@ include __DIR__ . '/partials/header.php';
   $clipboardFamilyMatches = is_array($clipboard) && fm_scope_family((string) $clipboard['scope']) === fm_scope_family($scope);
   ?>
 
-  <style>.fm-btn-xs{padding:.2rem .55rem;font-size:.75rem;}</style>
+  <style>
+    .fm-btn-xs{padding:.2rem .55rem;font-size:.75rem;}
+    .fm-path-bar,.fm-path-bar .btn,.fm-path-bar .form-control,.fm-path-bar .breadcrumb{height:calc(1.5em + .5rem + 2px);padding:.25rem .6rem;font-size:.875rem;line-height:1.5;}
+  </style>
 
-  <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
-    <a href="<?= e($backUrl) ?>" class="btn btn-outline-secondary btn-sm" title="Kembali"><i class="bi bi-arrow-left"></i></a>
+  <div class="d-flex flex-wrap align-items-center gap-2 mb-3 fm-path-bar">
+    <a href="<?= e($backUrl) ?>" class="btn btn-outline-secondary" title="Kembali"><i class="bi bi-arrow-left"></i></a>
 
     <nav aria-label="breadcrumb" class="mb-0 flex-grow-1">
-      <ol class="breadcrumb bg-white border rounded px-3 py-2 mb-0 w-100">
+      <ol class="breadcrumb bg-body-tertiary border rounded mb-0 w-100 align-items-center">
         <li class="breadcrumb-item"><a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>"><i class="bi bi-hdd"></i> root</a></li>
         <?php foreach (fm_breadcrumbs($currentPath) as $i => $crumb): ?>
           <li class="breadcrumb-item"><a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&path=<?= urlencode($crumb['path']) ?>"><?= e($crumb['label']) ?></a></li>
@@ -727,8 +788,8 @@ include __DIR__ . '/partials/header.php';
     <form method="get" class="d-flex gap-1" id="fmSearchForm" style="max-width:260px">
       <input type="hidden" name="scope" value="<?= e($scope) ?>">
       <input type="hidden" name="name" value="<?= e($name) ?>">
-      <input type="text" name="search" class="form-control form-control-sm" placeholder="Cari nama file...">
-      <button class="btn btn-outline-secondary btn-sm"><i class="bi bi-search"></i></button>
+      <input type="text" name="search" class="form-control" placeholder="Cari nama file...">
+      <button class="btn btn-outline-secondary"><i class="bi bi-search"></i></button>
     </form>
   </div>
 
@@ -805,7 +866,7 @@ include __DIR__ . '/partials/header.php';
                       <i class="bi bi-folder-fill text-warning me-1"></i><?= e($entry['name']) ?>
                     </a>
                   <?php else: ?>
-                    <a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&edit=<?= urlencode($entryRelPath) ?>">
+                    <a href="#" data-fm-open-file="<?= e($entryRelPath) ?>">
                       <i class="bi <?= e(fm_file_icon($entry['name'])) ?> <?= e(fm_file_icon_color($entry['name'])) ?> me-1"></i><?= e($entry['name']) ?>
                     </a>
                   <?php endif; ?>
