@@ -255,6 +255,7 @@ if (isset($_GET['ajax_edit']) && $_GET['ajax_edit'] !== '') {
 }
 
 $canManage = Rbac::can($user['role'], 'files.manage');
+$canTerminal = Rbac::can($user['role'], 'terminal.access');
 $isAjax = ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') === 'XMLHttpRequest';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -465,12 +466,53 @@ function fm_human_size(int $bytes): string
     return $bytes . ' B';
 }
 
+// Plain folder browsing (not Recycle Bin, not search results) is the one
+// thing a user does over and over while working - every click used to be
+// a full page reload showing ?scope=...&path=... in the address bar.
+// $isAjaxBrowse requests fetch the SAME data this branch already computes
+// and get back just the reusable partial's HTML instead of a full page,
+// which the client swaps into #fmBrowseRoot without ever touching the
+// address bar. Computed once here (not duplicated per branch) since both
+// the early-exit fragment response below and the normal full-page render
+// further down need the exact same $entries/$clipboard.
+$isAjaxBrowse = $isAjax && !$showTrash && $searchQuery === '';
+
+if (!$showTrash && $searchQuery === '') {
+    try {
+        $entries = FileManagerService::listDir($scope, $name, $currentPath);
+    } catch (InvalidArgumentException|RuntimeException $e) {
+        flash('error', $e->getMessage());
+        $entries = [];
+    }
+    if (!$showHidden) {
+        $entries = array_values(array_filter($entries, static fn(array $e): bool => !str_starts_with($e['name'], '.')));
+    }
+    $clipboard = $_SESSION['fm_clipboard'] ?? null;
+    $clipboardFamilyMatches = is_array($clipboard) && fm_scope_family((string) $clipboard['scope']) === fm_scope_family($scope);
+}
+
+if ($isAjaxBrowse) {
+    include __DIR__ . '/partials/file_manager_browse.php';
+    exit;
+}
+
 // The editor is a popup reachable from any view (browse/search results) -
 // its content loads/saves purely over fetch(), never by navigating to a
 // dedicated page - so CodeMirror is always available, not gated behind a
 // GET param.
 $extraHeadHtml = '<link rel="stylesheet" href="/assets/vendor/codemirror/lib/codemirror.css">'
     . '<style>.CodeMirror{height:60vh;border:1px solid var(--bs-border-color);border-radius:.375rem;font-size:.875rem;}</style>';
+
+$jsCsrfToken = json_encode(Csrf::token());
+// Mirrors modules/terminal.sh's TERMINAL_WWW_BASE/TERMINAL_NODEAPPS_BASE -
+// only used to build the Terminal popup's starting directory (see
+// fmAbsolutePath below), never for anything path-security-relevant.
+$jsTerminalBase = json_encode(match (true) {
+    $scope === 'website' => "/var/www/{$name}",
+    $scope === 'www' => '/var/www',
+    $scope === 'nodeapp' => "/home/nodeapps/apps/{$name}",
+    default => '/home/nodeapps/apps',
+});
 
 $extraBodyHtml = <<<HTML
 <script src="/assets/vendor/codemirror/lib/codemirror.js"></script>
@@ -593,6 +635,250 @@ $extraBodyHtml = <<<HTML
   });
 })();
 </script>
+<script>
+// Everything below drives #fmBrowseRoot's contents (path bar, toolbar,
+// table, modals, context menu) - but that whole subtree gets replaced via
+// innerHTML on every in-app folder navigation (see fmNavigateBrowse), and
+// scripts injected through innerHTML never execute. So this runs ONCE from
+// the initial full page load and binds every listener by delegation from
+// document (or from elements that are themselves never replaced, like
+// #editorModal) - never by caching a reference to anything inside
+// #fmBrowseRoot, which would go stale the moment the fragment swaps.
+(function () {
+  document.addEventListener('show.bs.modal', function (ev) {
+    var btn = ev.relatedTarget;
+    if (ev.target.id === 'renameModal' && btn) {
+      document.getElementById('renameTarget').value = btn.getAttribute('data-target');
+      document.getElementById('renameNewName').value = btn.getAttribute('data-current-name');
+    } else if (ev.target.id === 'deleteModal' && btn) {
+      document.getElementById('deleteTarget').value = btn.getAttribute('data-target');
+      document.getElementById('deleteLabel').textContent = btn.getAttribute('data-label');
+    } else if (ev.target.id === 'chmodModal') {
+      var singleTarget = btn ? btn.getAttribute('data-target') : null;
+      var label = document.getElementById('chmodTargetLabel');
+      if (singleTarget) {
+        document.querySelectorAll('.fm-check').forEach(function (c) { c.checked = (c.value === singleTarget); });
+        label.textContent = 'Untuk: ' + btn.getAttribute('data-label');
+      } else if (label) {
+        var n = document.querySelectorAll('.fm-check:checked').length;
+        label.textContent = n + ' item dipilih';
+      }
+      var modeInput = document.getElementById('chmodModeInput');
+      if (modeInput) { modeInput.value = ''; }
+    }
+  });
+
+  document.addEventListener('change', function (e) {
+    if (e.target.id === 'selectAll') {
+      document.querySelectorAll('.fm-check').forEach(function (c) { c.checked = e.target.checked; });
+      fmUpdateBulkToolbar();
+    } else if (e.target.classList.contains('fm-check')) {
+      fmUpdateBulkToolbar();
+    }
+  });
+
+  function fmUpdateBulkToolbar() {
+    var toolbar = document.getElementById('bulkToolbar');
+    var searchForm = document.getElementById('fmSearchForm');
+    if (!toolbar) { return; }
+    var checked = document.querySelectorAll('.fm-check:checked');
+    var countLabel = document.getElementById('bulkCount');
+    if (checked.length > 0) {
+      toolbar.classList.remove('d-none');
+      toolbar.classList.add('d-flex');
+      if (countLabel) { countLabel.textContent = checked.length + ' dipilih'; }
+      if (searchForm) { searchForm.classList.add('d-none'); }
+    } else {
+      toolbar.classList.add('d-none');
+      toolbar.classList.remove('d-flex');
+      if (searchForm) { searchForm.classList.remove('d-none'); }
+    }
+  }
+
+  function fmSelectOnly(relPath) {
+    document.querySelectorAll('.fm-check').forEach(function (c) { c.checked = (c.value === relPath); });
+    fmUpdateBulkToolbar();
+  }
+
+  window.fmSetBulkAction = function (action) {
+    document.getElementById('bulkAction').value = action;
+    document.getElementById('bulkForm').submit();
+  };
+  window.fmConfirmBulkDelete = function () {
+    var checked = document.querySelectorAll('.fm-check:checked').length;
+    if (checked === 0) { return; }
+    if (!confirm('Pindahkan ' + checked + ' item ke Recycle Bin?')) { return; }
+    window.fmSetBulkAction('bulk_delete');
+  };
+  window.fmSubmitChmod = function () {
+    var modeVal = document.getElementById('chmodModeInput').value;
+    if (!/^[0-7][0-7][0-7]$/.test(modeVal)) {
+      alert('Mode tidak valid - harus 3 digit oktal, contoh 755 atau 644.');
+      return;
+    }
+    document.getElementById('bulkChmodMode').value = modeVal;
+    window.fmSetBulkAction('chmod');
+  };
+
+  // Drag & drop upload - reuses the same 'upload' POST action as the
+  // Upload File modal, marked as an AJAX request so the server returns
+  // JSON instead of flash()+redirect(). Reads the target folder from the
+  // form's own hidden "path" field (live DOM read) rather than a value
+  // captured at script-load time, since that field's value changes on
+  // every in-app folder navigation.
+  document.addEventListener('dragover', function (e) {
+    if (!e.target.closest('#fmDropZone')) { return; }
+    e.preventDefault();
+    e.target.closest('#fmDropZone').classList.add('border-primary');
+  });
+  document.addEventListener('dragleave', function (e) {
+    var zone = e.target.closest('#fmDropZone');
+    if (zone) { zone.classList.remove('border-primary'); }
+  });
+  document.addEventListener('drop', function (e) {
+    var zone = e.target.closest('#fmDropZone');
+    if (!zone) { return; }
+    e.preventDefault();
+    zone.classList.remove('border-primary');
+    var files = e.dataTransfer ? e.dataTransfer.files : null;
+    if (!files || files.length === 0) { return; }
+    fmUploadDroppedFiles(files);
+  });
+
+  function fmCurrentPath() {
+    var field = document.querySelector('#bulkForm input[name="path"]');
+    return field ? field.value : '';
+  }
+
+  function fmUploadDroppedFiles(files) {
+    var i = 0;
+    function next() {
+      if (i >= files.length) { fmNavigateBrowse(window.location.pathname + '?scope={$scope}&name={$name}&path=' + encodeURIComponent(fmCurrentPath())); return; }
+      var file = files[i++];
+      var fd = new FormData();
+      fd.append('_csrf', {$jsCsrfToken});
+      fd.append('scope', '{$scope}');
+      fd.append('name', '{$name}');
+      fd.append('action', 'upload');
+      fd.append('path', fmCurrentPath());
+      fd.append('file', file);
+      fetch(window.location.pathname, { method: 'POST', body: fd, headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(function () { next(); })
+        .catch(function () { next(); });
+    }
+    next();
+  }
+
+  // In-app folder navigation (breadcrumb / folder links / show-hide toggle)
+  // - fetches the SAME page as an AJAX fragment (see \$isAjaxBrowse in
+  // file_manager.php) and swaps it into #fmBrowseRoot instead of letting
+  // the browser navigate, so the address bar never shows ?path=... at all
+  // while browsing. Falls back to a real navigation if the fetch fails for
+  // any reason, so a network hiccup never leaves the user stuck.
+  window.fmNavigateBrowse = function (url) {
+    var root = document.getElementById('fmBrowseRoot');
+    if (!root) { window.location.href = url; return; }
+    fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+      .then(function (r) { if (!r.ok) { throw new Error('bad status'); } return r.text(); })
+      .then(function (html) { root.innerHTML = html; })
+      .catch(function () { window.location.href = url; });
+  };
+
+  document.addEventListener('click', function (e) {
+    var navLink = e.target.closest('.fm-nav-link');
+    if (!navLink) { return; }
+    e.preventDefault();
+    window.fmNavigateBrowse(navLink.getAttribute('href'));
+  });
+
+  // Right-click context menu on a file/folder row - mirrors the row's own
+  // action icons (chmod/rename/delete/download) plus Salin/Potong (reusing
+  // the same single-checkbox + bulk-action submission path a manual
+  // checkbox selection would use) and Open in Terminal.
+  var fmCtxRow = null;
+
+  document.addEventListener('contextmenu', function (e) {
+    var row = e.target.closest('.fm-row');
+    var menu = document.getElementById('fmContextMenu');
+    if (!row || !menu) { return; }
+    e.preventDefault();
+    fmCtxRow = {
+      relPath: row.getAttribute('data-fm-relpath'),
+      name: row.getAttribute('data-fm-name'),
+      isDir: row.getAttribute('data-fm-is-dir') === '1'
+    };
+    var downloadItem = menu.querySelector('[data-fm-ctx="download"]');
+    if (downloadItem) { downloadItem.style.display = fmCtxRow.isDir ? 'none' : ''; }
+    var menuWidth = 220;
+    var x = Math.min(e.clientX, window.innerWidth - menuWidth - 8);
+    menu.style.display = 'block';
+    menu.style.left = Math.max(x, 8) + 'px';
+    menu.style.top = e.clientY + 'px';
+  });
+
+  document.addEventListener('click', function (e) {
+    var menu = document.getElementById('fmContextMenu');
+    if (menu && menu.style.display !== 'none' && !e.target.closest('#fmContextMenu')) {
+      menu.style.display = 'none';
+    }
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') { return; }
+    var menu = document.getElementById('fmContextMenu');
+    if (menu) { menu.style.display = 'none'; }
+  });
+
+  document.addEventListener('click', function (e) {
+    var item = e.target.closest('[data-fm-ctx]');
+    if (!item || !fmCtxRow) { return; }
+    var action = item.getAttribute('data-fm-ctx');
+    var row = fmCtxRow;
+    var menu = document.getElementById('fmContextMenu');
+    if (menu) { menu.style.display = 'none'; }
+
+    if (action === 'open') {
+      if (row.isDir) {
+        window.fmNavigateBrowse('/file_manager.php?scope={$scope}&name={$name}&path=' + encodeURIComponent(row.relPath));
+      } else {
+        window.fmOpenEditor(row.relPath);
+      }
+    } else if (action === 'download') {
+      window.location.href = '/file_manager.php?scope={$scope}&name={$name}&download=' + encodeURIComponent(row.relPath);
+    } else if (action === 'copy' || action === 'cut') {
+      fmSelectOnly(row.relPath);
+      window.fmSetBulkAction(action === 'cut' ? 'cut_to_clipboard' : 'copy_to_clipboard');
+    } else if (action === 'chmod') {
+      fmSelectOnly(row.relPath);
+      var chmodEl = document.getElementById('chmodModal');
+      if (chmodEl && typeof bootstrap !== 'undefined') { bootstrap.Modal.getOrCreateInstance(chmodEl).show(); }
+    } else if (action === 'rename') {
+      document.getElementById('renameTarget').value = row.relPath;
+      document.getElementById('renameNewName').value = row.name;
+      var renameEl = document.getElementById('renameModal');
+      if (renameEl && typeof bootstrap !== 'undefined') { bootstrap.Modal.getOrCreateInstance(renameEl).show(); }
+    } else if (action === 'delete') {
+      document.getElementById('deleteTarget').value = row.relPath;
+      document.getElementById('deleteLabel').textContent = row.name;
+      var deleteEl = document.getElementById('deleteModal');
+      if (deleteEl && typeof bootstrap !== 'undefined') { bootstrap.Modal.getOrCreateInstance(deleteEl).show(); }
+    } else if (action === 'terminal' && window.fmOpenTerminal) {
+      window.fmOpenTerminal(fmAbsolutePath(row.relPath, row.isDir));
+    }
+  });
+
+  // Mirrors panel-exec.sh's WWW_BASE/NODEAPPS_BASE (/var/www,
+  // /home/nodeapps/apps) purely to build the Terminal's starting
+  // directory - not a security boundary (bwrap's own bind-mount set is
+  // what actually confines the shell; if this ever drifted from the real
+  // base paths, "cd" would just fail silently inside the sandbox and fall
+  // back to its default directory, not escape anything).
+  function fmAbsolutePath(relPath, isDir) {
+    var targetRelPath = isDir ? relPath : relPath.substring(0, relPath.lastIndexOf('/') + 1).replace(/\/$/, '');
+    var base = {$jsTerminalBase};
+    return targetRelPath === '' ? base : base + '/' + targetRelPath;
+  }
+})();
+</script>
 HTML;
 
 $pageTitle = 'File Manager';
@@ -631,6 +917,39 @@ include __DIR__ . '/partials/header.php';
     </div>
   </div>
 </div>
+
+<?php if ($canTerminal): ?>
+<div class="modal fade" id="fmTerminalModal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-terminal me-1"></i>Terminal</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <iframe id="fmTerminalFrame" src="about:blank" style="width:100%; height:70vh; border:0;" title="Terminal"></iframe>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  var el = document.getElementById('fmTerminalModal');
+  if (!el) { return; }
+  window.fmOpenTerminal = function (absPath) {
+    var frame = document.getElementById('fmTerminalFrame');
+    if (frame) { frame.src = '/terminal/?arg=' + encodeURIComponent(absPath); }
+    if (typeof bootstrap !== 'undefined') { bootstrap.Modal.getOrCreateInstance(el).show(); }
+  };
+  // Drops the iframe back to about:blank on close so the ttyd session
+  // actually disconnects instead of idling in the background.
+  el.addEventListener('hidden.bs.modal', function () {
+    var frame = document.getElementById('fmTerminalFrame');
+    if (frame) { frame.src = 'about:blank'; }
+  });
+})();
+</script>
+<?php endif; ?>
 
 <?php if ($showTrash):
 
@@ -753,431 +1072,9 @@ include __DIR__ . '/partials/header.php';
 
 <?php else: ?>
 
-  <?php
-  try {
-      $entries = FileManagerService::listDir($scope, $name, $currentPath);
-  } catch (InvalidArgumentException|RuntimeException $e) {
-      flash('error', $e->getMessage());
-      $entries = [];
-  }
-  if (!$showHidden) {
-      $entries = array_values(array_filter($entries, static fn(array $e): bool => !str_starts_with($e['name'], '.')));
-  }
-
-  $clipboard = $_SESSION['fm_clipboard'] ?? null;
-  $clipboardFamilyMatches = is_array($clipboard) && fm_scope_family((string) $clipboard['scope']) === fm_scope_family($scope);
-  ?>
-
-  <style>
-    .fm-btn-xs{padding:.2rem .55rem;font-size:.75rem;}
-    .fm-path-bar,.fm-path-bar .btn,.fm-path-bar .form-control,.fm-path-bar .breadcrumb{height:calc(1.5em + .5rem + 2px);padding:.25rem .6rem;font-size:.875rem;line-height:1.5;}
-  </style>
-
-  <div class="d-flex flex-wrap align-items-center gap-2 mb-3 fm-path-bar">
-    <a href="<?= e($backUrl) ?>" class="btn btn-outline-secondary" title="Kembali"><i class="bi bi-arrow-left"></i></a>
-
-    <nav aria-label="breadcrumb" class="mb-0 flex-grow-1">
-      <ol class="breadcrumb bg-body-tertiary border rounded mb-0 w-100 align-items-center">
-        <li class="breadcrumb-item"><a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>"><i class="bi bi-hdd"></i> root</a></li>
-        <?php foreach (fm_breadcrumbs($currentPath) as $i => $crumb): ?>
-          <li class="breadcrumb-item"><a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&path=<?= urlencode($crumb['path']) ?>"><?= e($crumb['label']) ?></a></li>
-        <?php endforeach; ?>
-      </ol>
-    </nav>
-
-    <form method="get" class="d-flex gap-1" id="fmSearchForm" style="max-width:260px">
-      <input type="hidden" name="scope" value="<?= e($scope) ?>">
-      <input type="hidden" name="name" value="<?= e($name) ?>">
-      <input type="text" name="search" class="form-control" placeholder="Cari nama file...">
-      <button class="btn btn-outline-secondary"><i class="bi bi-search"></i></button>
-    </form>
+  <div id="fmBrowseRoot">
+    <?php include __DIR__ . '/partials/file_manager_browse.php'; ?>
   </div>
-
-  <form method="post" id="bulkForm">
-    <?= Csrf::field() ?>
-    <input type="hidden" name="scope" value="<?= e($scope) ?>">
-    <input type="hidden" name="name" value="<?= e($name) ?>">
-    <input type="hidden" name="path" value="<?= e($currentPath) ?>">
-    <input type="hidden" name="action" id="bulkAction" value="">
-    <input type="hidden" name="mode" id="bulkChmodMode" value="">
-
-    <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
-      <?php if ($canManage): ?>
-      <button type="button" class="btn btn-primary btn-sm fm-btn-xs" data-bs-toggle="modal" data-bs-target="#uploadModal"><i class="bi bi-upload me-1"></i>Upload File</button>
-      <button type="button" class="btn btn-outline-primary btn-sm fm-btn-xs" data-bs-toggle="modal" data-bs-target="#uploadZipModal"><i class="bi bi-file-earmark-zip me-1"></i>Upload &amp; Extract ZIP</button>
-      <button type="button" class="btn btn-outline-secondary btn-sm fm-btn-xs" data-bs-toggle="modal" data-bs-target="#mkdirModal"><i class="bi bi-folder-plus me-1"></i>Folder Baru</button>
-      <button type="button" class="btn btn-outline-secondary btn-sm fm-btn-xs" data-bs-toggle="modal" data-bs-target="#newFileModal"><i class="bi bi-file-earmark-plus me-1"></i>File Baru</button>
-      <?php endif; ?>
-      <a href="?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&path=<?= urlencode($currentPath) ?>&show_hidden=<?= $showHidden ? '0' : '1' ?>" class="btn btn-outline-secondary btn-sm fm-btn-xs">
-        <i class="bi bi-eye<?= $showHidden ? '-slash' : '' ?> me-1"></i><?= $showHidden ? 'Sembunyikan' : 'Tampilkan' ?> File Tersembunyi
-      </a>
-      <a href="?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&trash=1" class="btn btn-outline-secondary btn-sm fm-btn-xs"><i class="bi bi-trash3 me-1"></i>Recycle Bin</a>
-
-      <?php if ($canManage): ?>
-      <div class="d-none align-items-center gap-2 ms-auto p-1 bg-body-tertiary rounded" id="bulkToolbar">
-        <span class="small text-muted" id="bulkCount"></span>
-        <button type="button" class="btn btn-sm btn-outline-secondary fm-btn-xs" onclick="fmSetBulkAction('copy_to_clipboard')"><i class="bi bi-clipboard me-1"></i>Salin</button>
-        <button type="button" class="btn btn-sm btn-outline-secondary fm-btn-xs" onclick="fmSetBulkAction('cut_to_clipboard')"><i class="bi bi-scissors me-1"></i>Potong</button>
-        <button type="button" class="btn btn-sm btn-outline-secondary fm-btn-xs" data-bs-toggle="modal" data-bs-target="#chmodModal"><i class="bi bi-shield-lock me-1"></i>Ubah Izin</button>
-        <button type="button" class="btn btn-sm btn-outline-danger fm-btn-xs" onclick="fmConfirmBulkDelete()"><i class="bi bi-trash me-1"></i>Hapus</button>
-      </div>
-      <?php endif; ?>
-    </div>
-
-    <?php if ($canManage && is_array($clipboard)): ?>
-    <div class="alert alert-info d-flex justify-content-between align-items-center py-2 mb-3">
-      <span><i class="bi bi-clipboard me-1"></i><?= count($clipboard['items']) ?> item (<?= $clipboard['mode'] === 'cut' ? 'Potong' : 'Salin' ?>) dari <strong><?= e((string) $clipboard['name']) ?></strong>
-        <?php if (!$clipboardFamilyMatches): ?><span class="text-muted">- pindah ke tampilan Website/Node.js yang sesuai untuk tempel</span><?php endif; ?>
-      </span>
-      <span class="d-flex gap-2">
-        <?php if ($clipboardFamilyMatches): ?>
-        <button type="button" class="btn btn-sm btn-primary" onclick="fmSetBulkAction('paste_clipboard')">Tempel di Sini</button>
-        <?php endif; ?>
-        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="fmSetBulkAction('clear_clipboard')">Batal</button>
-      </span>
-    </div>
-    <?php endif; ?>
-
-    <div class="card stat-card" id="fmDropZone">
-      <div class="card-body p-0">
-        <div class="table-responsive">
-          <table class="table table-hover mb-0 align-middle">
-            <thead class="table-light">
-              <tr>
-                <?php if ($canManage): ?><th style="width:36px"><input type="checkbox" id="selectAll"></th><?php endif; ?>
-                <th>Nama</th><th>Ukuran</th><th>Izin</th><th>Diubah</th><th class="text-end">Aksi</th>
-              </tr>
-            </thead>
-            <tbody>
-            <?php if (empty($entries)): ?>
-              <tr><td colspan="6" class="text-center text-muted py-4">Folder ini kosong - atau seret &amp; lepas file di sini untuk upload</td></tr>
-            <?php endif; ?>
-            <?php foreach ($entries as $entry):
-                $entryRelPath = $currentPath !== '' ? $currentPath . '/' . $entry['name'] : $entry['name'];
-                $isDir = $entry['type'] === 'dir';
-            ?>
-              <tr>
-                <?php if ($canManage): ?>
-                <td><input type="checkbox" name="targets[]" value="<?= e($entryRelPath) ?>" class="fm-check"></td>
-                <?php endif; ?>
-                <td>
-                  <?php if ($isDir): ?>
-                    <a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&path=<?= urlencode($entryRelPath) ?>">
-                      <i class="bi bi-folder-fill text-warning me-1"></i><?= e($entry['name']) ?>
-                    </a>
-                  <?php else: ?>
-                    <a href="#" data-fm-open-file="<?= e($entryRelPath) ?>">
-                      <i class="bi <?= e(fm_file_icon($entry['name'])) ?> <?= e(fm_file_icon_color($entry['name'])) ?> me-1"></i><?= e($entry['name']) ?>
-                    </a>
-                  <?php endif; ?>
-                </td>
-                <td class="text-muted small"><?= $isDir ? '-' : e(fm_human_size($entry['size'])) ?></td>
-                <td class="text-muted small"><code><?= e($entry['mode']) ?></code></td>
-                <td class="text-muted small"><?= e(date('Y-m-d H:i', $entry['mtime'])) ?></td>
-                <td class="text-end text-nowrap">
-                  <?php if (!$isDir): ?>
-                  <a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&download=<?= urlencode($entryRelPath) ?>" class="btn btn-sm btn-outline-secondary" title="Download"><i class="bi bi-download"></i></a>
-                  <?php endif; ?>
-                  <?php if ($canManage): ?>
-                  <button type="button" class="btn btn-sm btn-outline-secondary" title="Ubah Izin" data-bs-toggle="modal" data-bs-target="#chmodModal" data-target="<?= e($entryRelPath) ?>" data-label="<?= e($entry['name']) ?>"><i class="bi bi-shield-lock"></i></button>
-                  <button type="button" class="btn btn-sm btn-outline-secondary" title="Rename" data-bs-toggle="modal" data-bs-target="#renameModal" data-target="<?= e($entryRelPath) ?>" data-current-name="<?= e($entry['name']) ?>"><i class="bi bi-pencil"></i></button>
-                  <button type="button" class="btn btn-sm btn-outline-danger" title="Hapus (ke Recycle Bin)" data-bs-toggle="modal" data-bs-target="#deleteModal" data-target="<?= e($entryRelPath) ?>" data-label="<?= e($entry['name']) ?>"><i class="bi bi-trash"></i></button>
-                  <?php endif; ?>
-                </td>
-              </tr>
-            <?php endforeach; ?>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </form>
-
-  <?php if ($canManage): ?>
-  <div class="modal fade" id="uploadModal" tabindex="-1">
-    <div class="modal-dialog">
-      <form method="post" enctype="multipart/form-data">
-        <div class="modal-content">
-          <div class="modal-header"><h5 class="modal-title">Upload File</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
-          <div class="modal-body">
-            <?= Csrf::field() ?>
-            <input type="hidden" name="scope" value="<?= e($scope) ?>">
-            <input type="hidden" name="name" value="<?= e($name) ?>">
-            <input type="hidden" name="action" value="upload">
-            <input type="hidden" name="path" value="<?= e($currentPath) ?>">
-            <p class="text-muted small">Diupload ke: <code>/<?= e($currentPath) ?></code></p>
-            <input type="file" name="file" class="form-control" required>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
-            <button type="submit" class="btn btn-primary">Upload</button>
-          </div>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="modal fade" id="uploadZipModal" tabindex="-1">
-    <div class="modal-dialog">
-      <form method="post" enctype="multipart/form-data">
-        <div class="modal-content">
-          <div class="modal-header"><h5 class="modal-title">Upload &amp; Extract ZIP</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
-          <div class="modal-body">
-            <?= Csrf::field() ?>
-            <input type="hidden" name="scope" value="<?= e($scope) ?>">
-            <input type="hidden" name="name" value="<?= e($name) ?>">
-            <input type="hidden" name="action" value="upload_zip">
-            <input type="hidden" name="path" value="<?= e($currentPath) ?>">
-            <p class="text-muted small">Diekstrak ke: <code>/<?= e($currentPath) ?></code> (file dengan nama sama akan ditimpa)</p>
-            <input type="file" name="zipfile" accept=".zip" class="form-control" required>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
-            <button type="submit" class="btn btn-primary">Upload &amp; Extract</button>
-          </div>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="modal fade" id="mkdirModal" tabindex="-1">
-    <div class="modal-dialog">
-      <form method="post">
-        <div class="modal-content">
-          <div class="modal-header"><h5 class="modal-title">Folder Baru</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
-          <div class="modal-body">
-            <?= Csrf::field() ?>
-            <input type="hidden" name="scope" value="<?= e($scope) ?>">
-            <input type="hidden" name="name" value="<?= e($name) ?>">
-            <input type="hidden" name="action" value="mkdir">
-            <input type="hidden" name="path" value="<?= e($currentPath) ?>">
-            <label class="form-label">Nama Folder</label>
-            <input type="text" name="folder_name" class="form-control" required>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
-            <button type="submit" class="btn btn-primary">Buat</button>
-          </div>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="modal fade" id="newFileModal" tabindex="-1">
-    <div class="modal-dialog">
-      <form method="post">
-        <div class="modal-content">
-          <div class="modal-header"><h5 class="modal-title">File Baru</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
-          <div class="modal-body">
-            <?= Csrf::field() ?>
-            <input type="hidden" name="scope" value="<?= e($scope) ?>">
-            <input type="hidden" name="name" value="<?= e($name) ?>">
-            <input type="hidden" name="action" value="new_file">
-            <input type="hidden" name="path" value="<?= e($currentPath) ?>">
-            <label class="form-label">Nama File</label>
-            <input type="text" name="file_name" class="form-control" required>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
-            <button type="submit" class="btn btn-primary">Buat</button>
-          </div>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="modal fade" id="renameModal" tabindex="-1">
-    <div class="modal-dialog">
-      <form method="post">
-        <div class="modal-content">
-          <div class="modal-header"><h5 class="modal-title">Ganti Nama</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
-          <div class="modal-body">
-            <?= Csrf::field() ?>
-            <input type="hidden" name="scope" value="<?= e($scope) ?>">
-            <input type="hidden" name="name" value="<?= e($name) ?>">
-            <input type="hidden" name="action" value="rename">
-            <input type="hidden" name="path" value="<?= e($currentPath) ?>">
-            <input type="hidden" name="target" id="renameTarget">
-            <label class="form-label">Nama Baru</label>
-            <input type="text" name="new_name" id="renameNewName" class="form-control" required>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
-            <button type="submit" class="btn btn-primary">Simpan</button>
-          </div>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="modal fade" id="deleteModal" tabindex="-1">
-    <div class="modal-dialog">
-      <form method="post">
-        <div class="modal-content">
-          <div class="modal-header"><h5 class="modal-title">Hapus</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
-          <div class="modal-body">
-            <?= Csrf::field() ?>
-            <input type="hidden" name="scope" value="<?= e($scope) ?>">
-            <input type="hidden" name="name" value="<?= e($name) ?>">
-            <input type="hidden" name="action" value="delete">
-            <input type="hidden" name="path" value="<?= e($currentPath) ?>">
-            <input type="hidden" name="target" id="deleteTarget">
-            <p>Pindahkan <strong id="deleteLabel"></strong> ke Recycle Bin? Bisa dipulihkan lagi lewat menu Recycle Bin.</p>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
-            <button type="submit" class="btn btn-danger">Hapus</button>
-          </div>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="modal fade" id="chmodModal" tabindex="-1">
-    <div class="modal-dialog">
-      <div class="modal-content">
-        <div class="modal-header"><h5 class="modal-title">Ubah Izin</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
-        <div class="modal-body">
-          <p class="text-muted small" id="chmodTargetLabel"></p>
-          <label class="form-label">Mode (oktal, 3 digit)</label>
-          <input type="text" id="chmodModeInput" class="form-control mb-2" pattern="^[0-7][0-7][0-7]$" placeholder="755" maxlength="3" required>
-          <div class="form-text mb-2">Digit terakhir ('other'/dunia) tidak boleh punya izin tulis - mode seperti 777/776/773 ditolak.</div>
-          <div class="d-flex flex-wrap gap-1">
-            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('chmodModeInput').value='755'">755 (folder)</button>
-            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('chmodModeInput').value='644'">644 (file)</button>
-            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('chmodModeInput').value='750'">750</button>
-            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('chmodModeInput').value='640'">640</button>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
-          <button type="button" class="btn btn-primary" onclick="fmSubmitChmod()">Terapkan</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <script>
-  document.getElementById('renameModal').addEventListener('show.bs.modal', function (ev) {
-    var btn = ev.relatedTarget;
-    document.getElementById('renameTarget').value = btn.getAttribute('data-target');
-    document.getElementById('renameNewName').value = btn.getAttribute('data-current-name');
-  });
-  document.getElementById('deleteModal').addEventListener('show.bs.modal', function (ev) {
-    var btn = ev.relatedTarget;
-    document.getElementById('deleteTarget').value = btn.getAttribute('data-target');
-    document.getElementById('deleteLabel').textContent = btn.getAttribute('data-label');
-  });
-  document.getElementById('chmodModal').addEventListener('show.bs.modal', function (ev) {
-    var btn = ev.relatedTarget;
-    var singleTarget = btn ? btn.getAttribute('data-target') : null;
-    var label = document.getElementById('chmodTargetLabel');
-    if (singleTarget) {
-      document.querySelectorAll('.fm-check').forEach(function (c) { c.checked = (c.value === singleTarget); });
-      label.textContent = 'Untuk: ' + btn.getAttribute('data-label');
-    } else {
-      var n = document.querySelectorAll('.fm-check:checked').length;
-      label.textContent = n + ' item dipilih';
-    }
-    document.getElementById('chmodModeInput').value = '';
-  });
-
-  (function () {
-    var selectAll = document.getElementById('selectAll');
-    var checks = document.querySelectorAll('.fm-check');
-    var toolbar = document.getElementById('bulkToolbar');
-    var countLabel = document.getElementById('bulkCount');
-    var searchForm = document.getElementById('fmSearchForm');
-
-    function updateToolbar() {
-      if (!toolbar) return;
-      var checked = document.querySelectorAll('.fm-check:checked');
-      if (checked.length > 0) {
-        toolbar.classList.remove('d-none');
-        toolbar.classList.add('d-flex');
-        countLabel.textContent = checked.length + ' dipilih';
-        if (searchForm) searchForm.classList.add('d-none');
-      } else {
-        toolbar.classList.add('d-none');
-        toolbar.classList.remove('d-flex');
-        if (searchForm) searchForm.classList.remove('d-none');
-      }
-    }
-    if (selectAll) {
-      selectAll.addEventListener('change', function () {
-        checks.forEach(function (c) { c.checked = selectAll.checked; });
-        updateToolbar();
-      });
-    }
-    checks.forEach(function (c) { c.addEventListener('change', updateToolbar); });
-
-    window.fmSetBulkAction = function (action) {
-      document.getElementById('bulkAction').value = action;
-      document.getElementById('bulkForm').submit();
-    };
-    window.fmConfirmBulkDelete = function () {
-      var checked = document.querySelectorAll('.fm-check:checked').length;
-      if (checked === 0) return;
-      if (!confirm('Pindahkan ' + checked + ' item ke Recycle Bin?')) return;
-      fmSetBulkAction('bulk_delete');
-    };
-    window.fmSubmitChmod = function () {
-      var modeVal = document.getElementById('chmodModeInput').value;
-      if (!/^[0-7][0-7][0-7]$/.test(modeVal)) {
-        alert('Mode tidak valid - harus 3 digit oktal, contoh 755 atau 644.');
-        return;
-      }
-      document.getElementById('bulkChmodMode').value = modeVal;
-      fmSetBulkAction('chmod');
-    };
-
-    // Drag & drop upload - reuses the same 'upload' POST action as the
-    // Upload File modal, just marked as an AJAX request (X-Requested-With)
-    // so the server returns JSON instead of flash()+redirect(), letting
-    // several dropped files upload via sequential fetch() calls without a
-    // full page reload per file.
-    var dropZone = document.getElementById('fmDropZone');
-    if (dropZone) {
-      ['dragenter', 'dragover'].forEach(function (evt) {
-        dropZone.addEventListener(evt, function (e) {
-          e.preventDefault(); e.stopPropagation();
-          dropZone.classList.add('border-primary');
-        });
-      });
-      ['dragleave', 'drop'].forEach(function (evt) {
-        dropZone.addEventListener(evt, function (e) {
-          e.preventDefault(); e.stopPropagation();
-          dropZone.classList.remove('border-primary');
-        });
-      });
-      dropZone.addEventListener('drop', function (e) {
-        var files = e.dataTransfer ? e.dataTransfer.files : null;
-        if (!files || files.length === 0) return;
-        fmUploadDroppedFiles(files);
-      });
-    }
-
-    function fmUploadDroppedFiles(files) {
-      var i = 0;
-      function next() {
-        if (i >= files.length) { location.reload(); return; }
-        var file = files[i++];
-        var fd = new FormData();
-        fd.append('_csrf', <?= json_encode(Csrf::token()) ?>);
-        fd.append('scope', <?= json_encode($scope) ?>);
-        fd.append('name', <?= json_encode($name) ?>);
-        fd.append('action', 'upload');
-        fd.append('path', <?= json_encode($currentPath) ?>);
-        fd.append('file', file);
-        fetch(window.location.pathname, { method: 'POST', body: fd, headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-          .then(function () { next(); })
-          .catch(function () { next(); });
-      }
-      next();
-    }
-  })();
-  </script>
-  <?php endif; ?>
 
 <?php endif; ?>
 

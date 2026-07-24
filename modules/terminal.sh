@@ -208,6 +208,18 @@ module_terminal_apply_acls() {
 # connection, never touched by anything outside the sandbox. Including it
 # anyway would cost real functionality (setsid() breaks Ctrl+C/Ctrl+Z/fg/bg
 # job control in the sandboxed shell) for a threat that doesn't apply.
+#
+# `-a` (--url-arg) lets the connecting client pass an initial directory
+# via ?arg=<path> (used by File Manager's "Open in Terminal" to land the
+# session in the folder that was right-clicked, instead of always
+# /var/www) - this is NOT a new privilege boundary: the arg only ever
+# reaches a plain `cd` inside the ALREADY-sandboxed bash, so at most it
+# can move the cwd to somewhere else bwrap already bind-mounted (still
+# just ${TERMINAL_WWW_BASE}/${TERMINAL_NODEAPPS_BASE}) - a bogus or
+# malicious path simply fails `cd` silently and falls through to the
+# --chdir default, never anything outside the sandbox. Only reachable at
+# all through the same auth_request-gated /terminal/ Nginx location every
+# other Terminal session already goes through.
 module_terminal_systemd_unit() {
     log_step "Konfigurasi service ttyd (Terminal di Panel)"
 
@@ -225,14 +237,14 @@ After=network.target
 Type=simple
 User=${TERMINAL_USER}
 Group=${TERMINAL_USER}
-ExecStart=${ttyd_bin} -i 127.0.0.1 -p ${TERMINAL_PORT} -b /terminal -W -O ${bwrap_bin} \\
+ExecStart=${ttyd_bin} -i 127.0.0.1 -p ${TERMINAL_PORT} -b /terminal -W -O -a ${bwrap_bin} \\
     --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib \\
     --ro-bind-try /lib64 /lib64 --ro-bind /etc /etc \\
     --bind ${TERMINAL_WWW_BASE} ${TERMINAL_WWW_BASE} --bind ${TERMINAL_NODEAPPS_BASE} ${TERMINAL_NODEAPPS_BASE} \\
     --proc /proc --dev /dev --tmpfs /tmp --chdir ${TERMINAL_WWW_BASE} \\
     --unshare-all --share-net --die-with-parent \\
     --clearenv --setenv HOME ${TERMINAL_WWW_BASE} --setenv PATH /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin --setenv TERM xterm-256color --setenv LANG C.UTF-8 \\
-    bash
+    bash -c 'if [ -n "\$1" ]; then cd -- "\$1" 2>/dev/null || true; fi; exec bash' bash
 Restart=on-failure
 RestartSec=2
 
