@@ -127,8 +127,19 @@ final class Auth
         }
 
         $now = time();
-        $idleTimeout = Config::getInt('SESSION_IDLE_TIMEOUT', 900);
-        $lifetime = Config::getInt('SESSION_LIFETIME', 1800);
+
+        // Settings > General (SettingsService) overrides the .env default
+        // when an admin has set it via the UI - falls back to Config
+        // (headless-install default) when unset or set to something
+        // nonsensical like 0.
+        $idleTimeout = (int) SettingsService::get('session_idle_timeout');
+        if ($idleTimeout <= 0) {
+            $idleTimeout = Config::getInt('SESSION_IDLE_TIMEOUT', 900);
+        }
+        $lifetime = (int) SettingsService::get('session_lifetime');
+        if ($lifetime <= 0) {
+            $lifetime = Config::getInt('SESSION_LIFETIME', 1800);
+        }
 
         $lastActivity = $_SESSION['last_activity'] ?? $now;
         $loginTime = $_SESSION['login_started_at'] ?? $now;

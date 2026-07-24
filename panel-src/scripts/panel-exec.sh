@@ -26,6 +26,7 @@ umask 027
 AUDIT_LOG="/opt/server-panel/storage/logs/panel-exec-audit.log"
 NGINX_AVAILABLE="/etc/nginx/sites-available"
 NGINX_ENABLED="/etc/nginx/sites-enabled"
+NGINX_SNIPPETS="/etc/nginx/snippets"
 WWW_BASE="/var/www"
 NODEAPPS_BASE="/home/nodeapps/apps"
 NODEAPPS_HOME="/home/nodeapps"
@@ -33,6 +34,13 @@ BACKUP_BASE="/opt/server-panel/storage/backups"
 ACME_WEBROOT="/var/www/_letsencrypt"
 INSTALLER_DIR="/opt/yuuka-installer"
 SELF_UPDATE_LOG="/opt/server-panel/storage/logs/self-update.log"
+# Mirrors modules/panel.sh's PANEL_ROOT/PANEL_POOL_SOCK exactly - this
+# script is standalone (not sourced from modules/panel.sh), so these are
+# duplicated constants rather than a shared include, matching how every
+# other path in this file is already hardcoded rather than sourced.
+PANEL_ROOT="/opt/server-panel"
+PANEL_POOL_SOCK="/run/php/panel.sock"
+BASICAUTH_HTPASSWD="/etc/nginx/panel.htpasswd"
 
 mkdir -p "$(dirname "$AUDIT_LOG")"
 audit() {
@@ -79,6 +87,13 @@ RE_PORT='^[0-9]{1,5}$'
 # a mutating action and deserves the exact same explicit require_match
 # pattern used everywhere else in this file.
 RE_RESTARTABLE_SERVICE='^(nginx|mariadb|cloudflared|php7\.4-fpm|php8\.0-fpm|php8\.1-fpm|php8\.2-fpm|php8\.3-fpm|php8\.4-fpm)$'
+RE_ENABLE_DISABLE='^(enable|disable)$'
+RE_BASICAUTH_USERNAME='^[a-zA-Z0-9_.-]{3,64}$'
+# PHP's password_hash($pw, PASSWORD_BCRYPT) format: $2y$<cost>$<53 chars> -
+# validated here too (defense in depth) even though PHP already only ever
+# sends its own freshly-computed hash, never a user-supplied string.
+RE_BCRYPT_HASH='^\$2[abxy]\$[0-9]{2}\$[A-Za-z0-9./]{53}$'
+RE_SECURITY_ENTRANCE_PATH='^[a-zA-Z0-9_-]{3,64}$'
 
 # ---------------------------------------------------------------------------
 # Nginx operations
@@ -155,6 +170,124 @@ op_nginx_disable() {
     nginx -t
     systemctl reload nginx
     echo "OK: ${site} disabled"
+}
+
+# ---------------------------------------------------------------------------
+# Panel BasicAuth - an additional Nginx-level login prompt in front of the
+# panel's own vhost (Settings > General). Only ever writes a small snippet
+# file (included at server-block level by module_panel_nginx_vhost, same
+# self-healing pattern as pma_include/terminal_include) plus the htpasswd
+# file - never the vhost itself, so a bad toggle can't corrupt the whole
+# panel config. PHP always sends an already-computed bcrypt hash (never a
+# raw password), matching how panel_users passwords are already hashed
+# before ever reaching a privileged layer.
+# ---------------------------------------------------------------------------
+op_panel_basicauth_set() {
+    local mode="$1"
+    require_match "$mode" "$RE_ENABLE_DISABLE" "mode"
+    local snippet="${NGINX_SNIPPETS}/includes/panel-basicauth.conf"
+    mkdir -p "$(dirname "$snippet")"
+
+    local prev_snippet="" prev_htpasswd=""
+    if [[ -f "$snippet" ]]; then
+        prev_snippet=$(mktemp)
+        cp -a "$snippet" "$prev_snippet"
+    fi
+    if [[ -f "$BASICAUTH_HTPASSWD" ]]; then
+        prev_htpasswd=$(mktemp)
+        cp -a "$BASICAUTH_HTPASSWD" "$prev_htpasswd"
+    fi
+
+    if [[ "$mode" == "disable" ]]; then
+        rm -f "$snippet" "$BASICAUTH_HTPASSWD"
+    else
+        local username="$2" hash="$3"
+        require_match "$username" "$RE_BASICAUTH_USERNAME" "username"
+        require_match "$hash" "$RE_BCRYPT_HASH" "hash"
+        printf '%s:%s\n' "$username" "$hash" > "$BASICAUTH_HTPASSWD"
+        # ngx_http_auth_basic_module reads this file on every request (not
+        # just once at config-load time, precisely so credentials can be
+        # rotated without a reload) - it's the WORKER process (user
+        # www-data, not root) that needs read access, not just the master.
+        chown root:www-data "$BASICAUTH_HTPASSWD"
+        chmod 640 "$BASICAUTH_HTPASSWD"
+        cat > "$snippet" <<EOF
+auth_basic "Restricted";
+auth_basic_user_file ${BASICAUTH_HTPASSWD};
+EOF
+        chown root:root "$snippet"
+        chmod 644 "$snippet"
+    fi
+
+    if ! nginx -t 2>/tmp/nginx-test-err.$$; then
+        if [[ -n "$prev_snippet" ]]; then mv "$prev_snippet" "$snippet"; else rm -f "$snippet"; fi
+        if [[ -n "$prev_htpasswd" ]]; then mv "$prev_htpasswd" "$BASICAUTH_HTPASSWD"; else rm -f "$BASICAUTH_HTPASSWD"; fi
+        local err
+        err=$(cat /tmp/nginx-test-err.$$ 2>/dev/null || true)
+        rm -f "/tmp/nginx-test-err.$$"
+        fail "nginx -t gagal, BasicAuth dibatalkan: ${err}"
+    fi
+    rm -f "/tmp/nginx-test-err.$$" "$prev_snippet" "$prev_htpasswd" 2>/dev/null || true
+    systemctl reload nginx
+    echo "OK: basicauth ${mode}"
+}
+
+# ---------------------------------------------------------------------------
+# Panel Security Entrance - moves the panel login form off the guessable
+# /login.php path. `internal;` (identical pattern to terminal_auth.php's
+# location block) makes /login.php return 404 for any DIRECT external
+# request - it's only reachable via the nginx-internal rewrite from the
+# secret path, which never touches the browser's address bar as a
+# separate hop. Login itself (username+password+RBAC) is completely
+# unchanged; this only decides whether a request ever reaches that logic.
+#
+# The one real risk here is a self-inflicted lockout (wrong/forgotten
+# path = nobody can reach /login.php at all, including to undo this) -
+# that's what `yp security-entrance` (SSH, bypasses the panel and this
+# script entirely) exists for.
+# ---------------------------------------------------------------------------
+op_panel_security_entrance_set() {
+    local mode="$1"
+    require_match "$mode" "$RE_ENABLE_DISABLE" "mode"
+    local snippet="${NGINX_SNIPPETS}/includes/security-entrance.conf"
+    mkdir -p "$(dirname "$snippet")"
+
+    local prev_snippet=""
+    if [[ -f "$snippet" ]]; then
+        prev_snippet=$(mktemp)
+        cp -a "$snippet" "$prev_snippet"
+    fi
+
+    if [[ "$mode" == "disable" ]]; then
+        rm -f "$snippet"
+    else
+        local path="$2"
+        require_match "$path" "$RE_SECURITY_ENTRANCE_PATH" "path"
+        cat > "$snippet" <<EOF
+location = /login.php {
+    internal;
+    include snippets/fastcgi-php.conf;
+    fastcgi_pass unix:${PANEL_POOL_SOCK};
+    fastcgi_param SCRIPT_FILENAME ${PANEL_ROOT}/public/login.php;
+}
+location = /${path} {
+    rewrite ^ /login.php last;
+}
+EOF
+        chown root:root "$snippet"
+        chmod 644 "$snippet"
+    fi
+
+    if ! nginx -t 2>/tmp/nginx-test-err.$$; then
+        if [[ -n "$prev_snippet" ]]; then mv "$prev_snippet" "$snippet"; else rm -f "$snippet"; fi
+        local err
+        err=$(cat /tmp/nginx-test-err.$$ 2>/dev/null || true)
+        rm -f "/tmp/nginx-test-err.$$"
+        fail "nginx -t gagal, Security Entrance dibatalkan: ${err}"
+    fi
+    rm -f "/tmp/nginx-test-err.$$" "$prev_snippet" 2>/dev/null || true
+    systemctl reload nginx
+    echo "OK: security-entrance ${mode}"
 }
 
 op_nginx_delete() {
@@ -1123,6 +1256,8 @@ case "$SUBCOMMAND" in
     nginx-enable)          op_nginx_enable "$@" ;;
     nginx-disable)         op_nginx_disable "$@" ;;
     nginx-delete)          op_nginx_delete "$@" ;;
+    panel-basicauth-set)          op_panel_basicauth_set "$@" ;;
+    panel-security-entrance-set)  op_panel_security_entrance_set "$@" ;;
     pm2-deploy)            op_pm2_deploy "$@" ;;
     pm2-start)             op_pm2_start "$@" ;;
     pm2-stop)              op_pm2_stop "$@" ;;

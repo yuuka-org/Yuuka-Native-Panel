@@ -302,6 +302,23 @@ module_panel_nginx_vhost() {
         terminal_include="    include ${NGINX_SNIPPETS}/includes/terminal.conf;"
     fi
 
+    # Same self-healing pattern again - written by panel-exec.sh's
+    # op_panel_basicauth_set/op_panel_security_entrance_set (Settings >
+    # General in the panel UI), never by this function. auth_basic set
+    # anywhere in the server block is inherited by every location
+    # (including the PHP one) regardless of where in this block it's
+    # declared - unlike terminal_include/pma_include this isn't its own
+    # location, just a directive, so it's included at server level here.
+    local basicauth_include=""
+    if [[ -f "${NGINX_SNIPPETS}/includes/panel-basicauth.conf" ]]; then
+        basicauth_include="    include ${NGINX_SNIPPETS}/includes/panel-basicauth.conf;"
+    fi
+
+    local security_entrance_include=""
+    if [[ -f "${NGINX_SNIPPETS}/includes/security-entrance.conf" ]]; then
+        security_entrance_include="    include ${NGINX_SNIPPETS}/includes/security-entrance.conf;"
+    fi
+
     write_file_if_changed "$conf_file" <<EOF
 server {
     listen 80;
@@ -310,6 +327,7 @@ server {
 
     include ${NGINX_SNIPPETS}/acme-challenge.conf;
     include ${NGINX_SNIPPETS}/cloudflare-realip.conf;
+${basicauth_include}
 
     root ${PANEL_ROOT}/public;
     index index.php;
@@ -335,6 +353,7 @@ server {
 
 ${pma_include}
 ${terminal_include}
+${security_entrance_include}
     include ${NGINX_SNIPPETS}/security-headers.conf;
 }
 EOF

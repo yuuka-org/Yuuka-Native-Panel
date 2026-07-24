@@ -45,6 +45,13 @@ EOF
     write_file_if_changed "${NGINX_SNIPPETS}/acme-challenge.conf" <<EOF
 # Shared Let's Encrypt HTTP-01 challenge location - included by every server block
 location ^~ /.well-known/acme-challenge/ {
+    # auth_basic is inherited from the server block regardless of location
+    # ordering - the panel vhost can turn it on (Settings > General >
+    # BasicAuth), and without this override Let's Encrypt's own renewal
+    # requests here (which obviously carry no credentials) would get a 401
+    # and cert auto-renewal would silently start failing. Harmless no-op
+    # for every other vhost, which never sets auth_basic in the first place.
+    auth_basic off;
     root ${ACME_WEBROOT};
     default_type "text/plain";
     try_files \$uri =404;
