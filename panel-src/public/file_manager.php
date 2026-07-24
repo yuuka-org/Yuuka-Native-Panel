@@ -94,6 +94,10 @@ try {
     redirect($scope === 'nodeapp' ? '/nodejs.php' : '/websites.php');
 }
 
+$backUrl = FileManagerService::isRootScope($scope)
+    ? '/file_manager.php'
+    : ($scope === 'nodeapp' ? '/nodejs.php' : '/websites.php');
+
 /** website/www share ownership (www-data), nodeapp/nodeapps share ownership (nodeapps) - mirrors panel-exec.sh's fm_scope_family exactly. */
 function fm_scope_family(string $scope): string
 {
@@ -510,6 +514,21 @@ if ($editFile !== null) {
     readOnly: el.hasAttribute('readonly')
   });
   cm.on('change', function () { cm.save(); });
+
+  var modalEl = document.getElementById('editorModal');
+  if (modalEl && typeof bootstrap !== 'undefined') {
+    modalEl.addEventListener('shown.bs.modal', function () { cm.refresh(); cm.focus(); });
+    new bootstrap.Modal(modalEl, { backdrop: 'static', keyboard: false }).show();
+  }
+
+  document.addEventListener('keydown', function (e) {
+    if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's') { return; }
+    e.preventDefault();
+    var form = document.getElementById('editorForm');
+    if (!form) { return; }
+    cm.save();
+    form.submit();
+  });
 })();
 </script>
 HTML;
@@ -519,32 +538,39 @@ $pageTitle = 'File Manager';
 include __DIR__ . '/partials/header.php';
 ?>
 
-<?php if ($editFile !== null): ?>
+<?php if ($editFile !== null):
+  $editCloseUrl = '/file_manager.php?scope=' . urlencode($scope) . '&name=' . urlencode($name) . '&path=' . urlencode(dirname($editFile) === '.' ? '' : dirname($editFile));
+?>
 
-  <div class="card stat-card">
-    <div class="card-header bg-white d-flex justify-content-between align-items-center">
-      <span class="fw-semibold"><i class="bi <?= e(fm_file_icon($editFile)) ?> <?= e(fm_file_icon_color($editFile)) ?> me-1"></i><?= e($editFile) ?></span>
-      <a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&path=<?= urlencode(dirname($editFile) === '.' ? '' : dirname($editFile)) ?>" class="btn btn-sm btn-outline-secondary">
-        <i class="bi bi-x-lg me-1"></i>Tutup
-      </a>
-    </div>
-    <div class="card-body">
-      <?php if ($canManage): ?>
-      <form method="post">
-        <?= Csrf::field() ?>
-        <input type="hidden" name="scope" value="<?= e($scope) ?>">
-        <input type="hidden" name="name" value="<?= e($name) ?>">
-        <input type="hidden" name="action" value="save_file">
-        <input type="hidden" name="file" value="<?= e($editFile) ?>">
-        <textarea id="editorArea" name="content" data-filename="<?= e(basename($editFile)) ?>"><?= e($fileContent) ?></textarea>
-        <div class="mt-3 d-flex justify-content-end gap-2">
-          <button type="submit" class="btn btn-primary"><i class="bi bi-save me-1"></i>Simpan</button>
+  <div class="modal fade" id="editorModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-xl">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi <?= e(fm_file_icon($editFile)) ?> <?= e(fm_file_icon_color($editFile)) ?> me-1"></i><?= e($editFile) ?></h5>
+          <a href="<?= e($editCloseUrl) ?>" class="btn-close" aria-label="Tutup"></a>
         </div>
-      </form>
-      <?php else: ?>
-        <textarea id="editorArea" readonly data-filename="<?= e(basename($editFile)) ?>"><?= e($fileContent) ?></textarea>
-        <p class="text-muted small mt-2 mb-0">Mode baca saja - kamu tidak memiliki izin untuk mengedit file.</p>
-      <?php endif; ?>
+        <div class="modal-body">
+          <?php if ($canManage): ?>
+          <form method="post" id="editorForm">
+            <?= Csrf::field() ?>
+            <input type="hidden" name="scope" value="<?= e($scope) ?>">
+            <input type="hidden" name="name" value="<?= e($name) ?>">
+            <input type="hidden" name="action" value="save_file">
+            <input type="hidden" name="file" value="<?= e($editFile) ?>">
+            <textarea id="editorArea" name="content" data-filename="<?= e(basename($editFile)) ?>"><?= e($fileContent) ?></textarea>
+          </form>
+          <?php else: ?>
+            <textarea id="editorArea" readonly data-filename="<?= e(basename($editFile)) ?>"><?= e($fileContent) ?></textarea>
+            <p class="text-muted small mt-2 mb-0">Mode baca saja - kamu tidak memiliki izin untuk mengedit file.</p>
+          <?php endif; ?>
+        </div>
+        <div class="modal-footer">
+          <a href="<?= e($editCloseUrl) ?>" class="btn btn-secondary"><?= $canManage ? 'Batal' : 'Tutup' ?></a>
+          <?php if ($canManage): ?>
+          <button type="submit" form="editorForm" class="btn btn-primary"><i class="bi bi-save me-1"></i>Simpan <kbd class="ms-1">Ctrl+S</kbd></button>
+          <?php endif; ?>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -684,9 +710,13 @@ include __DIR__ . '/partials/header.php';
   $clipboardFamilyMatches = is_array($clipboard) && fm_scope_family((string) $clipboard['scope']) === fm_scope_family($scope);
   ?>
 
-  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-    <nav aria-label="breadcrumb" class="mb-0">
-      <ol class="breadcrumb bg-white border rounded px-3 py-2 mb-0">
+  <style>.fm-btn-xs{padding:.2rem .55rem;font-size:.75rem;}</style>
+
+  <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+    <a href="<?= e($backUrl) ?>" class="btn btn-outline-secondary btn-sm" title="Kembali"><i class="bi bi-arrow-left"></i></a>
+
+    <nav aria-label="breadcrumb" class="mb-0 flex-grow-1">
+      <ol class="breadcrumb bg-white border rounded px-3 py-2 mb-0 w-100">
         <li class="breadcrumb-item"><a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>"><i class="bi bi-hdd"></i> root</a></li>
         <?php foreach (fm_breadcrumbs($currentPath) as $i => $crumb): ?>
           <li class="breadcrumb-item"><a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&path=<?= urlencode($crumb['path']) ?>"><?= e($crumb['label']) ?></a></li>
@@ -700,16 +730,6 @@ include __DIR__ . '/partials/header.php';
       <input type="text" name="search" class="form-control form-control-sm" placeholder="Cari nama file...">
       <button class="btn btn-outline-secondary btn-sm"><i class="bi bi-search"></i></button>
     </form>
-
-    <?php if ($canManage): ?>
-    <div class="d-none align-items-center gap-2 p-2 bg-body-tertiary rounded" id="bulkToolbar">
-      <span class="small text-muted" id="bulkCount"></span>
-      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="fmSetBulkAction('copy_to_clipboard')"><i class="bi bi-clipboard me-1"></i>Salin</button>
-      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="fmSetBulkAction('cut_to_clipboard')"><i class="bi bi-scissors me-1"></i>Potong</button>
-      <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#chmodModal"><i class="bi bi-shield-lock me-1"></i>Ubah Izin</button>
-      <button type="button" class="btn btn-sm btn-outline-danger" onclick="fmConfirmBulkDelete()"><i class="bi bi-trash me-1"></i>Hapus</button>
-    </div>
-    <?php endif; ?>
   </div>
 
   <form method="post" id="bulkForm">
@@ -722,15 +742,25 @@ include __DIR__ . '/partials/header.php';
 
     <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
       <?php if ($canManage): ?>
-      <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#uploadModal"><i class="bi bi-upload me-1"></i>Upload File</button>
-      <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#uploadZipModal"><i class="bi bi-file-earmark-zip me-1"></i>Upload &amp; Extract ZIP</button>
-      <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#mkdirModal"><i class="bi bi-folder-plus me-1"></i>Folder Baru</button>
-      <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#newFileModal"><i class="bi bi-file-earmark-plus me-1"></i>File Baru</button>
+      <button type="button" class="btn btn-primary btn-sm fm-btn-xs" data-bs-toggle="modal" data-bs-target="#uploadModal"><i class="bi bi-upload me-1"></i>Upload File</button>
+      <button type="button" class="btn btn-outline-primary btn-sm fm-btn-xs" data-bs-toggle="modal" data-bs-target="#uploadZipModal"><i class="bi bi-file-earmark-zip me-1"></i>Upload &amp; Extract ZIP</button>
+      <button type="button" class="btn btn-outline-secondary btn-sm fm-btn-xs" data-bs-toggle="modal" data-bs-target="#mkdirModal"><i class="bi bi-folder-plus me-1"></i>Folder Baru</button>
+      <button type="button" class="btn btn-outline-secondary btn-sm fm-btn-xs" data-bs-toggle="modal" data-bs-target="#newFileModal"><i class="bi bi-file-earmark-plus me-1"></i>File Baru</button>
       <?php endif; ?>
-      <a href="?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&path=<?= urlencode($currentPath) ?>&show_hidden=<?= $showHidden ? '0' : '1' ?>" class="btn btn-outline-secondary btn-sm">
+      <a href="?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&path=<?= urlencode($currentPath) ?>&show_hidden=<?= $showHidden ? '0' : '1' ?>" class="btn btn-outline-secondary btn-sm fm-btn-xs">
         <i class="bi bi-eye<?= $showHidden ? '-slash' : '' ?> me-1"></i><?= $showHidden ? 'Sembunyikan' : 'Tampilkan' ?> File Tersembunyi
       </a>
-      <a href="?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&trash=1" class="btn btn-outline-secondary btn-sm"><i class="bi bi-trash3 me-1"></i>Recycle Bin</a>
+      <a href="?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&trash=1" class="btn btn-outline-secondary btn-sm fm-btn-xs"><i class="bi bi-trash3 me-1"></i>Recycle Bin</a>
+
+      <?php if ($canManage): ?>
+      <div class="d-none align-items-center gap-2 ms-auto p-1 bg-body-tertiary rounded" id="bulkToolbar">
+        <span class="small text-muted" id="bulkCount"></span>
+        <button type="button" class="btn btn-sm btn-outline-secondary fm-btn-xs" onclick="fmSetBulkAction('copy_to_clipboard')"><i class="bi bi-clipboard me-1"></i>Salin</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary fm-btn-xs" onclick="fmSetBulkAction('cut_to_clipboard')"><i class="bi bi-scissors me-1"></i>Potong</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary fm-btn-xs" data-bs-toggle="modal" data-bs-target="#chmodModal"><i class="bi bi-shield-lock me-1"></i>Ubah Izin</button>
+        <button type="button" class="btn btn-sm btn-outline-danger fm-btn-xs" onclick="fmConfirmBulkDelete()"><i class="bi bi-trash me-1"></i>Hapus</button>
+      </div>
+      <?php endif; ?>
     </div>
 
     <?php if ($canManage && is_array($clipboard)): ?>
