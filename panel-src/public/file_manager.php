@@ -94,17 +94,6 @@ try {
     redirect($scope === 'nodeapp' ? '/nodejs.php' : '/websites.php');
 }
 
-$isRootScope = FileManagerService::isRootScope($scope);
-if ($isRootScope) {
-    $backUrl = '/file_manager.php';
-    $scopeLabel = 'File Manager';
-    $displayName = $scope === 'nodeapps' ? '/home/nodeapps/apps (semua aplikasi)' : '/var/www (semua website)';
-} else {
-    $backUrl = $scope === 'nodeapp' ? '/nodejs.php' : '/websites.php';
-    $scopeLabel = $scope === 'nodeapp' ? 'Node.js Apps' : 'Website PHP';
-    $displayName = $name;
-}
-
 /** website/www share ownership (www-data), nodeapp/nodeapps share ownership (nodeapps) - mirrors panel-exec.sh's fm_scope_family exactly. */
 function fm_scope_family(string $scope): string
 {
@@ -529,16 +518,6 @@ HTML;
 $pageTitle = 'File Manager';
 include __DIR__ . '/partials/header.php';
 ?>
-
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <div>
-    <h4 class="fw-bold mb-0">File Manager</h4>
-    <p class="text-muted mb-0">
-      <a href="<?= e($backUrl) ?>"><i class="bi bi-arrow-left me-1"></i><?= e($scopeLabel) ?></a>
-      &middot; <?= e($displayName) ?>
-    </p>
-  </div>
-</div>
 
 <?php if ($editFile !== null): ?>
 
