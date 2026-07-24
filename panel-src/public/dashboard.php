@@ -11,6 +11,25 @@ $websiteCount = count(NginxService::listWebsites());
 $dbCount = count(DatabaseService::listRegistry());
 $cloudflare = CloudflareService::status();
 
+$cpuAlertThreshold = (float) SettingsService::get('cpu_alert_threshold', '85');
+$memAlertThreshold = (float) SettingsService::get('mem_alert_threshold', '85');
+$restartAlertThreshold = (int) SettingsService::get('restart_alert_threshold', '10');
+
+// Restart count isn't part of ajax_stats.php's live payload (PM2 restart
+// counts don't need second-by-second polling the way CPU/RAM do), so this
+// is computed once at page load - CPU/RAM alerts, by contrast, are
+// recomputed by renderAlarmBanner() below on every 5s panel:refresh tick.
+$restartOffenders = [];
+foreach ($nodejsStatus['managed'] as $item) {
+    $rt = $item['runtime'];
+    if ($rt !== null && (int) $rt['restart_count'] > $restartAlertThreshold) {
+        $restartOffenders[] = $item['meta']['app_name'];
+    }
+}
+$restartAlertMessage = empty($restartOffenders)
+    ? ''
+    : 'Restart count tinggi (>' . $restartAlertThreshold . '): ' . implode(', ', $restartOffenders);
+
 $pageTitle = 'Dashboard';
 include __DIR__ . '/partials/header.php';
 ?>
@@ -22,6 +41,8 @@ include __DIR__ . '/partials/header.php';
   </div>
   <div id="statsBlock" data-refresh-url="/ajax_stats.php" data-refresh-interval="5000"></div>
 </div>
+
+<div id="alarmBanner"></div>
 
 <div class="card stat-card mb-4">
   <div class="card-body py-3">
@@ -194,6 +215,35 @@ setGauge('cpuGauge', 'cpuValue', <?= (float) $summary['cpu_percent'] ?>);
 setGauge('ramGauge', 'ramValue', <?= (float) $summary['ram']['percent'] ?>);
 setGauge('diskGauge', 'diskValue', <?= (float) $summary['disk']['percent'] ?>);
 
+// Threshold values come from Settings > Alarm (SettingsService) - restart
+// count doesn't change every 5s like CPU/RAM, so its message is computed
+// once server-side and just carried along on every re-render here.
+var ALARM_CPU_THRESHOLD = <?= json_encode($cpuAlertThreshold) ?>;
+var ALARM_MEM_THRESHOLD = <?= json_encode($memAlertThreshold) ?>;
+var ALARM_RESTART_MESSAGE = <?= json_encode($restartAlertMessage) ?>;
+
+function renderAlarmBanner(cpuPercent, ramPercent) {
+  var el = document.getElementById('alarmBanner');
+  if (!el) return;
+  var messages = [];
+  if (cpuPercent > ALARM_CPU_THRESHOLD) {
+    messages.push('CPU ' + cpuPercent.toFixed(1) + '% melebihi ambang ' + ALARM_CPU_THRESHOLD + '%');
+  }
+  if (ramPercent > ALARM_MEM_THRESHOLD) {
+    messages.push('RAM ' + ramPercent.toFixed(1) + '% melebihi ambang ' + ALARM_MEM_THRESHOLD + '%');
+  }
+  if (ALARM_RESTART_MESSAGE) {
+    messages.push(ALARM_RESTART_MESSAGE);
+  }
+  if (messages.length === 0) {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = '<div class="alert alert-danger d-flex align-items-start gap-2 mb-3">'
+    + '<i class="bi bi-exclamation-triangle-fill mt-1"></i><div>' + messages.join(' &middot; ') + '</div></div>';
+}
+renderAlarmBanner(<?= (float) $summary['cpu_percent'] ?>, <?= (float) $summary['ram']['percent'] ?>);
+
 document.getElementById('statsBlock').addEventListener('panel:refresh', function (e) {
   var d = e.detail;
   if (!d || !d.ok) return;
@@ -203,6 +253,7 @@ document.getElementById('statsBlock').addEventListener('panel:refresh', function
   setGauge('diskGauge', 'diskValue', d.disk.percent);
   document.getElementById('diskDetail').textContent = d.disk.used_gb + ' / ' + d.disk.total_gb + ' GB';
   document.getElementById('loadValue').textContent = d.load.map(function(v){return Math.round(v*100)/100;}).join(' / ');
+  renderAlarmBanner(d.cpu_percent, d.ram.percent);
 });
 
 // Ticks forward client-side from the server's actual clock reading at

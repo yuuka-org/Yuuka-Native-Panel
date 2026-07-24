@@ -27,6 +27,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             Rbac::require('website.delete');
             NginxService::deleteWebsite((int) $_POST['id'], ($_POST['delete_files'] ?? '') === '1', $user['id']);
             flash('success', 'Website dihapus.');
+        } elseif ($action === 'backup') {
+            Rbac::require('backup.manage');
+            $domain = (string) ($_POST['domain'] ?? '');
+            BackupService::backupWebsite($domain, $user['id']);
+            flash('success', "Backup {$domain} dibuat. Lihat di Pengaturan > Backup & Restore.");
         }
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
@@ -93,6 +98,14 @@ include __DIR__ . '/partials/header.php';
               <a href="/domains.php?website_id=<?= e((string) $site['id']) ?>" class="btn btn-sm btn-outline-primary" title="SSL / Domain"><i class="bi bi-shield-lock"></i></a>
               <?php if (Rbac::can($user['role'], 'files.view')): ?>
               <a href="/file_manager.php?scope=website&name=<?= urlencode($site['domain']) ?>" class="btn btn-sm btn-outline-secondary" title="File Manager"><i class="bi bi-folder2-open"></i></a>
+              <?php endif; ?>
+              <?php if (Rbac::can($user['role'], 'backup.manage')): ?>
+              <form method="post" class="d-inline" data-confirm="Buat backup website <?= e($site['domain']) ?> sekarang?">
+                <?= Csrf::field() ?>
+                <input type="hidden" name="action" value="backup">
+                <input type="hidden" name="domain" value="<?= e($site['domain']) ?>">
+                <button class="btn btn-sm btn-outline-secondary" title="Backup Sekarang"><i class="bi bi-cloud-arrow-down"></i></button>
+              </form>
               <?php endif; ?>
               <?php if (Rbac::can($user['role'], 'website.delete')): ?>
               <button class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteModal<?= e((string) $site['id']) ?>" title="Hapus"><i class="bi bi-trash"></i></button>

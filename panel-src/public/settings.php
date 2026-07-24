@@ -5,22 +5,6 @@ Auth::requireLogin();
 
 $user = Auth::user();
 
-function getSetting(string $key, string $default = ''): string
-{
-    $stmt = Database::app()->prepare('SELECT setting_value FROM settings WHERE setting_key = :k');
-    $stmt->execute(['k' => $key]);
-    $v = $stmt->fetchColumn();
-    return $v !== false && $v !== null ? (string) $v : $default;
-}
-
-function setSetting(string $key, string $value): void
-{
-    $stmt = Database::app()->prepare(
-        'INSERT INTO settings (setting_key, setting_value) VALUES (:k, :v) ON DUPLICATE KEY UPDATE setting_value = :v2'
-    );
-    $stmt->execute(['k' => $key, 'v' => $value, 'v2' => $value]);
-}
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     Csrf::validateRequest();
     $action = $_POST['action'] ?? '';
@@ -32,10 +16,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($pma !== '' && !filter_var($pma, FILTER_VALIDATE_URL)) {
                 throw new InvalidArgumentException('URL phpMyAdmin tidak valid');
             }
-            setSetting('phpmyadmin_url', $pma);
-            setSetting('cpu_alert_threshold', (string) max(1, min(100, (int) $_POST['cpu_alert_threshold'])));
-            setSetting('mem_alert_threshold', (string) max(1, min(100, (int) $_POST['mem_alert_threshold'])));
-            setSetting('restart_alert_threshold', (string) max(1, (int) $_POST['restart_alert_threshold']));
+            SettingsService::set('phpmyadmin_url', $pma);
             flash('success', 'Pengaturan disimpan.');
         } elseif ($action === 'change_password') {
             $current = (string) ($_POST['current_password'] ?? '');
@@ -57,14 +38,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect('/settings.php');
 }
 
-$phpmyadminUrl = getSetting('phpmyadmin_url');
-$cpuThreshold = getSetting('cpu_alert_threshold', '85');
-$memThreshold = getSetting('mem_alert_threshold', '85');
-$restartThreshold = getSetting('restart_alert_threshold', '10');
+$phpmyadminUrl = SettingsService::get('phpmyadmin_url');
 $deploymentMode = Config::get('APP_DEPLOYMENT_MODE', 'direct');
+$activeSettingsTab = 'general';
 
 $pageTitle = 'Pengaturan';
 include __DIR__ . '/partials/header.php';
+include __DIR__ . '/partials/settings_nav.php';
 ?>
 
 <div class="mb-4">
@@ -89,18 +69,6 @@ include __DIR__ . '/partials/header.php';
           <div class="mb-3">
             <label class="form-label">URL phpMyAdmin</label>
             <input type="url" name="phpmyadmin_url" class="form-control" value="<?= e($phpmyadminUrl) ?>" placeholder="https://pma.domainanda.com">
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Threshold Alert CPU (%)</label>
-            <input type="number" name="cpu_alert_threshold" class="form-control" value="<?= e($cpuThreshold) ?>" min="1" max="100">
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Threshold Alert Memory (%)</label>
-            <input type="number" name="mem_alert_threshold" class="form-control" value="<?= e($memThreshold) ?>" min="1" max="100">
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Threshold Alert Restart Count</label>
-            <input type="number" name="restart_alert_threshold" class="form-control" value="<?= e($restartThreshold) ?>" min="1">
           </div>
           <button class="btn btn-primary">Simpan</button>
         </form>

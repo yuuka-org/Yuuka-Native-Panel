@@ -19,13 +19,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     redirect('/login.php');
 }
+
+$loginTitle = SettingsService::get('panel_login_title', 'Yuuka Server Panel');
+$loginLogo = SettingsService::get('panel_login_logo');
 ?>
 <!DOCTYPE html>
 <html lang="id">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Login - Yuuka Server Panel</title>
+<title>Login - <?= e($loginTitle) ?></title>
 <script>
 (function () {
   var theme = localStorage.getItem('yuuka-theme') || 'light';
@@ -44,8 +47,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <div class="card login-card shadow-lg">
   <div class="card-body p-4 p-md-5">
     <div class="text-center mb-4">
-      <i class="bi bi-hdd-network-fill fs-1 text-primary"></i>
-      <h4 class="mt-2 mb-0 fw-bold">Yuuka Server Panel</h4>
+      <?php if ($loginLogo !== ''): ?>
+        <img src="/<?= e($loginLogo) ?>" alt="Logo" style="max-height:56px;max-width:160px;object-fit:contain;">
+      <?php else: ?>
+        <i class="bi bi-hdd-network-fill fs-1 text-primary"></i>
+      <?php endif; ?>
+      <h4 class="mt-2 mb-0 fw-bold"><?= e($loginTitle) ?></h4>
       <p class="text-muted small">Masuk untuk mengelola server Anda</p>
     </div>
     <?php include __DIR__ . '/partials/flash.php'; ?>

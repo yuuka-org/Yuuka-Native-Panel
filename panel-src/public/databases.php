@@ -25,6 +25,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             Rbac::require('database.manage');
             DatabaseService::dropDatabase((int) $_POST['id'], $user['id']);
             flash('success', 'Database dihapus.');
+        } elseif ($action === 'backup') {
+            Rbac::require('backup.manage');
+            $dbName = (string) ($_POST['db_name'] ?? '');
+            BackupService::backupDatabase($dbName, $user['id']);
+            flash('success', "Backup {$dbName} dibuat. Lihat di Pengaturan > Backup & Restore.");
         }
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
@@ -106,6 +111,14 @@ include __DIR__ . '/partials/header.php';
           <td class="text-muted small"><?= e($db['created_at']) ?></td>
           <td class="text-end">
             <a href="/pma_redirect.php?db=<?= urlencode($db['db_name']) ?>" target="_blank" class="btn btn-sm btn-outline-secondary" title="Buka di phpMyAdmin"><i class="bi bi-box-arrow-up-right"></i></a>
+            <?php if (Rbac::can($user['role'], 'backup.manage')): ?>
+            <form method="post" class="d-inline" data-confirm="Buat backup database <?= e($db['db_name']) ?> sekarang?">
+              <?= Csrf::field() ?>
+              <input type="hidden" name="action" value="backup">
+              <input type="hidden" name="db_name" value="<?= e($db['db_name']) ?>">
+              <button class="btn btn-sm btn-outline-secondary" title="Backup Sekarang"><i class="bi bi-cloud-arrow-down"></i></button>
+            </form>
+            <?php endif; ?>
             <?php if (Rbac::can($user['role'], 'database.manage')): ?>
             <button class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#delDb<?= (int) $db['id'] ?>"><i class="bi bi-trash"></i></button>
             <?php endif; ?>
@@ -120,7 +133,7 @@ include __DIR__ . '/partials/header.php';
                   <?= Csrf::field() ?>
                   <input type="hidden" name="action" value="delete">
                   <input type="hidden" name="id" value="<?= (int) $db['id'] ?>">
-                  <div class="alert alert-warning">Tindakan ini akan menghapus database <strong><?= e($db['db_name']) ?></strong> dan seluruh isinya secara permanen. Pertimbangkan membuat backup terlebih dahulu di menu Backup.</div>
+                  <div class="alert alert-warning">Tindakan ini akan menghapus database <strong><?= e($db['db_name']) ?></strong> dan seluruh isinya secara permanen. Pertimbangkan membuat backup terlebih dahulu lewat tombol Backup Sekarang di baris ini.</div>
                 </div>
                 <div class="modal-footer">
                   <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>

@@ -18,13 +18,19 @@ $links = [
     ['href' => '/databases.php', 'icon' => 'bi-database', 'label' => 'Database', 'perm' => 'database.view'],
     ['href' => '/domains.php', 'icon' => 'bi-hdd-network', 'label' => 'Domain', 'perm' => 'domain.manage'],
     ['href' => '/cron.php', 'icon' => 'bi-clock-history', 'label' => 'Cron Jobs', 'perm' => 'cron.view'],
-    ['href' => '/backups.php', 'icon' => 'bi-cloud-arrow-down', 'label' => 'Backup', 'perm' => 'backup.view'],
     ['href' => '/logs.php', 'icon' => 'bi-file-text', 'label' => 'Log', 'perm' => 'logs.view'],
     ['href' => '/cloudflare.php', 'icon' => 'bi-cloud', 'label' => 'Cloudflare Tunnel', 'perm' => 'monitoring.view'],
     ['href' => '/system.php', 'icon' => 'bi-arrow-repeat', 'label' => 'Sistem', 'perm' => 'monitoring.view'],
     ['href' => '/terminal.php', 'icon' => 'bi-terminal', 'label' => 'Terminal', 'perm' => 'terminal.access'],
     ['href' => '/users.php', 'icon' => 'bi-people', 'label' => 'Manajemen User', 'perm' => 'users.manage'],
-    ['href' => '/settings.php', 'icon' => 'bi-sliders', 'label' => 'Pengaturan', 'perm' => 'settings.manage'],
+    // Same "single sidebar slot, several physical pages" pattern as the
+    // Website entry above - Settings is now 5 sub-tabs (General/Page/
+    // Alarm/Backup & Restore/Migrate), each its own file. Backup used to
+    // be its own top-level entry; creating one is now a per-item action on
+    // Website/Node.js/Database, and reviewing/restoring past backups lives
+    // under Settings > Backup & Restore instead.
+    ['href' => '/settings.php', 'icon' => 'bi-sliders', 'label' => 'Pengaturan', 'perm' => 'settings.manage',
+        'match' => ['settings.php', 'settings_page.php', 'settings_alarm.php', 'settings_backup.php', 'settings_migrate.php']],
 ];
 ?>
 <ul class="sidebar-nav">
