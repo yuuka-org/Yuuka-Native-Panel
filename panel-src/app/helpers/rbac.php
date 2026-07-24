@@ -15,6 +15,7 @@ final class Rbac
     /** @var array<string, array<string>> permission => roles allowed */
     private static array $matrix = [
         'server.manage_configuration'  => [self::ROLE_ADMIN],
+        'terminal.access'               => [self::ROLE_ADMIN],
         'users.manage'                 => [self::ROLE_ADMIN],
         'settings.manage'               => [self::ROLE_ADMIN],
         'cloudflare.manage'            => [self::ROLE_ADMIN],

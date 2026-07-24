@@ -295,6 +295,13 @@ module_panel_nginx_vhost() {
         pma_include="    include ${NGINX_SNIPPETS}/includes/phpmyadmin.conf;"
     fi
 
+    # Same self-healing pattern as $pma_include above - modules/terminal.sh
+    # writes this snippet but never touches the panel vhost itself.
+    local terminal_include=""
+    if [[ -f "${NGINX_SNIPPETS}/includes/terminal.conf" ]]; then
+        terminal_include="    include ${NGINX_SNIPPETS}/includes/terminal.conf;"
+    fi
+
     write_file_if_changed "$conf_file" <<EOF
 server {
     listen 80;
@@ -324,9 +331,10 @@ server {
     }
 
     location ~ /\.(?!well-known) { deny all; }
-    location ~* ^/(app|storage|scripts)/ { deny all; }
+    location ~* ^/(app|storage|scripts|internal)/ { deny all; }
 
 ${pma_include}
+${terminal_include}
     include ${NGINX_SNIPPETS}/security-headers.conf;
 }
 EOF

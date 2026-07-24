@@ -39,8 +39,10 @@ source "${SCRIPT_DIR}/modules/ssl.sh"
 source "${SCRIPT_DIR}/modules/cloudflare.sh"
 # shellcheck source=modules/panel.sh
 source "${SCRIPT_DIR}/modules/panel.sh"
+# shellcheck source=modules/terminal.sh
+source "${SCRIPT_DIR}/modules/terminal.sh"
 
-TOTAL_STEPS=13
+TOTAL_STEPS=14
 CURRENT_STEP=0
 
 step_progress() {
@@ -120,11 +122,19 @@ main() {
         fi
     fi
 
-    print_section "9. Panel Manajemen Web"
+    print_section "9. Terminal di Panel"
+    step_progress
+    # Generates its own Nginx snippet only (module_terminal_generate_nginx) -
+    # must run BEFORE module_panel_run_all below regenerates the panel
+    # vhost, exactly the same ordering constraint phpMyAdmin's path-mode
+    # snippet already has (see modules/panel.sh's $terminal_include).
+    module_terminal_run_all || log_warn "Setup Terminal tidak lengkap - menu Terminal di panel mungkin tidak berfungsi, cek log di atas. Bisa dicoba lagi nanti lewat 'yp custom-build terminal'."
+
+    print_section "10. Panel Manajemen Web"
     step_progress
     module_panel_run_all
 
-    print_section "10. SSL / Let's Encrypt"
+    print_section "11. SSL / Let's Encrypt"
     step_progress
     if [[ "$PANEL_DEPLOYMENT_MODE" != "tunnel" ]]; then
         module_ssl_prompt_for_panel "$PANEL_DOMAIN" "$PANEL_ADMIN_EMAIL"
@@ -133,7 +143,7 @@ main() {
         PANEL_SSL_ENABLED="0"
     fi
 
-    print_section "11. Cloudflare Tunnel"
+    print_section "12. Cloudflare Tunnel"
     step_progress
     if [[ "$PANEL_DEPLOYMENT_MODE" == "tunnel" || "$PANEL_DEPLOYMENT_MODE" == "hybrid" ]]; then
         module_cloudflare_prompt_setup || log_warn "Cloudflare Tunnel tidak dikonfigurasi"
@@ -141,12 +151,12 @@ main() {
         log_info "Mode direct dipilih, Cloudflare Tunnel dilewati (bisa diaktifkan nanti dari panel)."
     fi
 
-    print_section "12. Finalisasi Service"
+    print_section "13. Finalisasi Service"
     step_progress
     systemctl restart nginx mariadb "php${PHP_DEFAULT_VERSION}-fpm" >>"$INSTALL_LOG_FILE" 2>&1 || true
     log_ok "Service inti direstart"
 
-    print_section "13. Selesai"
+    print_section "14. Selesai"
     step_progress
     print_summary
 }

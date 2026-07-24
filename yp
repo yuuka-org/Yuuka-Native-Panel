@@ -92,7 +92,7 @@ Pemakaian: yp <aksi> <target> [args...]
   yp repair panel [--reset-env]
   yp update
   yp version
-  yp custom-build <nginx|php|nodejs|mariadb|phpmyadmin|ssl|cloudflare|panel>
+  yp custom-build <nginx|php|nodejs|mariadb|phpmyadmin|ssl|cloudflare|panel|terminal>
   yp help
 USAGE
 }
@@ -465,7 +465,7 @@ cmd_version() {
 # ---------------------------------------------------------------------------
 cmd_custom_build() {
     local module="${1:-}"
-    [[ -n "$module" ]] || die "Sebutkan modul: nginx|php|nodejs|mariadb|phpmyadmin|ssl|cloudflare|panel"
+    [[ -n "$module" ]] || die "Sebutkan modul: nginx|php|nodejs|mariadb|phpmyadmin|ssl|cloudflare|panel|terminal"
 
     log_step "Custom Build: ${module}"
     case "$module" in
@@ -547,6 +547,12 @@ cmd_custom_build() {
         panel)
             module_panel_deploy_files
             log_info "Untuk regenerasi pool PHP-FPM/vhost Nginx panel, gunakan: yp repair panel"
+            ;;
+        terminal)
+            # shellcheck source=/dev/null
+            source "${INSTALLER_DIR}/modules/terminal.sh"
+            module_terminal_run_all
+            log_info "Setelah ini, jalankan 'sudo yp repair panel' sekali lagi supaya vhost panel meng-include Terminal (sama seperti phpMyAdmin mode path)."
             ;;
         *)
             die "Modul tidak dikenal: ${module}"
