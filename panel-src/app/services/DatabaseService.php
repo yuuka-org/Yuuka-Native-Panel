@@ -27,6 +27,21 @@ final class DatabaseService
             throw new InvalidArgumentException('Password database minimal 8 karakter');
         }
 
+        // MariaDB has exactly one password per username - db_user_create()
+        // below unconditionally does ALTER USER ... IDENTIFIED BY, so
+        // reusing a username already registered to a DIFFERENT database
+        // would silently overwrite that other database's MariaDB password
+        // while DbCredentialsStore keeps serving its old, now-wrong one
+        // (breaking phpMyAdmin signon and any app connecting with those
+        // stored credentials, with no error at creation time to explain
+        // why).
+        $existing = Database::app()->prepare('SELECT db_name FROM databases_registry WHERE db_user = :u');
+        $existing->execute(['u' => $dbUser]);
+        $existingDb = $existing->fetchColumn();
+        if ($existingDb !== false && $existingDb !== $dbName) {
+            throw new InvalidArgumentException("User database '{$dbUser}' sudah dipakai oleh database '{$existingDb}' - gunakan nama user yang berbeda.");
+        }
+
         db_create($dbName);
         db_user_create($dbUser, $password);
         db_grant_all($dbName, $dbUser);
