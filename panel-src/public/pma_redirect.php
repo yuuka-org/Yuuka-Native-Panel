@@ -132,6 +132,15 @@ function pma_write_signon_session(string $dbUser, string $dbPassword): void
     $_SESSION['PMA_single_signon_password'] = $dbPassword;
     $signonId = session_id();
     session_write_close();
+    // PHP's files session handler creates the session file 0600 (owner-only),
+    // regardless of the containing directory's own mode - the directory's
+    // group-write bit (see PHPMYADMIN_SIGNON_SESSION_DIR setup in
+    // modules/phpmyadmin.sh) only lets phpMyAdmin's www-data pool (a member
+    // of the 'panel' group) traverse/list the directory, not read this
+    // specific file's contents. Without this, phpMyAdmin's signon read
+    // fails silently (permission denied) and it falls back to its SignonURL
+    // (the panel's own login.php) instead of ever raising an error.
+    @chmod($signonSessionDir . '/sess_' . $signonId, 0660);
     error_log('[PMA-DEBUG] after write_close: expected file=' . $signonSessionDir . '/sess_' . $signonId
         . ' exists=' . var_export(file_exists($signonSessionDir . '/sess_' . $signonId), true)
         . ' dirListing=' . var_export(glob($signonSessionDir . '/*'), true));
