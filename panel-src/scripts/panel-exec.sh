@@ -952,6 +952,105 @@ op_files_extract_zip() {
     echo "OK: extracted zip to ${relpath:-/}"
 }
 
+# Extracts a .zip file ALREADY on disk (right-click "Extract" in File
+# Manager) into a new sibling folder named after the archive (basename
+# minus its extension) - as opposed to op_files_extract_zip above, which
+# extracts a freshly-uploaded archive that never touches disk as a .zip
+# itself. Same zip-slip guard (extract to a scratch dir, verify every
+# entry stays confined, THEN move into place) as op_files_extract_zip.
+op_files_extract() {
+    local scope="$1" name="$2" relpath="$3"
+    require_match "$scope" "$RE_FM_SCOPE" "scope"
+    [[ -n "$relpath" ]] || fail "Path file ZIP wajib diisi"
+    local target
+    target=$(fm_resolve_target "$scope" "$name" "$relpath")
+    [[ -f "$target" ]] || fail "File ZIP tidak ditemukan: $relpath"
+
+    local parent base_no_ext dest_dir
+    parent=$(dirname "$target")
+    base_no_ext=$(basename -- "$target")
+    base_no_ext="${base_no_ext%.*}"
+    [[ -n "$base_no_ext" ]] || fail "Nama file ZIP tidak valid"
+    dest_dir="${parent}/${base_no_ext}"
+    [[ -e "$dest_dir" ]] && fail "Sudah ada file/folder bernama '${base_no_ext}' di tujuan - ganti nama salah satunya dulu"
+
+    local tmp_extract
+    tmp_extract=$(mktemp -d)
+    if ! unzip -q -o "$target" -d "$tmp_extract"; then
+        rm -rf "$tmp_extract"
+        fail "Gagal mengekstrak ZIP (format tidak valid atau rusak)"
+    fi
+
+    local escaped=0 entry resolved
+    while IFS= read -r -d '' entry; do
+        resolved=$(realpath -m -- "$entry")
+        case "$resolved" in
+            "$tmp_extract"/*) ;;
+            *) escaped=1 ;;
+        esac
+    done < <(find "$tmp_extract" -mindepth 1 -print0)
+
+    if [[ "$escaped" -eq 1 ]]; then
+        rm -rf "$tmp_extract"
+        fail "ZIP ditolak: berisi entry yang mencoba keluar dari direktori tujuan"
+    fi
+
+    mv -- "$tmp_extract" "$dest_dir"
+
+    local owner
+    owner=$(fm_owner_for_scope "$scope")
+    chown -R "$owner" "$dest_dir"
+    echo "OK: extracted $relpath -> ${base_no_ext}/"
+}
+
+# Creates a new .zip from one or more existing files/folders in the same
+# directory (multi-select "Compress" in File Manager). Items are bare
+# basenames (fm_require_basename rejects '/', so no traversal possible),
+# resolved and confinement-checked individually via fm_resolve_target
+# before being handed to `zip` - `zip` does not follow symlinks into
+# targets outside the selection by default (no -y), storing them as
+# symlink entries instead, so it can't be used to smuggle content from
+# outside the confined tree into the archive.
+op_files_compress() {
+    local scope="$1" name="$2" relpath="$3" dest_name="$4"
+    shift 4
+    require_match "$scope" "$RE_FM_SCOPE" "scope"
+    fm_require_basename "$dest_name" "nama ZIP"
+    case "$dest_name" in
+        *.zip) ;;
+        *) dest_name="${dest_name}.zip" ;;
+    esac
+    [[ $# -ge 1 ]] || fail "Tidak ada item dipilih untuk dikompres"
+    [[ $# -le 100 ]] || fail "Maksimal 100 item per kompres"
+
+    local target_dir
+    target_dir=$(fm_resolve_target "$scope" "$name" "$relpath")
+    [[ -d "$target_dir" ]] || fail "Direktori tidak ditemukan: $relpath"
+
+    local dest_zip="${target_dir}/${dest_name}"
+    [[ -e "$dest_zip" ]] && fail "Sudah ada file bernama '${dest_name}' di tujuan - ganti nama dulu"
+
+    local item item_target
+    for item in "$@"; do
+        fm_require_basename "$item" "item"
+        item_target=$(require_path_within "${target_dir}/${item}" "$target_dir")
+        [[ -e "$item_target" ]] || fail "Item tidak ditemukan: $item"
+    done
+
+    # `--` BEFORE dest_name too, not just before the items - dest_name is
+    # a bare filename (no path prefix, since we `cd` into target_dir
+    # first), so a crafted name starting with '-' (e.g. "-T", "-@") would
+    # otherwise be parsed by `zip` as an option flag instead of the output
+    # filename argument it actually is.
+    ( cd "$target_dir" && zip -r -q -- "$dest_name" "$@" )
+    [[ -f "$dest_zip" ]] || fail "Gagal membuat ZIP"
+
+    local owner
+    owner=$(fm_owner_for_scope "$scope")
+    chown "$owner" "$dest_zip"
+    echo "OK: compressed $# item(s) -> $dest_name"
+}
+
 # Normalizes a File Manager scope to its "family" (website vs nodeapp) -
 # www/nodeapps (root-browse) are just variants of the same family as
 # website/nodeapp. Used to gate cross-scope copy/move below: every
@@ -1357,6 +1456,8 @@ case "$SUBCOMMAND" in
     files-delete)          op_files_delete "$@" ;;
     files-rename)          op_files_rename "$@" ;;
     files-extract-zip)     op_files_extract_zip "$@" ;;
+    files-extract)         op_files_extract "$@" ;;
+    files-compress)        op_files_compress "$@" ;;
     files-copy)            op_files_copy "$@" ;;
     files-move)            op_files_move "$@" ;;
     files-chmod)           op_files_chmod "$@" ;;

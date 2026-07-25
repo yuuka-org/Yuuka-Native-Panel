@@ -32,6 +32,7 @@ final class SettingsService
         'security_entrance_path',
         'basicauth_enabled',
         'basicauth_username',
+        'filemanager_max_upload_mb',
     ];
 
     public static function get(string $key, string $default = ''): string

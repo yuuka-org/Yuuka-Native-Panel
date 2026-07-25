@@ -97,12 +97,42 @@ document.addEventListener('DOMContentLoaded', function () {
     return out;
   }
 
-  // Generic "copy to clipboard" button
+  // Generic "copy to clipboard" button. navigator.clipboard only exists in
+  // a secure context (HTTPS or localhost) - this panel's vhost itself only
+  // ever listens on plain HTTP (TLS, if any, is terminated upstream, e.g.
+  // Cloudflare - see currentScheme() in app/helpers/response.php), so
+  // admins reaching it directly over http:// had navigator.clipboard as
+  // undefined, throwing synchronously before .then()/.catch() ever ran -
+  // the button just silently did nothing. Fall back to the older
+  // execCommand('copy') technique (works in any context) when the async
+  // Clipboard API isn't available.
+  function copyToClipboard(value) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(value);
+    }
+    return new Promise(function (resolve, reject) {
+      var textarea = document.createElement('textarea');
+      textarea.value = value;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      try {
+        document.execCommand('copy') ? resolve() : reject();
+      } catch (err) {
+        reject(err);
+      } finally {
+        document.body.removeChild(textarea);
+      }
+    });
+  }
+
   document.querySelectorAll('[data-copy]').forEach(function (btn) {
     btn.addEventListener('click', function () {
       var value = btn.getAttribute('data-copy');
       if (!value) return;
-      navigator.clipboard.writeText(value).then(function () {
+      copyToClipboard(value).then(function () {
         var original = btn.innerHTML;
         btn.innerHTML = '<i class="bi bi-check-lg"></i>';
         setTimeout(function () { btn.innerHTML = original; }, 1200);

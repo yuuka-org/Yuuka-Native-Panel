@@ -74,9 +74,15 @@ final class FileManagerService
         }
     }
 
+    /** DB setting (Pengaturan > Umum) overrides the .env default, matching session_idle_timeout/session_lifetime's pattern in settings.php. */
+    private static function maxUploadMb(): int
+    {
+        return (int) SettingsService::get('filemanager_max_upload_mb') ?: Config::getInt('FILEMANAGER_MAX_UPLOAD_MB', 100);
+    }
+
     private static function maxUploadBytes(): int
     {
-        return Config::getInt('FILEMANAGER_MAX_UPLOAD_MB', 100) * 1024 * 1024;
+        return self::maxUploadMb() * 1024 * 1024;
     }
 
     /**
@@ -159,7 +165,7 @@ final class FileManagerService
             throw new InvalidArgumentException('Path file wajib diisi');
         }
         if (strlen($content) > self::maxUploadBytes()) {
-            throw new InvalidArgumentException('Ukuran file melebihi batas FILEMANAGER_MAX_UPLOAD_MB');
+            throw new InvalidArgumentException('Ukuran file melebihi batas ' . self::maxUploadMb() . ' MB (atur di menu Pengaturan)');
         }
 
         $result = Executor::run('files-write', [$scope, $name, $relPath], $content, 60);
@@ -234,7 +240,7 @@ final class FileManagerService
             throw new InvalidArgumentException('File ZIP kosong');
         }
         if (strlen($zipBytes) > self::maxUploadBytes()) {
-            throw new InvalidArgumentException('Ukuran ZIP melebihi batas FILEMANAGER_MAX_UPLOAD_MB');
+            throw new InvalidArgumentException('Ukuran ZIP melebihi batas ' . self::maxUploadMb() . ' MB (atur di menu Pengaturan)');
         }
 
         $result = Executor::run('files-extract-zip', [$scope, $name, $relPath], $zipBytes, 120);
@@ -242,6 +248,45 @@ final class FileManagerService
             throw new RuntimeException('Gagal mengekstrak ZIP: ' . $result['output']);
         }
         ActivityLog::record($userId, 'files.extract_zip', "ZIP diekstrak ke: {$scope}/{$name}/{$relPath}");
+    }
+
+    /** Extracts a .zip file already sitting in the tree into a new sibling folder named after it. */
+    public static function extract(string $scope, string $name, string $relPath, ?int $userId): void
+    {
+        self::assertScope($scope, $name);
+        self::assertPath($relPath);
+        if ($relPath === '') {
+            throw new InvalidArgumentException('Path file ZIP wajib diisi');
+        }
+
+        $result = Executor::run('files-extract', [$scope, $name, $relPath], null, 120);
+        if (!$result['ok']) {
+            throw new RuntimeException('Gagal mengekstrak ZIP: ' . $result['output']);
+        }
+        ActivityLog::record($userId, 'files.extract', "ZIP diekstrak: {$scope}/{$name}/{$relPath}");
+    }
+
+    /** @param string[] $items bare basenames, all inside $relPath, to bundle into $destName */
+    public static function compress(string $scope, string $name, string $relPath, string $destName, array $items, ?int $userId): void
+    {
+        self::assertScope($scope, $name);
+        self::assertPath($relPath);
+        if (!Validator::fileBaseName($destName)) {
+            throw new InvalidArgumentException('Nama ZIP tidak valid');
+        }
+        $items = array_values(array_unique(array_map('strval', $items)));
+        if (empty($items)) {
+            throw new InvalidArgumentException('Tidak ada item dipilih untuk dikompres');
+        }
+        if (count($items) > 100) {
+            throw new InvalidArgumentException('Maksimal 100 item per kompres (dipilih: ' . count($items) . ')');
+        }
+
+        $result = Executor::run('files-compress', array_merge([$scope, $name, $relPath, $destName], $items), null, 120);
+        if (!$result['ok']) {
+            throw new RuntimeException('Gagal membuat ZIP: ' . $result['output']);
+        }
+        ActivityLog::record($userId, 'files.compress', "ZIP dibuat: {$scope}/{$name}/{$relPath}/{$destName} (" . count($items) . ' item)');
     }
 
     /** @return array<int,array{name:string,relPath:string,type:string,size:int,mtime:int}> */

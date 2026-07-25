@@ -52,6 +52,7 @@ declare(strict_types=1);
   <input type="hidden" name="path" value="<?= e($currentPath) ?>">
   <input type="hidden" name="action" id="bulkAction" value="">
   <input type="hidden" name="mode" id="bulkChmodMode" value="">
+  <input type="hidden" name="dest_name" id="bulkDestName" value="">
 
   <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
     <?php if ($canManage): ?>
@@ -71,6 +72,7 @@ declare(strict_types=1);
       <button type="button" class="btn btn-sm btn-outline-secondary fm-btn-xs" onclick="fmSetBulkAction('copy_to_clipboard')"><i class="bi bi-clipboard me-1"></i>Salin</button>
       <button type="button" class="btn btn-sm btn-outline-secondary fm-btn-xs" onclick="fmSetBulkAction('cut_to_clipboard')"><i class="bi bi-scissors me-1"></i>Potong</button>
       <button type="button" class="btn btn-sm btn-outline-secondary fm-btn-xs" data-bs-toggle="modal" data-bs-target="#chmodModal"><i class="bi bi-shield-lock me-1"></i>Ubah Izin</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary fm-btn-xs" data-bs-toggle="modal" data-bs-target="#compressModal"><i class="bi bi-file-earmark-zip me-1"></i>Kompres</button>
       <button type="button" class="btn btn-sm btn-outline-danger fm-btn-xs" onclick="fmConfirmBulkDelete()"><i class="bi bi-trash me-1"></i>Hapus</button>
     </div>
     <?php endif; ?>
@@ -308,6 +310,23 @@ declare(strict_types=1);
     </div>
   </div>
 </div>
+
+<div class="modal fade" id="compressModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title">Kompres ke ZIP</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <p class="text-muted small" id="compressTargetLabel"></p>
+        <label class="form-label">Nama file ZIP</label>
+        <input type="text" id="compressDestName" class="form-control" placeholder="archive.zip" required>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+        <button type="button" class="btn btn-primary" onclick="fmSubmitCompress()">Kompres</button>
+      </div>
+    </div>
+  </div>
+</div>
 <?php endif; ?>
 
 <div class="dropdown-menu" id="fmContextMenu" style="display:none; position:fixed;">
@@ -318,6 +337,8 @@ declare(strict_types=1);
   <button type="button" class="dropdown-item" data-fm-ctx="cut"><i class="bi bi-scissors me-2"></i>Potong</button>
   <button type="button" class="dropdown-item" data-fm-ctx="chmod"><i class="bi bi-shield-lock me-2"></i>Ubah Izin</button>
   <button type="button" class="dropdown-item" data-fm-ctx="rename"><i class="bi bi-pencil me-2"></i>Rename</button>
+  <button type="button" class="dropdown-item" data-fm-ctx="compress"><i class="bi bi-file-earmark-zip me-2"></i>Kompres ke ZIP</button>
+  <button type="button" class="dropdown-item" data-fm-ctx="extract" id="fmCtxExtract"><i class="bi bi-file-earmark-zip-fill me-2"></i>Ekstrak ZIP</button>
   <?php endif; ?>
   <?php if ($canTerminal): ?>
   <button type="button" class="dropdown-item" data-fm-ctx="terminal"><i class="bi bi-terminal me-2"></i>Open in Terminal</button>

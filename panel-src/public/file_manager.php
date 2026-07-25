@@ -169,6 +169,23 @@ function fm_bulk_chmod(string $scope, string $name, array $targets, string $mode
     fm_flash_bulk_result($ok, $failures, 'diubah izinnya');
 }
 
+function fm_bulk_extract(string $scope, string $name, array $targets, ?int $userId): void
+{
+    $targets = fm_assert_bulk_count($targets);
+    set_time_limit(120);
+    $ok = 0;
+    $failures = [];
+    foreach ($targets as $target) {
+        try {
+            FileManagerService::extract($scope, $name, $target, $userId);
+            $ok++;
+        } catch (InvalidArgumentException|RuntimeException $e) {
+            $failures[] = basename($target) . ': ' . $e->getMessage();
+        }
+    }
+    fm_flash_bulk_result($ok, $failures, 'diekstrak');
+}
+
 /** @throws InvalidArgumentException|RuntimeException */
 function fm_do_upload(string $scope, string $name, string $path, ?int $userId): string
 {
@@ -342,6 +359,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($action === 'chmod') {
             Rbac::require('files.manage');
             fm_bulk_chmod($scope, $name, (array) ($_POST['targets'] ?? []), (string) ($_POST['mode'] ?? ''), $user['id']);
+        } elseif ($action === 'bulk_extract') {
+            Rbac::require('files.manage');
+            fm_bulk_extract($scope, $name, (array) ($_POST['targets'] ?? []), $user['id']);
+        } elseif ($action === 'bulk_compress') {
+            Rbac::require('files.manage');
+            $targets = fm_assert_bulk_count((array) ($_POST['targets'] ?? []));
+            $destName = trim((string) ($_POST['dest_name'] ?? ''));
+            // Selected items are full relative paths (e.g. "sub/dir/file.txt")
+            // but op_files_compress requires bare basenames all living in the
+            // SAME directory as $path - reject anything that isn't a direct
+            // child of the folder currently being browsed instead of
+            // silently stripping to basename (which could mismatch what the
+            // user actually selected in another folder if the UI ever
+            // allowed cross-folder selection).
+            $itemNames = [];
+            foreach ($targets as $target) {
+                $parent = $path !== '' ? $path . '/' : '';
+                if (!str_starts_with($target, $parent) || str_contains(substr($target, strlen($parent)), '/')) {
+                    throw new InvalidArgumentException('Item yang dipilih harus berada langsung di folder ini');
+                }
+                $itemNames[] = basename($target);
+            }
+            FileManagerService::compress($scope, $name, $path, $destName, $itemNames, $user['id']);
+            flash('success', 'ZIP berhasil dibuat: ' . $destName);
         } elseif ($action === 'copy_to_clipboard' || $action === 'cut_to_clipboard') {
             Rbac::require('files.manage');
             $targets = fm_assert_bulk_count((array) ($_POST['targets'] ?? []));
@@ -665,6 +706,12 @@ $extraBodyHtml = <<<HTML
       }
       var modeInput = document.getElementById('chmodModeInput');
       if (modeInput) { modeInput.value = ''; }
+    } else if (ev.target.id === 'compressModal') {
+      var n2 = document.querySelectorAll('.fm-check:checked').length;
+      var label2 = document.getElementById('compressTargetLabel');
+      if (label2) { label2.textContent = n2 + ' item dipilih'; }
+      var nameInput = document.getElementById('compressDestName');
+      if (nameInput) { nameInput.value = ''; }
     }
   });
 
@@ -718,6 +765,15 @@ $extraBodyHtml = <<<HTML
     }
     document.getElementById('bulkChmodMode').value = modeVal;
     window.fmSetBulkAction('chmod');
+  };
+  window.fmSubmitCompress = function () {
+    var destVal = document.getElementById('compressDestName').value.trim();
+    if (!destVal) {
+      alert('Nama file ZIP wajib diisi.');
+      return;
+    }
+    document.getElementById('bulkDestName').value = destVal;
+    window.fmSetBulkAction('bulk_compress');
   };
 
   // Drag & drop upload - reuses the same 'upload' POST action as the
@@ -809,6 +865,8 @@ $extraBodyHtml = <<<HTML
     };
     var downloadItem = menu.querySelector('[data-fm-ctx="download"]');
     if (downloadItem) { downloadItem.style.display = fmCtxRow.isDir ? 'none' : ''; }
+    var extractItem = menu.querySelector('[data-fm-ctx="extract"]');
+    if (extractItem) { extractItem.style.display = (!fmCtxRow.isDir && /\.zip$/i.test(fmCtxRow.name)) ? '' : 'none'; }
     var menuWidth = 220;
     var x = Math.min(e.clientX, window.innerWidth - menuWidth - 8);
     menu.style.display = 'block';
@@ -863,6 +921,14 @@ $extraBodyHtml = <<<HTML
       if (deleteEl && typeof bootstrap !== 'undefined') { bootstrap.Modal.getOrCreateInstance(deleteEl).show(); }
     } else if (action === 'terminal' && window.fmOpenTerminal) {
       window.fmOpenTerminal(fmAbsolutePath(row.relPath, row.isDir));
+    } else if (action === 'compress') {
+      fmSelectOnly(row.relPath);
+      var compressEl = document.getElementById('compressModal');
+      if (compressEl && typeof bootstrap !== 'undefined') { bootstrap.Modal.getOrCreateInstance(compressEl).show(); }
+    } else if (action === 'extract') {
+      if (!confirm("Ekstrak '" + row.name + "' ke folder baru di sini?")) { return; }
+      fmSelectOnly(row.relPath);
+      window.fmSetBulkAction('bulk_extract');
     }
   });
 

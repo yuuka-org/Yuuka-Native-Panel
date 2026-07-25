@@ -16,7 +16,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($pma !== '' && !filter_var($pma, FILTER_VALIDATE_URL)) {
                 throw new InvalidArgumentException('URL phpMyAdmin tidak valid');
             }
+            // Capped at 512 to match client_max_body_size on the panel's own
+            // Nginx vhost (module_panel_nginx_vhost in modules/panel.sh) -
+            // a higher value here would be silently unreachable, Nginx
+            // would reject the upload with 413 before PHP ever saw it.
+            $maxUploadMb = (int) ($_POST['filemanager_max_upload_mb'] ?? 0);
+            if ($maxUploadMb < 1 || $maxUploadMb > 512) {
+                throw new InvalidArgumentException('Batas upload File Manager harus 1-512 MB (mengikuti batas Nginx client_max_body_size)');
+            }
             SettingsService::set('phpmyadmin_url', $pma);
+            SettingsService::set('filemanager_max_upload_mb', (string) $maxUploadMb);
             flash('success', 'Pengaturan disimpan.');
         } elseif ($action === 'change_password') {
             $current = (string) ($_POST['current_password'] ?? '');
@@ -105,6 +114,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $phpmyadminUrl = SettingsService::get('phpmyadmin_url');
+$filemanagerMaxUploadMb = (int) SettingsService::get('filemanager_max_upload_mb') ?: Config::getInt('FILEMANAGER_MAX_UPLOAD_MB', 100);
 $deploymentMode = Config::get('APP_DEPLOYMENT_MODE', 'direct');
 $sessionIdleTimeout = (int) SettingsService::get('session_idle_timeout') ?: Config::getInt('SESSION_IDLE_TIMEOUT', 900);
 $sessionLifetime = (int) SettingsService::get('session_lifetime') ?: Config::getInt('SESSION_LIFETIME', 1800);
@@ -140,6 +150,11 @@ include __DIR__ . '/partials/settings_nav.php';
           <div class="mb-3">
             <label class="form-label">URL phpMyAdmin</label>
             <input type="url" name="phpmyadmin_url" class="form-control" value="<?= e($phpmyadminUrl) ?>" placeholder="https://pma.domainanda.com">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Batas Upload File Manager (MB)</label>
+            <input type="number" name="filemanager_max_upload_mb" class="form-control" value="<?= e((string) $filemanagerMaxUploadMb) ?>" min="1" max="512" required>
+            <div class="form-text">Berlaku untuk upload file & ZIP di File Manager. Maks 512 MB (batas Nginx).</div>
           </div>
           <button class="btn btn-primary">Simpan</button>
         </form>
