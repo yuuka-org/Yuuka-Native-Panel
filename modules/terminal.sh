@@ -233,6 +233,23 @@ module_terminal_apply_acls() {
 # --chdir default, never anything outside the sandbox. Only reachable at
 # all through the same auth_request-gated /terminal/ Nginx location every
 # other Terminal session already goes through.
+#
+# .nvm is bind-mounted READ-ONLY so `node`/`npm`/`npx` are actually usable
+# inside the sandbox (e.g. `npm install` for a Node app) - it otherwise
+# lives entirely outside /var/www and /home/nodeapps/apps, the only two
+# trees this sandbox can normally see at all. Read-only is deliberate:
+# nothing run in here should be able to install/remove Node VERSIONS
+# system-wide (that stays an install/repair-time operation via
+# modules/nodejs.sh), only use whatever's already installed. `pm2` itself
+# is ALSO reachable this way (it lives in the same nvm-managed bin dir),
+# but running it here talks to a SEPARATE daemon under panelterm's own
+# $HOME (/var/www, not nodeapps' $HOME) - it will not see or control the
+# real, panel-managed PM2 processes at all. Managing those stays through
+# the panel's own Start/Stop/Restart buttons and Settings pages, which
+# always run as the real 'nodeapps' user via panel-exec.sh.
+# NPM_CONFIG_CACHE points at the already-provisioned --tmpfs /tmp instead
+# of npm's default $HOME/.npm, so a stray cache dir doesn't get created
+# under /var/www (this sandbox's $HOME) on every use.
 module_terminal_systemd_unit() {
     log_step "Konfigurasi service ttyd (Terminal di Panel)"
 
@@ -253,11 +270,13 @@ Group=${TERMINAL_USER}
 ExecStart=${ttyd_bin} -i 127.0.0.1 -p ${TERMINAL_PORT} -b /terminal -W -O -a ${bwrap_bin} \\
     --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib \\
     --ro-bind-try /lib64 /lib64 --ro-bind /etc /etc \\
+    --ro-bind-try ${TERMINAL_NODEAPPS_HOME}/.nvm ${TERMINAL_NODEAPPS_HOME}/.nvm \\
     --bind ${TERMINAL_WWW_BASE} ${TERMINAL_WWW_BASE} --bind ${TERMINAL_NODEAPPS_BASE} ${TERMINAL_NODEAPPS_BASE} \\
     --proc /proc --dev /dev --tmpfs /tmp --chdir ${TERMINAL_WWW_BASE} \\
     --unshare-all --share-net --die-with-parent \\
     --clearenv --setenv HOME ${TERMINAL_WWW_BASE} --setenv PATH /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin --setenv TERM xterm-256color --setenv LANG C.UTF-8 \\
-    bash -c 'if [ -n "\$1" ]; then cd -- "\$1" 2>/dev/null || true; fi; exec bash' bash
+    --setenv NVM_DIR ${TERMINAL_NODEAPPS_HOME}/.nvm --setenv NPM_CONFIG_CACHE /tmp/npm-cache \\
+    bash -c 'if [ -n "\$1" ]; then cd -- "\$1" 2>/dev/null || true; fi; [ -s "\$NVM_DIR/nvm.sh" ] && . "\$NVM_DIR/nvm.sh"; exec bash' bash
 Restart=on-failure
 RestartSec=2
 
