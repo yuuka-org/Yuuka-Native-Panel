@@ -7,6 +7,23 @@ function e(?string $value): string
     return htmlspecialchars($value ?? '', ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
+/**
+ * Appends a `?v=<mtime>` cache-buster to a same-origin static asset path
+ * (e.g. '/assets/css/app.css') - without this, an updated CSS/JS file
+ * deployed to the server keeps getting served from the browser's (or,
+ * behind Cloudflare, the EDGE's) cache under the same unchanged URL,
+ * silently showing a stale/broken layout after every deploy until the
+ * cache happens to expire or someone manually purges it. Falls back to
+ * the bare path if the file can't be stat'd (e.g. never happens in
+ * practice, but a 404 asset shouldn't crash page rendering over this).
+ */
+function asset_url(string $relPath): string
+{
+    $absPath = APP_PATH . '/public' . $relPath;
+    $mtime = @filemtime($absPath);
+    return $mtime !== false ? $relPath . '?v=' . $mtime : $relPath;
+}
+
 function redirect(string $path): never
 {
     header('Location: ' . $path);
