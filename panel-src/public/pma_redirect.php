@@ -21,12 +21,24 @@ if (!$base) {
 // instead of being signed in automatically.
 $db = (string) ($_GET['db'] ?? '');
 $creds = null;
+// TEMPORARY debug logging - tracing why signon auto-login silently never
+// writes a session (no exception, no PMA_single_signon_* in any session
+// file produced under storage/pma-signon). Remove once root cause found.
+error_log('[PMA-DEBUG] db=' . var_export($db, true)
+    . ' dbNameValid=' . var_export($db !== '' && Validator::dbName($db), true)
+    . ' role=' . var_export(Auth::user()['role'] ?? null, true)
+    . ' canManage=' . var_export(Rbac::can(Auth::user()['role'] ?? '', 'database.manage'), true));
 if ($db !== '' && Validator::dbName($db) && Rbac::can(Auth::user()['role'] ?? '', 'database.manage')) {
     $creds = DbCredentialsStore::get($db);
+    error_log('[PMA-DEBUG] creds=' . ($creds === null ? 'NULL' : ('db_user=' . var_export($creds['db_user'], true) . ' passwordLen=' . strlen($creds['password']))));
 }
 
 if ($creds !== null && $creds['password'] !== '') {
+    error_log('[PMA-DEBUG] calling pma_write_signon_session');
     pma_write_signon_session($creds['db_user'], $creds['password']);
+    error_log('[PMA-DEBUG] pma_write_signon_session returned, cookie sent=' . var_export(headers_list(), true));
+} else {
+    error_log('[PMA-DEBUG] SKIPPED pma_write_signon_session - creds null or empty password');
 }
 
 $target = rtrim((string) $base, '/') . '/index.php';
@@ -77,10 +89,16 @@ function pma_write_signon_session(string $dbUser, string $dbPassword): void
     $signonSessionName = 'PMASignon';
     $signonSessionDir = '/opt/server-panel/storage/pma-signon';
 
+    // TEMPORARY debug logging - see matching note above this function's call site.
+    error_log('[PMA-DEBUG] pma_write_signon_session: isDir=' . var_export(is_dir($signonSessionDir), true)
+        . ' isWritable=' . var_export(is_writable($signonSessionDir), true)
+        . ' open_basedir=' . var_export(ini_get('open_basedir'), true)
+        . ' posix_uid=' . (function_exists('posix_getuid') ? posix_getuid() : 'n/a'));
     if (!is_dir($signonSessionDir) || !is_writable($signonSessionDir)) {
         // Pool/directory not provisioned (e.g. panel installed before
         // this feature existed, "yp repair panel" not run yet) - fail
         // open to phpMyAdmin's normal login screen rather than erroring.
+        error_log('[PMA-DEBUG] pma_write_signon_session: BAILING OUT (dir missing or not writable)');
         return;
     }
 
