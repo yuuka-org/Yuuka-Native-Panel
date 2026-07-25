@@ -64,7 +64,7 @@ include __DIR__ . '/partials/settings_nav.php';
       </div>
       <div class="mb-3">
         <label class="form-label">Webhook Notifikasi (opsional)</label>
-        <input type="url" name="alarm_webhook_url" class="form-control" value="<?= e($alarmWebhookUrl) ?>" placeholder="https://discord.com/api/webhooks/... atau endpoint sendiri">
+        <input type="url" name="alarm_webhook_url" class="form-control" value="<?= e($alarmWebhookUrl) ?>" placeholder="https://endpoint-webhook-anda.example.com/...">
         <div class="form-text">
           Kalau diisi, panel kirim POST JSON <code>{event, message, timestamp}</code> ke URL ini
           saat ambang batas terlampaui (paling cepat tiap 15 menit per kondisi, tidak akan

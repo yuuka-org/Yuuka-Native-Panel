@@ -7,8 +7,9 @@ declare(strict_types=1);
  * (Settings > Alarm) are breached. There's no email/SMTP here - this
  * project is intentionally zero-dependency (no Composer), and PHP's
  * built-in mail() needs a locally configured MTA this codebase never sets
- * up, so a webhook (Discord/Telegram-via-relay/generic HTTP endpoint) is
- * the only notification channel that needs nothing extra installed.
+ * up, so a plain HTTP webhook is the only notification channel that needs
+ * nothing extra installed - the admin can point it at whatever endpoint
+ * they already use to receive alerts.
  */
 final class AlarmNotifier
 {

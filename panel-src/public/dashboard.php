@@ -249,9 +249,9 @@ foreach ($widgetConfig as $widgetId => $cfg) {
 ?>
 
 <script>
-// Color-codes a gauge ring the same way aaPanel does: green under 60%,
-// orange 60-85%, red above that - a quick "does this need attention"
-// signal without having to read the exact number.
+// Color-codes a gauge ring by severity: green under 60%, orange 60-85%,
+// red above that - a quick "does this need attention" signal without
+// having to read the exact number.
 function gaugeColorFor(percent) {
   if (percent >= 85) return '#ef4444';
   if (percent >= 60) return '#f59e0b';
