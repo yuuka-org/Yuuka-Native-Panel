@@ -22,7 +22,25 @@ module_panel_setup_installer_copy() {
         if git -C "$YP_INSTALLER_DIR" pull >>"$INSTALL_LOG_FILE" 2>&1; then
             log_ok "${YP_INSTALLER_DIR} sudah ada (git clone), disinkronkan ke commit terbaru"
         else
-            log_warn "git pull di ${YP_INSTALLER_DIR} gagal, melanjutkan dengan isi yang ada"
+            # A plain 'pull' fails outright on a non-fast-forward (e.g.
+            # upstream history was rewritten/force-pushed - has happened
+            # to this very repo) - fall back to a hard sync against
+            # whatever the remote's current branch tip is, since this is
+            # meant to be a disposable mirror of upstream, not a clone
+            # with local commits worth preserving. Only if THIS also
+            # fails (e.g. no network) do we actually give up and keep
+            # stale content - previously that was the ONLY outcome for
+            # any pull failure, silently leaving 'yp' (and the "Commit
+            # installer" version shown in Settings) stuck on an old
+            # commit with no visible error.
+            local current_branch
+            current_branch=$(git -C "$YP_INSTALLER_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "master")
+            if git -C "$YP_INSTALLER_DIR" fetch origin >>"$INSTALL_LOG_FILE" 2>&1 \
+                && git -C "$YP_INSTALLER_DIR" reset --hard "origin/${current_branch}" >>"$INSTALL_LOG_FILE" 2>&1; then
+                log_ok "${YP_INSTALLER_DIR} disinkronkan paksa ke origin/${current_branch} (git pull biasa gagal, kemungkinan riwayat upstream ditulis ulang)"
+            else
+                log_warn "git pull/fetch di ${YP_INSTALLER_DIR} gagal, melanjutkan dengan isi yang ada"
+            fi
         fi
     elif [[ "$(realpath -m "$SCRIPT_DIR")" == "$(realpath -m "$YP_INSTALLER_DIR")" ]]; then
         log_ok "Installer sudah berjalan langsung dari ${YP_INSTALLER_DIR}"

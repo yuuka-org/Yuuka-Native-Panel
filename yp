@@ -558,8 +558,19 @@ cmd_update() {
         return 1
     fi
     if ! ( cd "$INSTALLER_DIR" && git pull ); then
-        log_error "git pull gagal"
-        return 1
+        # Plain 'pull' fails outright on a non-fast-forward (e.g. upstream
+        # history was rewritten/force-pushed - has happened to this very
+        # repo). This is meant to be a disposable mirror of upstream, not
+        # a clone with local commits worth preserving, so fall back to a
+        # hard sync against the remote branch tip instead of just erroring.
+        local current_branch
+        current_branch=$(git -C "$INSTALLER_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "master")
+        if git -C "$INSTALLER_DIR" fetch origin && git -C "$INSTALLER_DIR" reset --hard "origin/${current_branch}"; then
+            log_ok "git pull biasa gagal (kemungkinan riwayat upstream ditulis ulang) - disinkronkan paksa ke origin/${current_branch}"
+        else
+            log_error "git pull/fetch gagal"
+            return 1
+        fi
     fi
 
     rsync -a --exclude 'storage/' --exclude '.env' "${INSTALLER_DIR}/panel-src/" "${PANEL_ROOT}/"
