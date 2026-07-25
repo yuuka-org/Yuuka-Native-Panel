@@ -150,7 +150,13 @@ php_admin_flag[allow_url_fopen] = off
 php_admin_value[upload_max_filesize] = 512M
 php_admin_value[post_max_size] = 512M
 php_admin_value[memory_limit] = 512M
-php_admin_value[session.save_path] = ${PANEL_ROOT}/storage/sessions
+; php_value (NOT php_admin_value) - pma_redirect.php needs to swap this at
+; runtime via session_save_path() to bridge a signon session into
+; phpMyAdmin's shared storage/pma-signon dir. php_admin_value locks the
+; setting at PHP_INI_SYSTEM scope, silently ignoring any runtime
+; ini_set()/session_save_path() override - the signon session ends up
+; written here instead, mixed into the panel's own session store.
+php_value[session.save_path] = ${PANEL_ROOT}/storage/sessions
 php_admin_value[error_log] = ${PANEL_ROOT}/storage/logs/php-fpm-error.log
 php_admin_flag[log_errors] = on
 EOF
