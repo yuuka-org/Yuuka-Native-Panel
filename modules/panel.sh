@@ -88,13 +88,13 @@ module_panel_deploy_files() {
     chmod 750 "${PANEL_ROOT}/scripts/panel-exec.sh" 2>/dev/null || true
 
     # storage/pma-signon (see modules/phpmyadmin.sh's
-    # module_phpmyadmin_configure_fpm_pool) deliberately needs 770, not
-    # the blanket 750 every other directory here just got - phpMyAdmin's
-    # dedicated FPM pool runs as www-data, reaching this directory only
-    # via its 'panel' group membership, which needs the group WRITE bit
-    # the blanket chmod above just took away. Without this re-assertion,
-    # every deploy/redeploy silently breaks phpMyAdmin's signon SSO
-    # ("session_start(): ... Permission denied") until someone notices.
+    # module_phpmyadmin_configure_fpm_pool) is shared with phpMyAdmin's own
+    # dedicated FPM pool, which runs as 'panel' too (both sides must share
+    # the same UID - PHP's 'files' session handler refuses to read a
+    # session file whose owning UID doesn't match the reading process's
+    # UID, no matter what the permission bits say). Re-asserted here in
+    # case the blanket chmod/chown above ever runs against a directory
+    # that predates this being owned panel:panel.
     if [[ -d "${PANEL_ROOT}/storage/pma-signon" ]]; then
         chown panel:panel "${PANEL_ROOT}/storage/pma-signon"
         chmod 770 "${PANEL_ROOT}/storage/pma-signon"

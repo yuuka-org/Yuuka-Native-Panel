@@ -40,7 +40,9 @@ module_phpmyadmin_download() {
     rm -f "$tmp_archive"
 
     mkdir -p "$PHPMYADMIN_TMP_DIR"
-    chown -R www-data:www-data "$PHPMYADMIN_ROOT" "$PHPMYADMIN_TMP_DIR"
+    # Owned by 'panel', not www-data - see module_phpmyadmin_configure_fpm_pool
+    # below for why the FPM pool itself also runs as 'panel'.
+    chown -R panel:panel "$PHPMYADMIN_ROOT" "$PHPMYADMIN_TMP_DIR"
     chmod 750 "$PHPMYADMIN_TMP_DIR"
 
     state_mark "phpmyadmin:downloaded"
@@ -95,7 +97,7 @@ if (is_array(\$__pma_cf_visitor) && (\$__pma_cf_visitor['scheme'] ?? '') === 'ht
 \$cfg['CheckConfigurationPermissions'] = true;
 EOF
 
-    chown www-data:www-data "${PHPMYADMIN_ROOT}/config.inc.php"
+    chown panel:panel "${PHPMYADMIN_ROOT}/config.inc.php"
     chmod 640 "${PHPMYADMIN_ROOT}/config.inc.php"
 
     log_ok "config.inc.php dibuat dengan blowfish_secret unik"
@@ -104,11 +106,17 @@ EOF
 
 # Dedicated PHP-FPM pool for phpMyAdmin (instead of the default 'www'
 # pool) so it can share a session directory with the panel's own pool for
-# signon SSO (see pma_redirect.php). Runs as www-data (matching
-# phpMyAdmin's existing file ownership) - www-data is already a member of
-# the 'panel' group (see module_panel_deploy_files in modules/panel.sh),
-# so it can read/write PHPMYADMIN_SIGNON_SESSION_DIR when that directory
-# is owned panel:panel with group-write permission.
+# signon SSO (see pma_redirect.php). Runs as 'panel', NOT www-data - PHP's
+# 'files' session handler refuses to read a session file whose owning UID
+# doesn't match the reading process's UID ("Session data file is not
+# created by your uid"), regardless of any chmod/group permission on the
+# file or its directory. Since pma_redirect.php (panel's own FPM pool,
+# user 'panel') writes the signon session, phpMyAdmin's pool must read it
+# as that same 'panel' UID, or the signon bridge silently fails every
+# time and falls back to phpMyAdmin's SignonURL (the panel's login page).
+# The listen socket itself stays owned by www-data below - that's just so
+# Nginx (which connects to it as www-data) can reach it; it's unrelated
+# to which UID actually executes the PHP inside the pool.
 module_phpmyadmin_configure_fpm_pool() {
     local php_version="$1"
     log_step "Konfigurasi PHP-FPM pool khusus phpMyAdmin (PHP ${php_version})"
@@ -116,15 +124,12 @@ module_phpmyadmin_configure_fpm_pool() {
     mkdir -p "$PHPMYADMIN_SIGNON_SESSION_DIR"
     chown panel:panel "$PHPMYADMIN_SIGNON_SESSION_DIR"
     chmod 770 "$PHPMYADMIN_SIGNON_SESSION_DIR"
-    if id www-data &>/dev/null; then
-        usermod -a -G panel www-data
-    fi
 
     local pool_file="/etc/php/${php_version}/fpm/pool.d/phpmyadmin.conf"
     write_file_if_changed "$pool_file" <<EOF
 [phpmyadmin]
-user = www-data
-group = www-data
+user = panel
+group = panel
 listen = ${PHPMYADMIN_POOL_SOCK}
 listen.owner = www-data
 listen.group = www-data
