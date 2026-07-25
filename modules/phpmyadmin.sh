@@ -95,6 +95,37 @@ if (is_array(\$__pma_cf_visitor) && (\$__pma_cf_visitor['scheme'] ?? '') === 'ht
 \$cfg['LoginCookieValidity'] = 1800;
 \$cfg['ForceSSL'] = false;
 \$cfg['CheckConfigurationPermissions'] = true;
+
+// TEMPORARY DEBUG - tracing why the signon session bridge from
+// pma_redirect.php isn't being picked up here. Independently replays
+// the same read AuthenticationSignon::readCredentials() is about to do
+// (cookie -> session file), logging every step, without touching any
+// vendor file. Remove once root cause is confirmed fixed.
+if (isset(\$_COOKIE['PMASignon'])) {
+    \$__pma_debug_sid = \$_COOKIE['PMASignon'];
+    \$__pma_debug_file = '${PHPMYADMIN_SIGNON_SESSION_DIR}/sess_' . \$__pma_debug_sid;
+    error_log('[PMA-DEBUG-READ] cookie=' . var_export(\$__pma_debug_sid, true)
+        . ' uid=' . (function_exists('posix_getuid') ? posix_getuid() : 'n/a')
+        . ' file_exists=' . var_export(file_exists(\$__pma_debug_file), true)
+        . ' is_readable=' . var_export(is_readable(\$__pma_debug_file), true)
+        . ' owner_uid=' . var_export(@fileowner(\$__pma_debug_file), true)
+        . ' perms=' . var_export(@substr(sprintf('%o', @fileperms(\$__pma_debug_file)), -4), true));
+    \$__pma_debug_oldname = session_name();
+    \$__pma_debug_oldid = session_id();
+    \$__pma_debug_old_use_cookies = ini_get('session.use_cookies');
+    ini_set('session.use_cookies', '0');
+    session_name('PMASignon');
+    session_id(\$__pma_debug_sid);
+    \$__pma_debug_started = @session_start();
+    error_log('[PMA-DEBUG-READ] session_start=' . var_export(\$__pma_debug_started, true)
+        . ' data=' . var_export(\$_SESSION ?? null, true));
+    session_write_close();
+    ini_set('session.use_cookies', \$__pma_debug_old_use_cookies);
+    session_name(\$__pma_debug_oldname);
+    session_id(\$__pma_debug_oldid);
+} else {
+    error_log('[PMA-DEBUG-READ] no PMASignon cookie in this request');
+}
 EOF
 
     chown panel:panel "${PHPMYADMIN_ROOT}/config.inc.php"
