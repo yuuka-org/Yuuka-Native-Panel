@@ -124,11 +124,17 @@ function pma_write_signon_session(string $dbUser, string $dbPassword): void
     session_save_path($signonSessionDir);
     session_name($signonSessionName);
     session_id(bin2hex(random_bytes(16)));
-    session_start();
+    error_log('[PMA-DEBUG] before start: save_handler=' . var_export(ini_get('session.save_handler'), true)
+        . ' save_path=' . var_export(session_save_path(), true));
+    $startOk = session_start();
+    error_log('[PMA-DEBUG] session_start returned=' . var_export($startOk, true));
     $_SESSION['PMA_single_signon_user'] = $dbUser;
     $_SESSION['PMA_single_signon_password'] = $dbPassword;
     $signonId = session_id();
     session_write_close();
+    error_log('[PMA-DEBUG] after write_close: expected file=' . $signonSessionDir . '/sess_' . $signonId
+        . ' exists=' . var_export(file_exists($signonSessionDir . '/sess_' . $signonId), true)
+        . ' dirListing=' . var_export(glob($signonSessionDir . '/*'), true));
 
     setcookie($signonSessionName, $signonId, [
         'expires' => time() + 60,
