@@ -323,13 +323,24 @@ cmd_security_entrance() {
     if [[ "$arg" == "off" ]]; then
         rm -f "$snippet"
         mysql_root -e "INSERT INTO ${PANEL_DB_NAME}.settings (setting_key, setting_value) VALUES ('security_entrance_path', '') ON DUPLICATE KEY UPDATE setting_value='';" 2>/dev/null || true
-        if nginx -t >/dev/null 2>&1; then
-            systemctl reload nginx
-            log_ok "Security Entrance dinonaktifkan - login kembali lewat /login.php."
-        else
-            log_error "nginx -t gagal setelah menonaktifkan Security Entrance - cek manual: nginx -t"
+
+        # Same reasoning as cmd_basicauth's "off" path: deleting the snippet
+        # alone leaves the panel vhost's 'include' line dangling, which
+        # fails 'nginx -t' outright. This is especially important to get
+        # right here since 'off' is the documented lockout-recovery escape
+        # hatch - it has to actually succeed, not just report failure and
+        # leave the admin still locked out.
+        local vhost domain
+        vhost=$(panel_vhost_file)
+        domain=$(grep -h 'server_name' "${vhost:-/dev/null}" 2>/dev/null | head -1 | awk '{print $2}' | tr -d ';')
+        if [[ -z "$domain" ]]; then
+            log_error "Tidak bisa mendeteksi domain panel - vhost tidak diregenerasi, cek manual: nginx -t"
             return 1
         fi
+        PANEL_DOMAIN="$domain"
+        export PANEL_DOMAIN
+        module_panel_nginx_vhost
+        log_ok "Security Entrance dinonaktifkan - login kembali lewat /login.php."
         return 0
     fi
 
@@ -356,18 +367,36 @@ location = /${arg} {
 }
 EOF
 
-    if nginx -t >/dev/null 2>&1; then
-        local escaped
-        escaped=$(mysql_escape "$arg")
-        mysql_root -e "INSERT INTO ${PANEL_DB_NAME}.settings (setting_key, setting_value) VALUES ('security_entrance_path', '${escaped}') ON DUPLICATE KEY UPDATE setting_value='${escaped}';" 2>/dev/null || true
-        systemctl reload nginx
-        log_ok "Security Entrance aktif - login sekarang lewat: /${arg}"
-        log_warn "Catat path ini sekarang. Kalau lupa, jalankan 'yp security-entrance' (tanpa argumen) via SSH untuk melihatnya lagi, atau 'yp security-entrance off' untuk menonaktifkan."
-    else
+    # A bare 'nginx -t' here would pass trivially even on a panel that has
+    # NEVER included this snippet before - the vhost simply wouldn't
+    # reference this orphan file yet, so the test proves nothing about
+    # whether Security Entrance actually takes effect. Same fix as the
+    # "off" branch above: regenerate the panel vhost itself so its
+    # 'include' line stays in sync, instead of testing/reloading the
+    # possibly-stale one already on disk.
+    local vhost domain
+    vhost=$(panel_vhost_file)
+    domain=$(grep -h 'server_name' "${vhost:-/dev/null}" 2>/dev/null | head -1 | awk '{print $2}' | tr -d ';')
+    if [[ -z "$domain" ]]; then
         if [[ -n "$prev_snippet" ]]; then mv "$prev_snippet" "$snippet"; else rm -f "$snippet"; fi
-        log_error "nginx -t gagal, perubahan dibatalkan"
+        log_error "Tidak bisa mendeteksi domain panel - perubahan dibatalkan"
         return 1
     fi
+    PANEL_DOMAIN="$domain"
+    export PANEL_DOMAIN
+    # module_panel_nginx_vhost calls die() (hard exit) on its own internal
+    # 'nginx -t' failure - unlike the manual checks elsewhere in this
+    # function, there is no "else" to fall into afterwards, and no
+    # meaningful rollback left to do at that point (the vhost file it just
+    # wrote is already on disk either way; only a future repair/deploy
+    # would overwrite it). Same as how cmd_repair_panel already calls it,
+    # unguarded.
+    module_panel_nginx_vhost
+    local escaped
+    escaped=$(mysql_escape "$arg")
+    mysql_root -e "INSERT INTO ${PANEL_DB_NAME}.settings (setting_key, setting_value) VALUES ('security_entrance_path', '${escaped}') ON DUPLICATE KEY UPDATE setting_value='${escaped}';" 2>/dev/null || true
+    log_ok "Security Entrance aktif - login sekarang lewat: /${arg}"
+    log_warn "Catat path ini sekarang. Kalau lupa, jalankan 'yp security-entrance' (tanpa argumen) via SSH untuk melihatnya lagi, atau 'yp security-entrance off' untuk menonaktifkan."
 }
 
 # ---------------------------------------------------------------------------
@@ -402,13 +431,24 @@ cmd_basicauth() {
 
     rm -f "$snippet" "$htpasswd"
     mysql_root -e "INSERT INTO ${PANEL_DB_NAME}.settings (setting_key, setting_value) VALUES ('basicauth_enabled', '0') ON DUPLICATE KEY UPDATE setting_value='0';" 2>/dev/null || true
-    if nginx -t >/dev/null 2>&1; then
-        systemctl reload nginx
-        log_ok "BasicAuth dinonaktifkan."
-    else
-        log_error "nginx -t gagal setelah menonaktifkan BasicAuth - cek manual: nginx -t"
+
+    # Deleting the snippet alone leaves the panel vhost's 'include' line
+    # for it dangling - a raw 'nginx -t' against that stale vhost always
+    # fails at this point. module_panel_nginx_vhost regenerates the vhost
+    # from scratch (it re-checks [[ -f "$snippet" ]] itself, which is now
+    # false), correctly dropping the include, then does its own nginx -t +
+    # reload - same pattern cmd_repair_panel already uses.
+    local vhost domain
+    vhost=$(panel_vhost_file)
+    domain=$(grep -h 'server_name' "${vhost:-/dev/null}" 2>/dev/null | head -1 | awk '{print $2}' | tr -d ';')
+    if [[ -z "$domain" ]]; then
+        log_error "Tidak bisa mendeteksi domain panel - vhost tidak diregenerasi, cek manual: nginx -t"
         return 1
     fi
+    PANEL_DOMAIN="$domain"
+    export PANEL_DOMAIN
+    module_panel_nginx_vhost
+    log_ok "BasicAuth dinonaktifkan."
 }
 
 # ---------------------------------------------------------------------------

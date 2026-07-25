@@ -42,6 +42,13 @@ PANEL_ROOT="/opt/server-panel"
 PANEL_POOL_SOCK="/run/php/panel.sock"
 BASICAUTH_HTPASSWD="/etc/nginx/panel.htpasswd"
 
+# Mirrors yp's own panel_vhost_file() - the panel vhost is the only file
+# generated with this naming pattern (modules/panel.sh), so a glob is
+# sufficient without needing to know PANEL_DOMAIN in this standalone script.
+panel_vhost_file() {
+    find "$NGINX_AVAILABLE" -maxdepth 1 -name 'panel-*.conf' 2>/dev/null | head -1
+}
+
 mkdir -p "$(dirname "$AUDIT_LOG")"
 audit() {
     echo "$(date -Iseconds) uid=$(id -u) caller=${SUDO_USER:-unknown} subcommand=$1 status=$2" >> "$AUDIT_LOG"
@@ -188,7 +195,19 @@ op_panel_basicauth_set() {
     local snippet="${NGINX_SNIPPETS}/includes/panel-basicauth.conf"
     mkdir -p "$(dirname "$snippet")"
 
-    local prev_snippet="" prev_htpasswd=""
+    # module_panel_nginx_vhost (modules/panel.sh) only wires this snippet's
+    # 'include' line into the panel vhost the NEXT time the vhost itself is
+    # regenerated (install/repair) - it never runs from here. Without also
+    # syncing that line in THIS function, enabling silently has no effect
+    # until some unrelated 'yp repair panel' happens to pick it up, and
+    # disabling leaves a dangling include pointing at a now-deleted file,
+    # which breaks 'nginx -t' (and therefore every future reload) until
+    # someone notices and runs a repair manually.
+    local vhost
+    vhost=$(panel_vhost_file)
+    local include_line="include ${snippet};"
+
+    local prev_snippet="" prev_htpasswd="" prev_vhost=""
     if [[ -f "$snippet" ]]; then
         prev_snippet=$(mktemp)
         cp -a "$snippet" "$prev_snippet"
@@ -197,9 +216,16 @@ op_panel_basicauth_set() {
         prev_htpasswd=$(mktemp)
         cp -a "$BASICAUTH_HTPASSWD" "$prev_htpasswd"
     fi
+    if [[ -n "$vhost" && -f "$vhost" ]]; then
+        prev_vhost=$(mktemp)
+        cp -a "$vhost" "$prev_vhost"
+    fi
 
     if [[ "$mode" == "disable" ]]; then
         rm -f "$snippet" "$BASICAUTH_HTPASSWD"
+        if [[ -n "$vhost" && -f "$vhost" ]]; then
+            grep -vF "$include_line" "$vhost" > "${vhost}.tmp" && mv "${vhost}.tmp" "$vhost"
+        fi
     else
         local username="$2" hash="$3"
         require_match "$username" "$RE_BASICAUTH_USERNAME" "username"
@@ -217,17 +243,27 @@ auth_basic_user_file ${BASICAUTH_HTPASSWD};
 EOF
         chown root:root "$snippet"
         chmod 644 "$snippet"
+        if [[ -n "$vhost" && -f "$vhost" ]] && ! grep -qF "$include_line" "$vhost"; then
+            # Deliberately NOT "\$i\\${include_line}" - a literal backslash
+            # immediately before a bash ${...} expansion (i.e. "\\${var}")
+            # suppresses the expansion entirely in this shell, inserting the
+            # unexpanded text "${include_line}" into the file instead of its
+            # value. GNU sed's one-line 'i' extension needs no backslash
+            # continuation at all, which sidesteps the problem.
+            sed -i "\$i${include_line}" "$vhost"
+        fi
     fi
 
     if ! nginx -t 2>/tmp/nginx-test-err.$$; then
         if [[ -n "$prev_snippet" ]]; then mv "$prev_snippet" "$snippet"; else rm -f "$snippet"; fi
         if [[ -n "$prev_htpasswd" ]]; then mv "$prev_htpasswd" "$BASICAUTH_HTPASSWD"; else rm -f "$BASICAUTH_HTPASSWD"; fi
+        if [[ -n "$prev_vhost" ]]; then mv "$prev_vhost" "$vhost"; fi
         local err
         err=$(cat /tmp/nginx-test-err.$$ 2>/dev/null || true)
         rm -f "/tmp/nginx-test-err.$$"
         fail "nginx -t gagal, BasicAuth dibatalkan: ${err}"
     fi
-    rm -f "/tmp/nginx-test-err.$$" "$prev_snippet" "$prev_htpasswd" 2>/dev/null || true
+    rm -f "/tmp/nginx-test-err.$$" "$prev_snippet" "$prev_htpasswd" "$prev_vhost" 2>/dev/null || true
     systemctl reload nginx
     echo "OK: basicauth ${mode}"
 }
@@ -252,14 +288,32 @@ op_panel_security_entrance_set() {
     local snippet="${NGINX_SNIPPETS}/includes/security-entrance.conf"
     mkdir -p "$(dirname "$snippet")"
 
-    local prev_snippet=""
+    # Same reasoning as op_panel_basicauth_set above: the panel vhost's
+    # 'include' line for this snippet is only synced by module_panel_nginx_vhost
+    # (modules/panel.sh), which doesn't run from here - so this function has
+    # to keep it in sync itself, or enabling silently does nothing and
+    # disabling leaves a dangling include that breaks 'nginx -t'. That
+    # second failure mode is especially bad here since 'off' is the
+    # documented lockout-recovery escape hatch (see yp's cmd_security_entrance).
+    local vhost
+    vhost=$(panel_vhost_file)
+    local include_line="include ${snippet};"
+
+    local prev_snippet="" prev_vhost=""
     if [[ -f "$snippet" ]]; then
         prev_snippet=$(mktemp)
         cp -a "$snippet" "$prev_snippet"
     fi
+    if [[ -n "$vhost" && -f "$vhost" ]]; then
+        prev_vhost=$(mktemp)
+        cp -a "$vhost" "$prev_vhost"
+    fi
 
     if [[ "$mode" == "disable" ]]; then
         rm -f "$snippet"
+        if [[ -n "$vhost" && -f "$vhost" ]]; then
+            grep -vF "$include_line" "$vhost" > "${vhost}.tmp" && mv "${vhost}.tmp" "$vhost"
+        fi
     else
         local path="$2"
         require_match "$path" "$RE_SECURITY_ENTRANCE_PATH" "path"
@@ -276,16 +330,23 @@ location = /${path} {
 EOF
         chown root:root "$snippet"
         chmod 644 "$snippet"
+        if [[ -n "$vhost" && -f "$vhost" ]] && ! grep -qF "$include_line" "$vhost"; then
+            # See op_panel_basicauth_set's comment on this exact line shape -
+            # "\\${include_line}" would silently insert the LITERAL text
+            # "${include_line}" instead of its value.
+            sed -i "\$i${include_line}" "$vhost"
+        fi
     fi
 
     if ! nginx -t 2>/tmp/nginx-test-err.$$; then
         if [[ -n "$prev_snippet" ]]; then mv "$prev_snippet" "$snippet"; else rm -f "$snippet"; fi
+        if [[ -n "$prev_vhost" ]]; then mv "$prev_vhost" "$vhost"; fi
         local err
         err=$(cat /tmp/nginx-test-err.$$ 2>/dev/null || true)
         rm -f "/tmp/nginx-test-err.$$"
         fail "nginx -t gagal, Security Entrance dibatalkan: ${err}"
     fi
-    rm -f "/tmp/nginx-test-err.$$" "$prev_snippet" 2>/dev/null || true
+    rm -f "/tmp/nginx-test-err.$$" "$prev_snippet" "$prev_vhost" 2>/dev/null || true
     systemctl reload nginx
     echo "OK: security-entrance ${mode}"
 }
