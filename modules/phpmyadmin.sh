@@ -177,8 +177,12 @@ pm.max_requests = 500
 ; pool for signon SSO - see pma_redirect.php and
 ; PHPMYADMIN_SIGNON_SESSION_DIR above.
 php_admin_value[session.save_path] = ${PHPMYADMIN_SIGNON_SESSION_DIR}
-php_admin_value[open_basedir] = ${PHPMYADMIN_ROOT}:${PHPMYADMIN_SIGNON_SESSION_DIR}:${PHPMYADMIN_TMP_DIR}:/tmp
-php_admin_value[error_log] = /var/log/php-phpmyadmin-fpm.log
+php_admin_value[open_basedir] = ${PHPMYADMIN_ROOT}:${PHPMYADMIN_SIGNON_SESSION_DIR}:${PHPMYADMIN_TMP_DIR}:/tmp:/opt/server-panel/storage/logs
+; /var/log is root-only-writable on a stock Debian/Ubuntu install - this
+; pool runs as 'panel' (see comment above), which cannot create a file
+; there, so error_log() calls would silently go nowhere. Reuse the
+; panel's own already panel:panel-owned log directory instead.
+php_admin_value[error_log] = /opt/server-panel/storage/logs/phpmyadmin-fpm-error.log
 php_admin_flag[log_errors] = on
 EOF
 
