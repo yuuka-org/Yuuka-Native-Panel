@@ -1007,6 +1007,17 @@ include __DIR__ . '/partials/header.php';
     if (frame) { frame.src = '/terminal/?arg=' + encodeURIComponent(absPath); }
     if (typeof bootstrap !== 'undefined') { bootstrap.Modal.getOrCreateInstance(el).show(); }
   };
+  // ttyd's own bundled frontend (not panel code) sets window.onbeforeunload
+  // inside the iframe to warn about losing the session - same-origin, so
+  // it also fires when navigating away from THIS panel page entirely, not
+  // just when the iframe itself navigates. Neutralize it once ttyd's own
+  // script has had a chance to set it.
+  var fmTerminalFrameEl = document.getElementById('fmTerminalFrame');
+  if (fmTerminalFrameEl) {
+    fmTerminalFrameEl.addEventListener('load', function () {
+      try { fmTerminalFrameEl.contentWindow.onbeforeunload = null; } catch (e) {}
+    });
+  }
   // Drops the iframe back to about:blank on close so the ttyd session
   // actually disconnects instead of idling in the background.
   el.addEventListener('hidden.bs.modal', function () {
