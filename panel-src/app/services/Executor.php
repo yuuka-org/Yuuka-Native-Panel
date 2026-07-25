@@ -31,7 +31,7 @@ final class Executor
         'fs-mkdir-website', 'fs-remove-website', 'fs-remove-nodeapp',
         'port-check',
         'files-list', 'files-read', 'files-write', 'files-mkdir', 'files-delete',
-        'files-rename', 'files-extract-zip',
+        'files-rename', 'files-extract-zip', 'files-extract', 'files-compress',
         'files-copy', 'files-move', 'files-chmod', 'files-search',
         'files-trash-list', 'files-trash-restore', 'files-trash-delete', 'files-trash-empty',
         'backup-tar-website', 'backup-tar-nodeapp', 'restore-tar-website', 'restore-tar-nodeapp',
