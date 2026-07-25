@@ -89,6 +89,12 @@ RE_EMAIL='^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
 RE_DBNAME='^[a-zA-Z0-9_]{1,64}$'
 RE_LINES='^[0-9]{1,4}$'
 RE_PORT='^[0-9]{1,5}$'
+RE_NODE_VERSION='^[0-9]{1,3}$'
+# Mirrors Validator::buildCommand()/NodeService's own PHP-side regex - no
+# shell metacharacters (;&|`$(){}<>) at all, so even though as_nodeapps
+# below interpolates this into a `bash -lc "..."` string, it cannot be
+# used to chain or inject additional commands.
+RE_BUILD_COMMAND='^[a-zA-Z0-9_./ -]{1,255}$'
 # Same whitelist op_service_status already enforces via its own case
 # statement - factored into a regex here for op_service_restart, which is
 # a mutating action and deserves the exact same explicit require_match
@@ -375,7 +381,7 @@ as_nodeapps() {
 }
 
 op_pm2_deploy() {
-    local app="$1"
+    local app="$1" node_version="${2:-}" build_command="${3:-}"
     require_match "$app" "$RE_APPNAME" "appname"
     local app_dir="${NODEAPPS_BASE}/${app}"
     require_path_within "$app_dir" "$NODEAPPS_BASE" >/dev/null
@@ -390,8 +396,28 @@ op_pm2_deploy() {
     chown -R nodeapps:nodeapps "$app_dir"
     chmod 750 "$app_dir"
     chmod 640 "${app_dir}/ecosystem.config.js"
+    fm_reapply_terminal_acl "$app_dir"
 
-    as_nodeapps "pm2 start '${app_dir}/ecosystem.config.js' --update-env"
+    # "nvm use <version>" only changes PATH for THIS shell invocation, but
+    # that's enough: PM2 resolves its default 'node' interpreter to an
+    # absolute path via PATH at the moment `pm2 start`/`pm2 restart` is
+    # run, then keeps using that resolved path for the process from then
+    # on - the standard documented way to pin a per-app Node version under
+    # a single shared PM2 daemon. 'unknown' (see NodeService::importUnmanaged)
+    # or empty means "don't touch PATH, use whatever nvm's own default is".
+    local nvm_use=""
+    if [[ -n "$node_version" && "$node_version" != "unknown" ]]; then
+        require_match "$node_version" "$RE_NODE_VERSION" "node_version"
+        nvm_use="nvm use ${node_version} >/dev/null 2>&1 || true; "
+    fi
+
+    if [[ -n "$build_command" ]]; then
+        require_match "$build_command" "$RE_BUILD_COMMAND" "build command"
+        as_nodeapps "${nvm_use}cd '${app_dir}' && ${build_command}" \
+            || fail "Build command gagal: ${build_command}"
+    fi
+
+    as_nodeapps "${nvm_use}pm2 start '${app_dir}/ecosystem.config.js' --update-env"
     as_nodeapps "pm2 save"
     echo "OK: ${app} deployed via PM2"
 }

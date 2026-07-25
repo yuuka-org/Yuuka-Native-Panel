@@ -24,9 +24,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $lines = min(1000, max(10, (int) ($_GET['lines'] ?? 150)));
 $logOutput = NodeService::getLogs($id, $lines);
+$activeNodejsTab = 'logs';
 
 $pageTitle = 'Logs - ' . $app['app_name'];
 include __DIR__ . '/partials/header.php';
+include __DIR__ . '/partials/nodejs_settings_nav.php';
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-3">

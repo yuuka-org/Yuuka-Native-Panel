@@ -60,11 +60,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             Rbac::require('nodejs.control');
             nodejs_pm2_save();
             flash('success', 'PM2 process list disimpan (akan otomatis start setelah reboot).');
-        } elseif ($action === 'backup') {
-            Rbac::require('backup.manage');
-            $appName = (string) ($_POST['app_name'] ?? '');
-            BackupService::backupNodeApp($appName, $user['id']);
-            flash('success', "Backup {$appName} dibuat. Lihat di Pengaturan > Backup & Restore.");
         }
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
@@ -117,10 +112,17 @@ include __DIR__ . '/partials/header.php';
         <?php if (empty($status['managed'])): ?>
           <tr><td colspan="9" class="text-center text-muted py-4">Belum ada aplikasi Node.js terdaftar</td></tr>
         <?php endif; ?>
-        <?php foreach ($status['managed'] as $item): $m = $item['meta']; $rt = $item['runtime']; ?>
+        <?php foreach ($status['managed'] as $item): $m = $item['meta']; $rt = $item['runtime']; $domainCount = NodeService::countDomains((int) $m['id']); ?>
           <tr>
             <td><?= e($m['app_name']) ?><div class="text-muted small">Node <?= e($m['node_version']) ?></div></td>
-            <td><?= $m['domain'] ? '<a href="http://' . e($m['domain']) . '" target="_blank">' . e($m['domain']) . '</a>' : '<span class="text-muted">-</span>' ?></td>
+            <td>
+              <?php if ($m['domain']): ?>
+                <a href="http://<?= e($m['domain']) ?>" target="_blank"><?= e($m['domain']) ?></a>
+                <?php if ($domainCount > 1): ?><a href="/nodejs_domains.php?id=<?= (int) $m['id'] ?>" class="badge text-bg-light border text-decoration-none">+<?= $domainCount - 1 ?> lainnya</a><?php endif; ?>
+              <?php else: ?>
+                <span class="text-muted">-</span>
+              <?php endif; ?>
+            </td>
             <td><span class="status-dot <?= e($item['status']) ?>"></span><?= e($item['status']) ?></td>
             <td><?= $rt ? e((string) $rt['cpu_percent']) . '%' : '-' ?></td>
             <td><?= $rt ? e((string) round($rt['memory_bytes'] / 1048576, 1)) . ' MB' : '-' ?></td>
@@ -129,14 +131,9 @@ include __DIR__ . '/partials/header.php';
             <td><?= e((string) $m['port']) ?></td>
             <td class="text-end text-nowrap">
               <div class="btn-group">
-                <a href="/nodejs_logs.php?id=<?= e((string) $m['id']) ?>" class="btn btn-sm btn-outline-secondary" title="Logs"><i class="bi bi-file-text"></i></a>
-                <a href="/nodejs_env.php?id=<?= e((string) $m['id']) ?>" class="btn btn-sm btn-outline-secondary" title="Environment"><i class="bi bi-key"></i></a>
-                <a href="/nodejs_health.php?id=<?= e((string) $m['id']) ?>" class="btn btn-sm btn-outline-secondary" title="Health Check"><i class="bi bi-heart-pulse"></i></a>
+                <a href="/nodejs_settings.php?id=<?= e((string) $m['id']) ?>" class="btn btn-sm btn-outline-secondary" title="Settings"><i class="bi bi-gear"></i></a>
                 <?php if (Rbac::can($user['role'], 'files.view')): ?>
                 <a href="/file_manager.php?scope=nodeapp&name=<?= urlencode($m['app_name']) ?>" class="btn btn-sm btn-outline-secondary" title="File Manager"><i class="bi bi-folder2-open"></i></a>
-                <?php endif; ?>
-                <?php if (Rbac::can($user['role'], 'backup.manage')): ?>
-                <button type="button" class="btn btn-sm btn-outline-secondary" title="Backup Sekarang" onclick="nodejsBackup('<?= e($m['app_name']) ?>')"><i class="bi bi-cloud-arrow-down"></i></button>
                 <?php endif; ?>
                 <?php if (Rbac::can($user['role'], 'nodejs.control')): ?>
                 <button type="button" class="btn btn-sm btn-outline-success" title="Start" onclick="pctl(<?= (int) $m['id'] ?>,'start')"><i class="bi bi-play-fill"></i></button>
@@ -305,11 +302,6 @@ include __DIR__ . '/partials/header.php';
   <input type="hidden" name="control" id="ctlAction">
 </form>
 
-<form id="backupForm" method="post" class="d-none">
-  <?= Csrf::field() ?>
-  <input type="hidden" name="action" value="backup">
-  <input type="hidden" name="app_name" id="backupAppName">
-</form>
 <script>
 (function () {
   var input = document.getElementById('appNameInput');
@@ -330,12 +322,6 @@ function pctl(id, action) {
   document.getElementById('ctlId').value = id;
   document.getElementById('ctlAction').value = action;
   document.getElementById('ctlForm').submit();
-}
-
-function nodejsBackup(appName) {
-  if (!confirm('Buat backup aplikasi ' + appName + ' sekarang?')) { return; }
-  document.getElementById('backupAppName').value = appName;
-  document.getElementById('backupForm').submit();
 }
 </script>
 

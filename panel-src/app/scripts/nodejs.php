@@ -46,9 +46,13 @@ function nodejs_build_ecosystem_config(
     return "module.exports = {$json};\n";
 }
 
-function nodejs_pm2_deploy(string $pm2Name, string $ecosystemContent): array
+function nodejs_pm2_deploy(string $pm2Name, string $ecosystemContent, string $nodeVersion = '', ?string $buildCommand = null): array
 {
-    return Executor::run('pm2-deploy', [$pm2Name], $ecosystemContent, 60);
+    // Build commands (npm install/npm run build, etc.) can legitimately
+    // take a while - a longer timeout here than other PM2 ops, matching
+    // op_pm2_deploy's own build step running synchronously before `pm2
+    // start`.
+    return Executor::run('pm2-deploy', [$pm2Name, $nodeVersion, (string) $buildCommand], $ecosystemContent, 180);
 }
 
 function nodejs_pm2_start(string $pm2Name): array

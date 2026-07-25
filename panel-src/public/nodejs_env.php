@@ -62,9 +62,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $variables = EnvService::listForApp($id);
+$activeNodejsTab = 'env';
 
 $pageTitle = 'Environment - ' . $app['app_name'];
 include __DIR__ . '/partials/header.php';
+include __DIR__ . '/partials/nodejs_settings_nav.php';
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-3">

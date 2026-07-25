@@ -135,8 +135,14 @@ final class NodeService
         if (!Validator::relativeScriptPath($startCommand)) {
             throw new InvalidArgumentException('Start command tidak valid');
         }
-        if ($buildCommand !== null && $buildCommand !== '' && !preg_match('/^[a-zA-Z0-9_.\-\/ ]{1,255}$/', $buildCommand)) {
+        if ($buildCommand !== null && $buildCommand !== '' && !Validator::buildCommand($buildCommand)) {
             throw new InvalidArgumentException('Build command mengandung karakter tidak diizinkan');
+        }
+        if (!Validator::maxMemoryRestart($maxMemoryRestart)) {
+            throw new InvalidArgumentException('Max Memory Restart tidak valid (contoh: 512M, 1G, 150K)');
+        }
+        if ($instances < 1 || $instances > 32) {
+            throw new InvalidArgumentException('Instances harus 1-32');
         }
         if (!self::isPortAvailable($port)) {
             throw new InvalidArgumentException("Port {$port} sudah digunakan aplikasi lain");
@@ -159,7 +165,15 @@ final class NodeService
             $autorestart, $watch, $maxMemoryRestart, $nodeEnv, $env
         );
 
-        $deploy = nodejs_pm2_deploy($pm2Name, $ecosystem);
+        // Build command is intentionally NOT run here, even though it's
+        // already saved below - $cwd is a brand-new, empty directory at
+        // this point (files are uploaded/deployed AFTER the app is
+        // registered, via File Manager or git), so e.g. "npm run build"
+        // would just fail on a missing package.json and abort the whole
+        // app registration. It first actually runs on the next explicit
+        // redeploy (see updateApp()), by which point real project files
+        // are expected to exist.
+        $deploy = nodejs_pm2_deploy($pm2Name, $ecosystem, $nodeVersion);
         if (!$deploy['ok']) {
             throw new RuntimeException('Gagal menjalankan aplikasi via PM2: ' . $deploy['output']);
         }
@@ -204,6 +218,168 @@ final class NodeService
         return self::find($id);
     }
 
+    /**
+     * Edits an existing app's runtime config (everything createApp() takes
+     * except app_name/domain/port, which stay fixed for the app's
+     * lifetime) and redeploys it via PM2 - the only way to change
+     * start/build command, NODE_ENV, instances, exec_mode, autorestart,
+     * watch, max_memory_restart, or node_version after creation. Existing
+     * env vars are preserved (edited separately via EnvService).
+     */
+    public static function updateApp(
+        int $id,
+        string $nodeVersion,
+        string $startCommand,
+        ?string $buildCommand,
+        int $instances,
+        string $execMode,
+        bool $autorestart,
+        bool $watch,
+        string $maxMemoryRestart,
+        string $nodeEnv,
+        ?int $userId
+    ): array {
+        $app = self::find($id);
+        if ($app === null) {
+            throw new InvalidArgumentException('Aplikasi tidak ditemukan');
+        }
+        if (!in_array($nodeVersion, self::ALLOWED_NODE_VERSIONS, true)) {
+            throw new InvalidArgumentException('Versi Node.js tidak didukung');
+        }
+        if (!in_array($execMode, self::ALLOWED_EXEC_MODES, true)) {
+            throw new InvalidArgumentException('exec_mode tidak valid');
+        }
+        if (!Validator::relativeScriptPath($startCommand)) {
+            throw new InvalidArgumentException('Start command tidak valid');
+        }
+        if ($buildCommand !== null && $buildCommand !== '' && !Validator::buildCommand($buildCommand)) {
+            throw new InvalidArgumentException('Build command mengandung karakter tidak diizinkan');
+        }
+        if (!Validator::maxMemoryRestart($maxMemoryRestart)) {
+            throw new InvalidArgumentException('Max Memory Restart tidak valid (contoh: 512M, 1G, 150K)');
+        }
+        if ($instances < 1 || $instances > 32) {
+            throw new InvalidArgumentException('Instances harus 1-32');
+        }
+
+        $pdo = Database::app();
+        $stmt = $pdo->prepare(
+            'UPDATE nodejs_apps SET node_version = :nv, start_command = :sc, build_command = :bc,
+                instances = :inst, exec_mode = :em, autorestart = :ar, watch = :w,
+                max_memory_restart = :mmr, node_env = :ne, updated_at = NOW()
+             WHERE id = :id'
+        );
+        $stmt->execute([
+            'nv' => $nodeVersion, 'sc' => $startCommand, 'bc' => $buildCommand ?: null,
+            'inst' => $instances, 'em' => $execMode, 'ar' => $autorestart ? 1 : 0,
+            'w' => $watch ? 1 : 0, 'mmr' => $maxMemoryRestart, 'ne' => $nodeEnv, 'id' => $id,
+        ]);
+
+        $env = EnvService::plainMapForApp($id);
+        $env['PORT'] = (string) $app['port'];
+        $ecosystem = nodejs_build_ecosystem_config(
+            $app['pm2_name'], $app['project_path'], $startCommand, $instances, $execMode,
+            $autorestart, $watch, $maxMemoryRestart, $nodeEnv, $env
+        );
+        $deploy = nodejs_pm2_deploy($app['pm2_name'], $ecosystem, $nodeVersion, $buildCommand);
+        if (!$deploy['ok']) {
+            throw new RuntimeException('Gagal menerapkan konfigurasi: ' . $deploy['output']);
+        }
+
+        ActivityLog::record($userId, 'nodejs.update', "Konfigurasi aplikasi diubah & di-redeploy: {$app['app_name']}");
+
+        return self::find($id);
+    }
+
+    /** @return array<int,array<string,mixed>> every domain (primary + extra) pointed at this app */
+    public static function listDomains(int $appId): array
+    {
+        $stmt = Database::app()->prepare('SELECT * FROM domains WHERE nodejs_app_id = :id ORDER BY domain');
+        $stmt->execute(['id' => $appId]);
+        return $stmt->fetchAll();
+    }
+
+    public static function countDomains(int $appId): int
+    {
+        $stmt = Database::app()->prepare('SELECT COUNT(*) FROM domains WHERE nodejs_app_id = :id');
+        $stmt->execute(['id' => $appId]);
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
+     * Adds an additional domain pointing at the app's already-running port
+     * - a separate Nginx site file per domain (mirrors how the app's
+     * original/primary domain was wired in createApp()), all proxying to
+     * the SAME PM2 process/port. The first domain ever added to a
+     * domain-less app also becomes its "primary" domain (nodejs_apps.domain,
+     * shown in the main table).
+     */
+    public static function addDomain(int $appId, string $domain, ?int $userId): void
+    {
+        $app = self::find($appId);
+        if ($app === null) {
+            throw new InvalidArgumentException('Aplikasi tidak ditemukan');
+        }
+        if (!Validator::domain($domain)) {
+            throw new InvalidArgumentException('Domain tidak valid');
+        }
+
+        $pdo = Database::app();
+        $dup = $pdo->prepare('SELECT COUNT(*) FROM domains WHERE domain = :d');
+        $dup->execute(['d' => $domain]);
+        if ((int) $dup->fetchColumn() > 0) {
+            throw new InvalidArgumentException("Domain {$domain} sudah dipakai website/aplikasi lain");
+        }
+
+        $siteName = "node-{$domain}";
+        $config = nginx_build_nodejs_proxy_config($domain, (int) $app['port']);
+        $write = nginx_write_config($siteName, $config);
+        if (!$write['ok']) {
+            throw new RuntimeException('Gagal menulis konfigurasi Nginx: ' . $write['output']);
+        }
+        $enable = nginx_enable_site($siteName);
+        if (!$enable['ok']) {
+            throw new RuntimeException('Gagal mengaktifkan situs Nginx: ' . $enable['output']);
+        }
+
+        $pdo->prepare('INSERT INTO domains (domain, type, nodejs_app_id) VALUES (:d, "nodejs", :id)')
+            ->execute(['d' => $domain, 'id' => $appId]);
+
+        if ($app['domain'] === null || $app['domain'] === '') {
+            $pdo->prepare('UPDATE nodejs_apps SET domain = :d WHERE id = :id')->execute(['d' => $domain, 'id' => $appId]);
+        }
+
+        ActivityLog::record($userId, 'nodejs.domain_add', "Domain ditambahkan ke {$app['app_name']}: {$domain}");
+    }
+
+    public static function removeDomain(int $appId, string $domain, ?int $userId): void
+    {
+        $app = self::find($appId);
+        if ($app === null) {
+            throw new InvalidArgumentException('Aplikasi tidak ditemukan');
+        }
+
+        $pdo = Database::app();
+        $stmt = $pdo->prepare('SELECT COUNT(*) FROM domains WHERE domain = :d AND nodejs_app_id = :id');
+        $stmt->execute(['d' => $domain, 'id' => $appId]);
+        if ((int) $stmt->fetchColumn() === 0) {
+            throw new InvalidArgumentException('Domain ini bukan milik aplikasi ini');
+        }
+
+        nginx_delete_site("node-{$domain}");
+        $pdo->prepare('DELETE FROM domains WHERE domain = :d AND nodejs_app_id = :id')->execute(['d' => $domain, 'id' => $appId]);
+
+        if ($app['domain'] === $domain) {
+            $remaining = $pdo->prepare('SELECT domain FROM domains WHERE nodejs_app_id = :id ORDER BY domain LIMIT 1');
+            $remaining->execute(['id' => $appId]);
+            $next = $remaining->fetchColumn();
+            $pdo->prepare('UPDATE nodejs_apps SET domain = :d WHERE id = :id')
+                ->execute(['d' => $next !== false ? $next : null, 'id' => $appId]);
+        }
+
+        ActivityLog::record($userId, 'nodejs.domain_remove', "Domain dihapus dari {$app['app_name']}: {$domain}");
+    }
+
     public static function controlApp(int $id, string $action, ?int $userId): void
     {
         $app = self::find($id);
@@ -235,8 +411,10 @@ final class NodeService
 
         nodejs_pm2_delete($app['pm2_name']);
 
-        if ($app['domain']) {
-            nginx_delete_site("node-{$app['domain']}");
+        // Loop every domain, not just the "primary" one on nodejs_apps -
+        // addDomain() lets an app own several, each as its own Nginx site.
+        foreach (self::listDomains($id) as $d) {
+            nginx_delete_site("node-{$d['domain']}");
         }
 
         if ($deleteFiles) {

@@ -103,6 +103,23 @@ final class Validator
     }
 
     /**
+     * Node.js app build command (e.g. "npm run build") - deliberately no
+     * shell metacharacters (;&|`$(){}<>) at all, since panel-exec.sh's
+     * as_nodeapps() interpolates this straight into a `bash -lc "..."`
+     * string rather than passing it as a discrete argv element. Mirrors
+     * RE_BUILD_COMMAND in panel-exec.sh exactly.
+     */
+    public static function buildCommand(string $value): bool
+    {
+        return (bool) preg_match('/^[a-zA-Z0-9_.\/ -]{1,255}$/', $value);
+    }
+
+    public static function maxMemoryRestart(string $value): bool
+    {
+        return (bool) preg_match('/^[0-9]{1,6}[KMG]?$/', $value);
+    }
+
+    /**
      * A relative path INSIDE a File Manager scope (website document root or
      * node app project dir). Unlike relativeScriptPath(), this allows
      * spaces/unicode/most punctuation in real-world filenames - the actual
