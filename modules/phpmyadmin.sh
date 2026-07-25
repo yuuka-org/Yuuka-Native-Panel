@@ -58,11 +58,29 @@ declare(strict_types=1);
 
 \$cfg['blowfish_secret'] = '${blowfish_secret}';
 
+// This vhost/location only ever sees plain HTTP (TLS, if any, is
+// terminated upstream, e.g. Cloudflare) - SignonURL must redirect back
+// to the panel login using whatever scheme THIS request actually
+// arrived on, or a signon failure bounces the browser to a hardcoded
+// scheme that may not even be reachable. Mirrors currentScheme() in the
+// panel's own panel-src/app/helpers/response.php (duplicated here, not
+// required, since this is phpMyAdmin's own vendored config - not panel
+// code, and phpMyAdmin's bootstrap doesn't load ours).
+\$__pma_scheme = 'http';
+\$__pma_cf_visitor = json_decode(\$_SERVER['HTTP_CF_VISITOR'] ?? '', true);
+if (is_array(\$__pma_cf_visitor) && (\$__pma_cf_visitor['scheme'] ?? '') === 'https') {
+    \$__pma_scheme = 'https';
+} elseif (strtolower((string) (\$_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https') {
+    \$__pma_scheme = 'https';
+} elseif (!empty(\$_SERVER['HTTPS']) && \$_SERVER['HTTPS'] !== 'off') {
+    \$__pma_scheme = 'https';
+}
+
 \$i = 0;
 \$i++;
 \$cfg['Servers'][\$i]['auth_type']     = 'signon';
 \$cfg['Servers'][\$i]['SignonSession'] = 'PMASignon';
-\$cfg['Servers'][\$i]['SignonURL']     = 'https://${PANEL_DOMAIN}/login.php';
+\$cfg['Servers'][\$i]['SignonURL']     = \$__pma_scheme . '://${PANEL_DOMAIN}/login.php';
 \$cfg['Servers'][\$i]['host']          = '127.0.0.1';
 \$cfg['Servers'][\$i]['port']          = '3306';
 \$cfg['Servers'][\$i]['compress']      = false;
