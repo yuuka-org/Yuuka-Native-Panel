@@ -34,6 +34,24 @@ if ($db !== '' && Validator::dbName($db)) {
     $target .= '?route=%2Fdatabase%2Fstructure&db=' . urlencode($db);
 }
 
+// "Path" mode phpMyAdmin lives under the panel's own host - the panel
+// vhost only ever listens on plain HTTP (TLS, if any, is terminated
+// upstream, e.g. Cloudflare), so the scheme baked into $base at build
+// time (modules/phpmyadmin.sh always saves "http://...") can mismatch
+// how the admin is actually browsing right now, bouncing the browser
+// between http/https on every click. When the saved URL's host matches
+// the CURRENT request's host, override its scheme with the current
+// request's actual scheme (currentScheme(), response.php) instead of
+// trusting the stored one. "Subdomain" mode phpMyAdmin (a genuinely
+// different host) keeps whatever scheme was saved - there's no way to
+// know that separate host's own TLS setup from here.
+$targetParts = parse_url($target);
+if (($targetParts['host'] ?? null) === ($_SERVER['HTTP_HOST'] ?? null)) {
+    $target = currentScheme() . '://' . $targetParts['host']
+        . ($targetParts['path'] ?? '')
+        . (isset($targetParts['query']) ? '?' . $targetParts['query'] : '');
+}
+
 redirect($target);
 
 /**
@@ -97,7 +115,13 @@ function pma_write_signon_session(string $dbUser, string $dbPassword): void
     setcookie($signonSessionName, $signonId, [
         'expires' => time() + 60,
         'path' => '/',
-        'secure' => Config::getBool('SESSION_SECURE_COOKIE', true),
+        // A 'secure' cookie is silently dropped by the browser outside an
+        // HTTPS context - unlike the main panel session cookie
+        // (SESSION_SECURE_COOKIE in bootstrap.php, a fixed .env setting),
+        // this one specifically needs to match however THIS request
+        // actually arrived (see currentScheme(), response.php), since it
+        // only has to survive the single redirect hop to phpMyAdmin.
+        'secure' => currentScheme() === 'https',
         'httponly' => true,
         'samesite' => 'Lax',
     ]);
