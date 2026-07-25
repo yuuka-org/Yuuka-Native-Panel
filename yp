@@ -504,6 +504,16 @@ cmd_repair_panel() {
     find "$PANEL_ROOT" -type d -exec chmod 750 {} \;
     find "$PANEL_ROOT" -type f -exec chmod 640 {} \;
     chmod 750 "${PANEL_ROOT}/scripts/panel-exec.sh" 2>/dev/null || true
+
+    # storage/pma-signon needs 770 (www-data reaches it only via 'panel'
+    # group membership) - the blanket 750 above just took the group WRITE
+    # bit away, which silently breaks phpMyAdmin's signon SSO. See the
+    # identical fix + longer explanation in modules/panel.sh's
+    # module_panel_deploy_files (this mirrors it for the repair path).
+    if [[ -d "${PANEL_ROOT}/storage/pma-signon" ]]; then
+        chown panel:panel "${PANEL_ROOT}/storage/pma-signon"
+        chmod 770 "${PANEL_ROOT}/storage/pma-signon"
+    fi
     log_ok "Permission /opt/server-panel diterapkan ulang"
 
     if id www-data &>/dev/null; then
@@ -627,6 +637,17 @@ cmd_custom_build() {
             fi
             PANEL_DOMAIN="$domain"
             export PANEL_DOMAIN
+
+            # Same reasoning as PANEL_DOMAIN above: module_phpmyadmin_generate_nginx
+            # writes the resulting URL to Settings > General's "URL phpMyAdmin"
+            # (INSERT ... ON DUPLICATE KEY UPDATE on the settings table) gated on
+            # PANEL_APP_DB_NAME being set - install.sh's flow exports that itself
+            # (modules/mariadb.sh, sourced earlier in the same run), but this
+            # standalone 'yp custom-build' path never sources mariadb.sh at all.
+            # Without this, the Settings field silently goes stale on every
+            # rebuild instead of following wherever phpMyAdmin actually ends up.
+            PANEL_APP_DB_NAME="$PANEL_DB_NAME"
+            export PANEL_APP_DB_NAME
 
             module_phpmyadmin_run_all
 

@@ -69,6 +69,19 @@ module_panel_deploy_files() {
     find "$PANEL_ROOT" -type f -exec chmod 640 {} \;
     chmod 750 "${PANEL_ROOT}/scripts/panel-exec.sh" 2>/dev/null || true
 
+    # storage/pma-signon (see modules/phpmyadmin.sh's
+    # module_phpmyadmin_configure_fpm_pool) deliberately needs 770, not
+    # the blanket 750 every other directory here just got - phpMyAdmin's
+    # dedicated FPM pool runs as www-data, reaching this directory only
+    # via its 'panel' group membership, which needs the group WRITE bit
+    # the blanket chmod above just took away. Without this re-assertion,
+    # every deploy/redeploy silently breaks phpMyAdmin's signon SSO
+    # ("session_start(): ... Permission denied") until someone notices.
+    if [[ -d "${PANEL_ROOT}/storage/pma-signon" ]]; then
+        chown panel:panel "${PANEL_ROOT}/storage/pma-signon"
+        chmod 770 "${PANEL_ROOT}/storage/pma-signon"
+    fi
+
     # Nginx workers run as www-data, not panel - without this, group-only
     # 750/640 permissions above leave Nginx unable to even stat() the
     # document root (try_files runs in the Nginx worker, not in the
