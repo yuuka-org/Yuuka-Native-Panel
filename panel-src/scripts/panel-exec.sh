@@ -699,6 +699,29 @@ fm_owner_for_scope() {
     esac
 }
 
+# Terminal di Panel (modules/terminal.sh) grants 'panelterm' a real POSIX
+# ACL on WWW_BASE/NODEAPPS_BASE so its sandboxed shell can read/write
+# website/app files without being www-data/nodeapps itself. Default ACLs
+# are only auto-inherited by the KERNEL for content created DIRECTLY in
+# an already-ACL'd directory - several ops below (mktemp+mv, and zip/
+# unzip's own internal write-to-temp-then-rename behavior) create the
+# real content elsewhere first and move/rename it into place, which does
+# NOT trigger that inheritance. Left unfixed, every file touched through
+# File Manager silently loses panelterm's grant, and Terminal can `ls`
+# but not read/write anything the panel itself created. Re-asserted
+# explicitly instead of trusting inheritance. A cheap no-op if Terminal
+# was never installed (id panelterm fails) - this file has no other
+# dependency on modules/terminal.sh ever having run.
+fm_reapply_terminal_acl() {
+    local path="$1"
+    id panelterm &>/dev/null || return 0
+    if [[ -d "$path" ]]; then
+        setfacl -R -m "u:panelterm:rwX" -d -m "u:panelterm:rwX" -- "$path" 2>/dev/null || true
+    else
+        setfacl -m "u:panelterm:rwX" -- "$path" 2>/dev/null || true
+    fi
+}
+
 # "www"/"nodeapps" are root-browse scopes (Explorer-style: no specific
 # website/app needs to be picked first, "name" is ignored) - used by the
 # two "Jelajahi semua" entries in the File Manager picker.
@@ -806,10 +829,12 @@ op_files_write() {
     if [[ ! -d "$parent_dir" ]]; then
         mkdir -p "$parent_dir"
         chown -R "$owner" "$parent_dir"
+        fm_reapply_terminal_acl "$parent_dir"
     fi
     mv "$tmp" "$target"
     chown "$owner" "$target"
     chmod 640 "$target"
+    fm_reapply_terminal_acl "$target"
     echo "OK: written $relpath"
 }
 
@@ -822,6 +847,7 @@ op_files_mkdir() {
     local owner
     owner=$(fm_owner_for_scope "$scope")
     chown -R "$owner" "$target"
+    fm_reapply_terminal_acl "$target"
     echo "OK: mkdir $relpath"
 }
 
@@ -889,6 +915,7 @@ op_files_rename() {
     require_path_within "$dest" "$base" >/dev/null
     [[ -e "$dest" ]] && fail "Sudah ada file/folder dengan nama itu"
     mv -- "$target" "$dest"
+    fm_reapply_terminal_acl "$dest"
     echo "OK: renamed to $newbasename"
 }
 
@@ -949,6 +976,7 @@ op_files_extract_zip() {
     local owner
     owner=$(fm_owner_for_scope "$scope")
     chown -R "$owner" "$target_dir"
+    fm_reapply_terminal_acl "$target_dir"
     echo "OK: extracted zip to ${relpath:-/}"
 }
 
@@ -1000,6 +1028,7 @@ op_files_extract() {
     local owner
     owner=$(fm_owner_for_scope "$scope")
     chown -R "$owner" "$dest_dir"
+    fm_reapply_terminal_acl "$dest_dir"
     echo "OK: extracted $relpath -> ${base_no_ext}/"
 }
 
@@ -1048,6 +1077,7 @@ op_files_compress() {
     local owner
     owner=$(fm_owner_for_scope "$scope")
     chown "$owner" "$dest_zip"
+    fm_reapply_terminal_acl "$dest_zip"
     echo "OK: compressed $# item(s) -> $dest_name"
 }
 
@@ -1116,6 +1146,7 @@ _fm_copy_or_move() {
     local dest_owner
     dest_owner=$(fm_owner_for_scope "$dest_scope")
     chown -R "$dest_owner" "$dest_target"
+    fm_reapply_terminal_acl "$dest_target"
     echo "OK: ${mode} $src_relpath -> $dest_relpath"
 }
 
@@ -1234,6 +1265,7 @@ op_files_trash_restore() {
     local owner
     owner=$(fm_owner_for_scope "$scope")
     chown -R "$owner" "$dest"
+    fm_reapply_terminal_acl "$dest"
     echo "OK: restored $trash_entry -> $origpath"
 }
 
