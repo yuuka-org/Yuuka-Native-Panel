@@ -69,12 +69,12 @@ final class Rbac
     {
         $user = Auth::user();
         if ($user === null) {
-            redirect('/login.php');
+            redirect('/login');
         }
         if (!self::can($user['role'], $permission)) {
             http_response_code(403);
             flash('error', 'Anda tidak memiliki izin untuk melakukan aksi ini.');
-            redirect('/dashboard.php');
+            redirect('/dashboard');
         }
     }
 }

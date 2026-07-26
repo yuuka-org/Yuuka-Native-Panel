@@ -9,7 +9,7 @@ $id = (int) ($_GET['id'] ?? 0);
 $app = NodeService::find($id);
 if ($app === null) {
     flash('error', 'Aplikasi tidak ditemukan');
-    redirect('/nodejs.php');
+    redirect('/nodejs');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -22,7 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/nodejs_backup.php?id=' . $id);
+    redirect('/nodejs_backup?id=' . $id);
 }
 
 $backups = array_values(array_filter(
@@ -42,7 +42,7 @@ include __DIR__ . '/partials/nodejs_settings_nav.php';
     <p class="text-muted mb-0">Untuk restore/hapus file backup, gunakan menu Pengaturan &gt; Backup &amp; Restore.</p>
   </div>
   <div class="d-flex gap-2">
-    <a href="/nodejs.php" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Kembali</a>
+    <a href="/nodejs" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Kembali</a>
     <?php if (Rbac::can($user['role'], 'backup.manage')): ?>
     <form method="post"><?= Csrf::field() ?>
       <button class="btn btn-primary"><i class="bi bi-cloud-arrow-down me-1"></i>Backup Sekarang</button>
@@ -67,7 +67,7 @@ include __DIR__ . '/partials/nodejs_settings_nav.php';
             <span class="badge text-bg-<?= $badgeClass ?>"><?= e($b['status']) ?></span>
           </td>
           <td class="small text-muted"><?= e($b['created_at']) ?></td>
-          <td class="text-end"><a href="/settings_backup.php" class="btn btn-sm btn-outline-secondary">Kelola</a></td>
+          <td class="text-end"><a href="/settings_backup" class="btn btn-sm btn-outline-secondary">Kelola</a></td>
         </tr>
         <?php endforeach; ?>
       </tbody>

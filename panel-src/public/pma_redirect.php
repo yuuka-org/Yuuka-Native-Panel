@@ -10,7 +10,7 @@ $base = $stmt->fetchColumn();
 
 if (!$base) {
     flash('error', 'URL phpMyAdmin belum dikonfigurasi. Atur di menu Pengaturan.');
-    redirect('/settings.php');
+    redirect('/settings');
 }
 
 // Auto-login is gated behind database.manage (admin/operator), NOT the

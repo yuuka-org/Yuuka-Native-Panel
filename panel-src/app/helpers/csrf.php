@@ -29,7 +29,7 @@ final class Csrf
         if ($expected === '' || !is_string($submitted) || !hash_equals($expected, $submitted)) {
             http_response_code(419);
             flash('error', 'Sesi kedaluwarsa atau token keamanan tidak valid. Silakan ulangi.');
-            redirect('/dashboard.php');
+            redirect('/dashboard');
         }
     }
 }

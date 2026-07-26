@@ -57,7 +57,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/app_installer.php');
+    redirect('/app_installer');
 }
 
 $catalog = AppCatalog::all();
@@ -147,7 +147,7 @@ include __DIR__ . '/partials/header.php';
         </tbody>
       </table>
     </div>
-    <p class="text-muted small p-3 mb-0">Hapus aplikasi lewat menu <a href="/websites.php">Hapus Website</a> pada domain terkait - database & catatan aplikasi ikut dibersihkan otomatis.</p>
+    <p class="text-muted small p-3 mb-0">Hapus aplikasi lewat menu <a href="/websites">Hapus Website</a> pada domain terkait - database & catatan aplikasi ikut dibersihkan otomatis.</p>
   </div>
 </div>
 

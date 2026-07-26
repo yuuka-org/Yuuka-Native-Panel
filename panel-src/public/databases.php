@@ -34,7 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/databases.php');
+    redirect('/databases');
 }
 
 $registry = DatabaseService::listRegistry();
@@ -110,7 +110,7 @@ include __DIR__ . '/partials/header.php';
           <td class="text-muted small"><?= e($db['note'] ?? '') ?></td>
           <td class="text-muted small"><?= e($db['created_at']) ?></td>
           <td class="text-end">
-            <a href="/pma_redirect.php?db=<?= urlencode($db['db_name']) ?>" target="_blank" class="btn btn-sm btn-outline-secondary" title="Buka di phpMyAdmin"><i class="bi bi-box-arrow-up-right"></i></a>
+            <a href="/pma_redirect?db=<?= urlencode($db['db_name']) ?>" target="_blank" class="btn btn-sm btn-outline-secondary" title="Buka di phpMyAdmin"><i class="bi bi-box-arrow-up-right"></i></a>
             <?php if (Rbac::can($user['role'], 'backup.manage')): ?>
             <form method="post" class="d-inline" data-confirm="Buat backup database <?= e($db['db_name']) ?> sekarang?">
               <?= Csrf::field() ?>

@@ -2,8 +2,18 @@
 declare(strict_types=1);
 require __DIR__ . '/../bootstrap.php';
 
+// Carries a return-to target (set by Auth::requireLogin() when an expired/
+// missing session bounced the admin here from some other page) through
+// both the redisplay-after-GET and the actual POST login - always
+// re-validated with the exact same check on every hop, never trusted
+// just because it was already present once.
+$redirectTo = (string) ($_POST['redirect'] ?? $_GET['redirect'] ?? '');
+if (!Auth::isSafeRedirectTarget($redirectTo)) {
+    $redirectTo = '';
+}
+
 if (Auth::check()) {
-    redirect('/dashboard.php');
+    redirect($redirectTo !== '' ? $redirectTo : '/dashboard');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -15,22 +25,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($username === '' || $password === '') {
         flash('error', 'Username dan password wajib diisi.');
     } elseif (Auth::attempt($username, $password)) {
-        redirect('/dashboard.php');
+        redirect($redirectTo !== '' ? $redirectTo : '/dashboard');
     }
-    redirect('/login.php');
+    redirect('/login' . ($redirectTo !== '' ? '?redirect=' . urlencode($redirectTo) : ''));
 }
 
 $loginTitle = SettingsService::get('panel_login_title', 'Yuuka Server Panel');
 $loginLogo = SettingsService::get('panel_login_logo');
 
-// Settings > General > Security Entrance: when set, /login.php itself is
+// Settings > General > Security Entrance: when set, /login itself is
 // nginx-blocked for direct external requests (see security-entrance.conf,
 // written by panel-exec.sh's op_panel_security_entrance_set) - only
 // reachable via an internal rewrite from the secret path. The form MUST
-// submit back to that same secret path, not /login.php directly, or the
+// submit back to that same secret path, not /login directly, or the
 // POST would 404 exactly like a direct GET would.
 $securityEntrancePath = SettingsService::get('security_entrance_path');
-$loginFormAction = $securityEntrancePath !== '' ? '/' . $securityEntrancePath : '/login.php';
+$loginFormAction = $securityEntrancePath !== '' ? '/' . $securityEntrancePath : '/login';
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -67,6 +77,9 @@ $loginFormAction = $securityEntrancePath !== '' ? '/' . $securityEntrancePath : 
     <?php include __DIR__ . '/partials/flash.php'; ?>
     <form method="post" action="<?= e($loginFormAction) ?>">
       <?= Csrf::field() ?>
+      <?php if ($redirectTo !== ''): ?>
+      <input type="hidden" name="redirect" value="<?= e($redirectTo) ?>">
+      <?php endif; ?>
       <div class="mb-3">
         <label class="form-label">Username</label>
         <input type="text" name="username" class="form-control" required autofocus autocomplete="username">

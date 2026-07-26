@@ -276,15 +276,25 @@ EOF
 
 # ---------------------------------------------------------------------------
 # Panel Security Entrance - moves the panel login form off the guessable
-# /login.php path. `internal;` (identical pattern to terminal_auth.php's
-# location block) makes /login.php return 404 for any DIRECT external
+# /login path. `internal;` (identical pattern to terminal_auth.php's
+# location block) makes /login return 404 for any DIRECT external
 # request - it's only reachable via the nginx-internal rewrite from the
 # secret path, which never touches the browser's address bar as a
 # separate hop. Login itself (username+password+RBAC) is completely
 # unchanged; this only decides whether a request ever reaches that logic.
 #
+# BOTH /login and /login.php get their own `internal;` block, not just
+# one - the panel vhost's own extension-less URL support (module_panel_
+# nginx_vhost in modules/panel.sh) does `try_files $uri $uri.php ...`,
+# which is ITSELF an internal redirect. Without a matching `internal;`
+# block for the exact /login path too, a direct external request for
+# plain "/login" would satisfy that try_files fallback to login.php and
+# nginx would treat the whole chain as internal-origin, completely
+# bypassing this feature's entire purpose - only blocking the .php form
+# left the clean-URL form wide open.
+#
 # The one real risk here is a self-inflicted lockout (wrong/forgotten
-# path = nobody can reach /login.php at all, including to undo this) -
+# path = nobody can reach /login at all, including to undo this) -
 # that's what `yp security-entrance` (SSH, bypasses the panel and this
 # script entirely) exists for.
 # ---------------------------------------------------------------------------
@@ -330,8 +340,14 @@ location = /login.php {
     fastcgi_pass unix:${PANEL_POOL_SOCK};
     fastcgi_param SCRIPT_FILENAME ${PANEL_ROOT}/public/login.php;
 }
+location = /login {
+    internal;
+    include snippets/fastcgi-php.conf;
+    fastcgi_pass unix:${PANEL_POOL_SOCK};
+    fastcgi_param SCRIPT_FILENAME ${PANEL_ROOT}/public/login.php;
+}
 location = /${path} {
-    rewrite ^ /login.php last;
+    rewrite ^ /login last;
 }
 EOF
         chown root:root "$snippet"
@@ -470,6 +486,11 @@ op_pm2_logs() {
 op_pm2_flush() {
     local app="$1"; require_match "$app" "$RE_APPNAME" "appname"
     as_nodeapps "pm2 flush '${app}'"
+}
+
+op_pm2_reset() {
+    local app="$1"; require_match "$app" "$RE_APPNAME" "appname"
+    as_nodeapps "pm2 reset '${app}'"
 }
 
 op_pm2_save() {
@@ -1486,6 +1507,7 @@ case "$SUBCOMMAND" in
     pm2-describe)          op_pm2_describe "$@" ;;
     pm2-logs)              op_pm2_logs "$@" ;;
     pm2-flush)             op_pm2_flush "$@" ;;
+    pm2-reset)             op_pm2_reset "$@" ;;
     pm2-save)              op_pm2_save ;;
     certbot-issue)         op_certbot_issue "$@" ;;
     certbot-remove)        op_certbot_remove "$@" ;;

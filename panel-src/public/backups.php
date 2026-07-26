@@ -8,4 +8,4 @@ Auth::requireLogin();
 // own sidebar menu) - this stub just carries old bookmarks/links forward,
 // including a direct ?download=<id> link.
 $query = $_SERVER['QUERY_STRING'] ?? '';
-redirect('/settings_backup.php' . ($query !== '' ? '?' . $query : ''));
+redirect('/settings_backup' . ($query !== '' ? '?' . $query : ''));

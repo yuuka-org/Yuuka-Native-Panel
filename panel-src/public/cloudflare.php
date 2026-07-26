@@ -21,7 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (RuntimeException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/cloudflare.php');
+    redirect('/cloudflare');
 }
 
 $status = CloudflareService::status();

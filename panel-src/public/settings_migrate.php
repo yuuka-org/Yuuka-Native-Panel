@@ -52,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash('error', $e->getMessage());
         }
     }
-    redirect('/settings_migrate.php');
+    redirect('/settings_migrate');
 }
 
 $activeSettingsTab = 'migrate';
@@ -72,7 +72,7 @@ include __DIR__ . '/partials/settings_nav.php';
       <div class="card-header bg-white fw-semibold">Export Pengaturan</div>
       <div class="card-body">
         <p class="text-muted small">Download seluruh pengaturan panel (tabel <code>settings</code>) sebagai file JSON.</p>
-        <a href="/settings_migrate.php?export=1" class="btn btn-primary"><i class="bi bi-download me-1"></i>Download JSON</a>
+        <a href="/settings_migrate?export=1" class="btn btn-primary"><i class="bi bi-download me-1"></i>Download JSON</a>
       </div>
     </div>
   </div>

@@ -9,11 +9,11 @@
  * Expects $user and $activeSettingsTab ('general'|'page'|'alarm'|'backup'|'migrate').
  */
 $settingsTabs = [
-    'general' => ['/settings.php', 'General'],
-    'page' => ['/settings_page.php', 'Page'],
-    'alarm' => ['/settings_alarm.php', 'Alarm'],
-    'backup' => ['/settings_backup.php', 'Backup & Restore'],
-    'migrate' => ['/settings_migrate.php', 'Migrate'],
+    'general' => ['/settings', 'General'],
+    'page' => ['/settings_page', 'Page'],
+    'alarm' => ['/settings_alarm', 'Alarm'],
+    'backup' => ['/settings_backup', 'Backup & Restore'],
+    'migrate' => ['/settings_migrate', 'Migrate'],
 ];
 ?>
 <?php if (Rbac::can($user['role'], 'settings.manage')): ?>

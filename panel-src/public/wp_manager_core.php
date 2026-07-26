@@ -11,7 +11,7 @@ try {
     $site = WpManagerService::getSite($id);
 } catch (InvalidArgumentException $e) {
     flash('error', $e->getMessage());
-    redirect('/wp_manager.php');
+    redirect('/wp_manager');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -30,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/wp_manager_core.php?id=' . $id);
+    redirect('/wp_manager_core?id=' . $id);
 }
 
 $checkResult = null;
@@ -52,10 +52,10 @@ include __DIR__ . '/partials/header.php';
     <p class="text-muted mb-0">Versi WordPress saat ini: <strong><?= e($site['app_version'] ?? 'tidak diketahui') ?></strong></p>
   </div>
   <div class="btn-group">
-    <a href="/wp_manager.php" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Daftar</a>
-    <a href="/wp_manager_core.php?id=<?= (int) $id ?>" class="btn btn-primary">Core</a>
-    <a href="/wp_manager_plugins.php?id=<?= (int) $id ?>" class="btn btn-outline-secondary">Plugin</a>
-    <a href="/wp_manager_themes.php?id=<?= (int) $id ?>" class="btn btn-outline-secondary">Tema</a>
+    <a href="/wp_manager" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Daftar</a>
+    <a href="/wp_manager_core?id=<?= (int) $id ?>" class="btn btn-primary">Core</a>
+    <a href="/wp_manager_plugins?id=<?= (int) $id ?>" class="btn btn-outline-secondary">Plugin</a>
+    <a href="/wp_manager_themes?id=<?= (int) $id ?>" class="btn btn-outline-secondary">Tema</a>
   </div>
 </div>
 
@@ -75,7 +75,7 @@ include __DIR__ . '/partials/header.php';
       <div class="card-header bg-white fw-semibold">Versi Core</div>
       <div class="card-body">
         <p>Versi terpasang: <strong><?= e($site['app_version'] ?? 'tidak diketahui') ?></strong></p>
-        <a href="/wp_manager_core.php?id=<?= (int) $id ?>&check=1" class="btn btn-outline-secondary"><i class="bi bi-arrow-repeat me-1"></i>Cek Update</a>
+        <a href="/wp_manager_core?id=<?= (int) $id ?>&check=1" class="btn btn-outline-secondary"><i class="bi bi-arrow-repeat me-1"></i>Cek Update</a>
         <?php if ($checkResult !== null && $checkResult['update_available'] && Rbac::can($user['role'], 'wp.manage')): ?>
         <button type="button" class="btn btn-primary ms-2" data-bs-toggle="modal" data-bs-target="#updateCoreModal">
           Update ke <?= e($checkResult['latest_version']) ?>

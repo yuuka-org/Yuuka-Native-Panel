@@ -8,12 +8,12 @@
  * Expects $app (nodejs_apps row) and $activeNodejsTab.
  */
 $nodejsTabs = [
-    'general' => ['/nodejs_settings.php', 'Umum'],
-    'domains' => ['/nodejs_domains.php', 'Domain'],
-    'env' => ['/nodejs_env.php', 'Environment'],
-    'logs' => ['/nodejs_logs.php', 'Logs'],
-    'health' => ['/nodejs_health.php', 'Health Check'],
-    'backup' => ['/nodejs_backup.php', 'Backup'],
+    'general' => ['/nodejs_settings', 'Umum'],
+    'domains' => ['/nodejs_domains', 'Domain'],
+    'env' => ['/nodejs_env', 'Environment'],
+    'logs' => ['/nodejs_logs', 'Logs'],
+    'health' => ['/nodejs_health', 'Health Check'],
+    'backup' => ['/nodejs_backup', 'Backup'],
 ];
 ?>
 <div class="btn-group mb-3 flex-wrap">

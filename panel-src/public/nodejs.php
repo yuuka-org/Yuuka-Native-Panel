@@ -64,7 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/nodejs.php');
+    redirect('/nodejs');
 }
 
 $status = NodeService::combinedStatus();
@@ -76,8 +76,8 @@ include __DIR__ . '/partials/header.php';
 
 <?php if (Rbac::can($user['role'], 'website.view')): ?>
 <div class="btn-group mb-3">
-  <a href="/websites.php" class="btn btn-sm btn-outline-secondary"><i class="bi bi-globe2 me-1"></i>PHP</a>
-  <a href="/nodejs.php" class="btn btn-sm btn-primary"><i class="bi bi-diagram-3 me-1"></i>Node.js</a>
+  <a href="/websites" class="btn btn-sm btn-outline-secondary"><i class="bi bi-globe2 me-1"></i>PHP</a>
+  <a href="/nodejs" class="btn btn-sm btn-primary"><i class="bi bi-diagram-3 me-1"></i>Node.js</a>
 </div>
 <?php endif; ?>
 
@@ -118,12 +118,30 @@ include __DIR__ . '/partials/header.php';
             <td>
               <?php if ($m['domain']): ?>
                 <a href="http://<?= e($m['domain']) ?>" target="_blank"><?= e($m['domain']) ?></a>
-                <?php if ($domainCount > 1): ?><a href="/nodejs_domains.php?id=<?= (int) $m['id'] ?>" class="badge text-bg-light border text-decoration-none">+<?= $domainCount - 1 ?> lainnya</a><?php endif; ?>
+                <?php if ($domainCount > 1): ?><a href="/nodejs_domains?id=<?= (int) $m['id'] ?>" class="badge text-bg-light border text-decoration-none">+<?= $domainCount - 1 ?> lainnya</a><?php endif; ?>
               <?php else: ?>
                 <span class="text-muted">-</span>
               <?php endif; ?>
             </td>
-            <td><span class="status-dot <?= e($item['status']) ?>"></span><?= e($item['status']) ?></td>
+            <td>
+              <?php if (Rbac::can($user['role'], 'nodejs.control')): ?>
+              <div class="dropdown">
+                <button type="button" class="btn btn-sm btn-link p-0 text-decoration-none text-body dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                  <span class="status-dot <?= e($item['status']) ?>"></span><?= e($item['status']) ?>
+                </button>
+                <ul class="dropdown-menu">
+                  <li><button type="button" class="dropdown-item" onclick="pctl(<?= (int) $m['id'] ?>,'start')"><i class="bi bi-play-fill me-2 text-success"></i>Start</button></li>
+                  <li><button type="button" class="dropdown-item" onclick="pctl(<?= (int) $m['id'] ?>,'restart')"><i class="bi bi-arrow-clockwise me-2 text-warning"></i>Restart</button></li>
+                  <li><button type="button" class="dropdown-item" onclick="pctl(<?= (int) $m['id'] ?>,'reload')"><i class="bi bi-arrow-repeat me-2 text-info"></i>Reload</button></li>
+                  <li><button type="button" class="dropdown-item" onclick="pctl(<?= (int) $m['id'] ?>,'stop')"><i class="bi bi-stop-fill me-2 text-secondary"></i>Stop</button></li>
+                  <li><hr class="dropdown-divider"></li>
+                  <li><button type="button" class="dropdown-item" onclick="pctl(<?= (int) $m['id'] ?>,'reset')"><i class="bi bi-arrow-counterclockwise me-2"></i>Reset Restarts</button></li>
+                </ul>
+              </div>
+              <?php else: ?>
+              <span class="status-dot <?= e($item['status']) ?>"></span><?= e($item['status']) ?>
+              <?php endif; ?>
+            </td>
             <td><?= $rt ? e((string) $rt['cpu_percent']) . '%' : '-' ?></td>
             <td><?= $rt ? e((string) round($rt['memory_bytes'] / 1048576, 1)) . ' MB' : '-' ?></td>
             <td><?= $rt && $rt['uptime_ms'] ? e(gmdate('H:i:s', intdiv((int) $rt['uptime_ms'], 1000))) : '-' ?></td>
@@ -131,15 +149,9 @@ include __DIR__ . '/partials/header.php';
             <td><?= e((string) $m['port']) ?></td>
             <td class="text-end text-nowrap">
               <div class="btn-group">
-                <a href="/nodejs_settings.php?id=<?= e((string) $m['id']) ?>" class="btn btn-sm btn-outline-secondary" title="Settings"><i class="bi bi-gear"></i></a>
+                <a href="/nodejs_settings?id=<?= e((string) $m['id']) ?>" class="btn btn-sm btn-outline-secondary" title="Settings"><i class="bi bi-gear"></i></a>
                 <?php if (Rbac::can($user['role'], 'files.view')): ?>
-                <a href="/file_manager.php?scope=nodeapp&name=<?= urlencode($m['app_name']) ?>" class="btn btn-sm btn-outline-secondary" title="File Manager"><i class="bi bi-folder2-open"></i></a>
-                <?php endif; ?>
-                <?php if (Rbac::can($user['role'], 'nodejs.control')): ?>
-                <button type="button" class="btn btn-sm btn-outline-success" title="Start" onclick="pctl(<?= (int) $m['id'] ?>,'start')"><i class="bi bi-play-fill"></i></button>
-                <button type="button" class="btn btn-sm btn-outline-warning" title="Restart" onclick="pctl(<?= (int) $m['id'] ?>,'restart')"><i class="bi bi-arrow-clockwise"></i></button>
-                <button type="button" class="btn btn-sm btn-outline-info" title="Reload" onclick="pctl(<?= (int) $m['id'] ?>,'reload')"><i class="bi bi-arrow-repeat"></i></button>
-                <button type="button" class="btn btn-sm btn-outline-secondary" title="Stop" onclick="pctl(<?= (int) $m['id'] ?>,'stop')"><i class="bi bi-stop-fill"></i></button>
+                <a href="/file_manager?scope=nodeapp&name=<?= urlencode($m['app_name']) ?>" class="btn btn-sm btn-outline-secondary" title="File Manager"><i class="bi bi-folder2-open"></i></a>
                 <?php endif; ?>
                 <?php if (Rbac::can($user['role'], 'nodejs.delete')): ?>
                 <button class="btn btn-sm btn-outline-danger" title="Hapus" data-bs-toggle="modal" data-bs-target="#delApp<?= (int) $m['id'] ?>"><i class="bi bi-trash"></i></button>

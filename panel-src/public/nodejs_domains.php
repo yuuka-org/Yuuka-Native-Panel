@@ -9,7 +9,7 @@ $id = (int) ($_GET['id'] ?? 0);
 $app = NodeService::find($id);
 if ($app === null) {
     flash('error', 'Aplikasi tidak ditemukan');
-    redirect('/nodejs.php');
+    redirect('/nodejs');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -28,7 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/nodejs_domains.php?id=' . $id);
+    redirect('/nodejs_domains?id=' . $id);
 }
 
 $domains = NodeService::listDomains($id);
@@ -44,7 +44,7 @@ include __DIR__ . '/partials/nodejs_settings_nav.php';
     <h4 class="fw-bold mb-0">Domain: <?= e($app['app_name']) ?></h4>
     <p class="text-muted mb-0">Semua domain di bawah proxy ke port internal yang sama: <code><?= (int) $app['port'] ?></code>.</p>
   </div>
-  <a href="/nodejs.php" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Kembali</a>
+  <a href="/nodejs" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Kembali</a>
 </div>
 
 <div class="card stat-card mb-4">

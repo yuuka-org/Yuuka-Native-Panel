@@ -21,8 +21,47 @@ final class Auth
     public static function requireLogin(): void
     {
         if (!self::check()) {
-            redirect('/login.php');
+            redirect('/login' . self::loginRedirectSuffix());
         }
+    }
+
+    /**
+     * Builds the "?redirect=..." suffix for bouncing to /login, so the
+     * admin lands back on whatever page they were actually on (instead of
+     * always the dashboard) after logging back in - used both when
+     * requireLogin() finds no session at all, and when
+     * enforceSessionPolicy() below ends an idle/expired one mid-page.
+     *
+     * Only remembers a target for a plain top-level GET navigation - never
+     * for a POST (the original request body would be lost anyway; landing
+     * back on a form's own action URL via GET could render confusingly)
+     * or an AJAX/fetch call (background polls like ajax_stats.php or File
+     * Manager's fragment loader would otherwise silently clobber the
+     * return target with a bare JSON/HTML-fragment endpoint instead of
+     * whatever real page the admin is actually looking at).
+     */
+    private static function loginRedirectSuffix(): string
+    {
+        $isAjax = ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') === 'XMLHttpRequest';
+        $returnTo = $_SERVER['REQUEST_URI'] ?? '';
+        if ($isAjax || ($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET' || !self::isSafeRedirectTarget($returnTo)) {
+            return '';
+        }
+        return '?redirect=' . urlencode($returnTo);
+    }
+
+    /**
+     * A same-origin relative path only - never an absolute URL, and never
+     * a protocol-relative one either ("//evil.com" is parsed by browsers
+     * as an absolute URL to a different host despite starting with a
+     * single "looks-relative" slash) - this is the sole gate before a
+     * user-influenced value is ever echoed into the login form or used as
+     * a redirect Location, closing the open-redirect risk that always
+     * comes with a "return to where you came from" feature.
+     */
+    public static function isSafeRedirectTarget(string $value): bool
+    {
+        return $value !== '' && $value[0] === '/' && !str_starts_with($value, '//') && !str_starts_with($value, '/\\');
     }
 
     public static function clientIp(): string
@@ -145,19 +184,20 @@ final class Auth
         $loginTime = $_SESSION['login_started_at'] ?? $now;
 
         if (($now - $lastActivity) > $idleTimeout || ($now - $loginTime) > $lifetime) {
+            $suffix = self::loginRedirectSuffix();
             self::logout();
             if (session_status() === PHP_SESSION_NONE) {
                 session_start();
             }
             flash('error', 'Sesi Anda telah berakhir, silakan login kembali.');
-            redirect('/login.php');
+            redirect('/login' . $suffix);
         }
 
         $_SESSION['login_started_at'] = $_SESSION['login_started_at'] ?? $now;
         $_SESSION['last_activity'] = $now;
 
         // Skip periodic session-id regeneration for background AJAX polling
-        // (dashboard.php's auto-refresh widgets call ajax_stats.php/ajax_pm2.php
+        // (dashboard's auto-refresh widgets call ajax_stats/ajax_pm2
         // every few seconds via fetch() with X-Requested-With, see
         // assets/js/app.js). Regenerating mid-session while multiple polls
         // are concurrently in flight is a classic race: the browser can

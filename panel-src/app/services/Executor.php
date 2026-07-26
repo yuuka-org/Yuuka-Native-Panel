@@ -20,7 +20,7 @@ final class Executor
         'nginx-test', 'nginx-reload', 'nginx-write-config', 'nginx-enable',
         'nginx-disable', 'nginx-delete',
         'pm2-deploy', 'pm2-start', 'pm2-stop', 'pm2-restart', 'pm2-reload', 'pm2-delete',
-        'pm2-jlist', 'pm2-describe', 'pm2-logs', 'pm2-flush', 'pm2-save',
+        'pm2-jlist', 'pm2-describe', 'pm2-logs', 'pm2-flush', 'pm2-reset', 'pm2-save',
         'certbot-issue', 'certbot-remove',
         'service-status', 'service-restart',
         'installer-version-info', 'installer-check-update',

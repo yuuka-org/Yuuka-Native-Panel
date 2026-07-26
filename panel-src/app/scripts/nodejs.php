@@ -96,6 +96,11 @@ function nodejs_pm2_flush(string $pm2Name): array
     return Executor::run('pm2-flush', [$pm2Name], null, 15);
 }
 
+function nodejs_pm2_reset(string $pm2Name): array
+{
+    return Executor::run('pm2-reset', [$pm2Name], null, 15);
+}
+
 function nodejs_pm2_save(): array
 {
     return Executor::run('pm2-save', [], null, 15);

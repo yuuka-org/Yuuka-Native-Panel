@@ -36,7 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/websites.php');
+    redirect('/websites');
 }
 
 $websites = NginxService::listWebsites();
@@ -48,8 +48,8 @@ include __DIR__ . '/partials/header.php';
 
 <?php if (Rbac::can($user['role'], 'nodejs.view')): ?>
 <div class="btn-group mb-3">
-  <a href="/websites.php" class="btn btn-sm btn-primary"><i class="bi bi-globe2 me-1"></i>PHP</a>
-  <a href="/nodejs.php" class="btn btn-sm btn-outline-secondary"><i class="bi bi-diagram-3 me-1"></i>Node.js</a>
+  <a href="/websites" class="btn btn-sm btn-primary"><i class="bi bi-globe2 me-1"></i>PHP</a>
+  <a href="/nodejs" class="btn btn-sm btn-outline-secondary"><i class="bi bi-diagram-3 me-1"></i>Node.js</a>
 </div>
 <?php endif; ?>
 
@@ -95,9 +95,9 @@ include __DIR__ . '/partials/header.php';
                 </button>
               </form>
               <?php endif; ?>
-              <a href="/domains.php?website_id=<?= e((string) $site['id']) ?>" class="btn btn-sm btn-outline-primary" title="SSL / Domain"><i class="bi bi-shield-lock"></i></a>
+              <a href="/domains?website_id=<?= e((string) $site['id']) ?>" class="btn btn-sm btn-outline-primary" title="SSL / Domain"><i class="bi bi-shield-lock"></i></a>
               <?php if (Rbac::can($user['role'], 'files.view')): ?>
-              <a href="/file_manager.php?scope=website&name=<?= urlencode($site['domain']) ?>" class="btn btn-sm btn-outline-secondary" title="File Manager"><i class="bi bi-folder2-open"></i></a>
+              <a href="/file_manager?scope=website&name=<?= urlencode($site['domain']) ?>" class="btn btn-sm btn-outline-secondary" title="File Manager"><i class="bi bi-folder2-open"></i></a>
               <?php endif; ?>
               <?php if (Rbac::can($user['role'], 'backup.manage')): ?>
               <form method="post" class="d-inline" data-confirm="Buat backup website <?= e($site['domain']) ?> sekarang?">

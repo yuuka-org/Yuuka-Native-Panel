@@ -33,7 +33,7 @@ if ($isPicker) {
               <div class="list-group-item text-muted">Belum ada website</div>
             <?php endif; ?>
             <?php foreach ($websites as $site): ?>
-              <a class="list-group-item list-group-item-action" href="/file_manager.php?scope=website&name=<?= urlencode($site['domain']) ?>">
+              <a class="list-group-item list-group-item-action" href="/file_manager?scope=website&name=<?= urlencode($site['domain']) ?>">
                 <i class="bi bi-folder2-open me-1"></i><?= e($site['domain']) ?>
               </a>
             <?php endforeach; ?>
@@ -48,7 +48,7 @@ if ($isPicker) {
               <div class="list-group-item text-muted">Belum ada aplikasi Node.js</div>
             <?php endif; ?>
             <?php foreach ($nodeApps as $app): ?>
-              <a class="list-group-item list-group-item-action" href="/file_manager.php?scope=nodeapp&name=<?= urlencode($app['app_name']) ?>">
+              <a class="list-group-item list-group-item-action" href="/file_manager?scope=nodeapp&name=<?= urlencode($app['app_name']) ?>">
                 <i class="bi bi-folder2-open me-1"></i><?= e($app['app_name']) ?>
               </a>
             <?php endforeach; ?>
@@ -60,7 +60,7 @@ if ($isPicker) {
     <h6 class="text-muted mt-4 mb-2">Jelajahi Semua (ala Explorer)</h6>
     <div class="row g-4">
       <div class="col-md-6">
-        <a href="/file_manager.php?scope=www&name=root" class="card stat-card text-decoration-none text-body">
+        <a href="/file_manager?scope=www&name=root" class="card stat-card text-decoration-none text-body">
           <div class="card-body d-flex align-items-center gap-2">
             <i class="bi bi-hdd-network fs-4 text-primary"></i>
             <div>
@@ -71,7 +71,7 @@ if ($isPicker) {
         </a>
       </div>
       <div class="col-md-6">
-        <a href="/file_manager.php?scope=nodeapps&name=root" class="card stat-card text-decoration-none text-body">
+        <a href="/file_manager?scope=nodeapps&name=root" class="card stat-card text-decoration-none text-body">
           <div class="card-body d-flex align-items-center gap-2">
             <i class="bi bi-hdd-network fs-4 text-primary"></i>
             <div>
@@ -91,12 +91,12 @@ try {
     FileManagerService::assertScope($scope, $name);
 } catch (InvalidArgumentException $e) {
     flash('error', $e->getMessage());
-    redirect($scope === 'nodeapp' ? '/nodejs.php' : '/websites.php');
+    redirect($scope === 'nodeapp' ? '/nodejs' : '/websites');
 }
 
 $backUrl = FileManagerService::isRootScope($scope)
-    ? '/file_manager.php'
-    : ($scope === 'nodeapp' ? '/nodejs.php' : '/websites.php');
+    ? '/file_manager'
+    : ($scope === 'nodeapp' ? '/nodejs' : '/websites');
 
 /** website/www share ownership (www-data), nodeapp/nodeapps share ownership (nodeapps) - mirrors panel-exec.sh's fm_scope_family exactly. */
 function fm_scope_family(string $scope): string
@@ -243,7 +243,7 @@ if (isset($_GET['download']) && $_GET['download'] !== '') {
         $content = FileManagerService::readFile($scope, $name, $relPath);
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
-        redirect('/file_manager.php?scope=' . urlencode($scope) . '&name=' . urlencode($name));
+        redirect('/file_manager?scope=' . urlencode($scope) . '&name=' . urlencode($name));
     }
     $downloadName = basename($relPath);
     header('Content-Type: application/octet-stream');
@@ -416,9 +416,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (in_array($action, ['trash_restore', 'trash_delete', 'trash_empty'], true)) {
-        redirect('/file_manager.php?scope=' . urlencode($scope) . '&name=' . urlencode($name) . '&trash=1');
+        redirect('/file_manager?scope=' . urlencode($scope) . '&name=' . urlencode($name) . '&trash=1');
     }
-    redirect('/file_manager.php?scope=' . urlencode($scope) . '&name=' . urlencode($name) . '&path=' . urlencode($path));
+    redirect('/file_manager?scope=' . urlencode($scope) . '&name=' . urlencode($name) . '&path=' . urlencode($path));
 }
 
 $currentPath = (string) ($_GET['path'] ?? '');
@@ -896,12 +896,12 @@ $extraBodyHtml = <<<HTML
 
     if (action === 'open') {
       if (row.isDir) {
-        window.fmNavigateBrowse('/file_manager.php?scope={$scope}&name={$name}&path=' + encodeURIComponent(row.relPath));
+        window.fmNavigateBrowse('/file_manager?scope={$scope}&name={$name}&path=' + encodeURIComponent(row.relPath));
       } else {
         window.fmOpenEditor(row.relPath);
       }
     } else if (action === 'download') {
-      window.location.href = '/file_manager.php?scope={$scope}&name={$name}&download=' + encodeURIComponent(row.relPath);
+      window.location.href = '/file_manager?scope={$scope}&name={$name}&download=' + encodeURIComponent(row.relPath);
     } else if (action === 'copy' || action === 'cut') {
       fmSelectOnly(row.relPath);
       window.fmSetBulkAction(action === 'cut' ? 'cut_to_clipboard' : 'copy_to_clipboard');
@@ -1041,7 +1041,7 @@ include __DIR__ . '/partials/header.php';
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h6 class="mb-0"><i class="bi bi-trash3 me-1"></i>Recycle Bin: <?= count($trashEntries) ?> item</h6>
     <div class="d-flex gap-2">
-      <a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Kembali ke Folder</a>
+      <a href="/file_manager?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Kembali ke Folder</a>
       <?php if ($canManage && !empty($trashEntries)): ?>
       <form method="post" data-confirm="Kosongkan Recycle Bin? Semua item di dalamnya akan dihapus PERMANEN dan tidak bisa dipulihkan.">
         <?= Csrf::field() ?>
@@ -1115,7 +1115,7 @@ include __DIR__ . '/partials/header.php';
 
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h6 class="mb-0">Hasil pencarian "<?= e($searchQuery) ?>": <?= count($searchResults) ?> item</h6>
-    <a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Kembali ke Folder</a>
+    <a href="/file_manager?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Kembali ke Folder</a>
   </div>
 
   <div class="card stat-card">
@@ -1131,7 +1131,7 @@ include __DIR__ . '/partials/header.php';
             <tr>
               <td>
                 <?php if ($isDir): ?>
-                  <a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&path=<?= urlencode($r['relPath']) ?>"><i class="bi bi-folder-fill text-warning me-1"></i><?= e($r['name']) ?></a>
+                  <a href="/file_manager?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&path=<?= urlencode($r['relPath']) ?>"><i class="bi bi-folder-fill text-warning me-1"></i><?= e($r['name']) ?></a>
                 <?php else: ?>
                   <a href="#" data-fm-open-file="<?= e($r['relPath']) ?>"><i class="bi <?= e(fm_file_icon($r['name'])) ?> <?= e(fm_file_icon_color($r['name'])) ?> me-1"></i><?= e($r['name']) ?></a>
                 <?php endif; ?>

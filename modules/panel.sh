@@ -375,7 +375,19 @@ ${basicauth_include}
     client_max_body_size 512m;
 
     location / {
-        try_files \$uri \$uri/ /index.php?\$query_string;
+        # Extension-less URLs: /nodejs serves nodejs.php directly (no
+        # visible redirect), and any remaining hardcoded ".php" link (old
+        # bookmark, an external reference) gets a visible 301 to the clean
+        # form instead. \$request_uri (unlike \$uri) reflects what the
+        # CLIENT actually requested and is untouched by try_files' own
+        # internal rewrite below, which is what keeps this from looping -
+        # try_files resolving /nodejs to the real nodejs.php file
+        # underneath does NOT re-trigger this redirect, only an externally
+        # requested *.php URL does.
+        if (\$request_uri ~ "^(/[^?]*)\.php(\?.*)?\$") {
+            return 301 \$1\$2;
+        }
+        try_files \$uri \$uri.php \$uri/ /index.php?\$query_string;
     }
 
     location ~ \.php\$ {

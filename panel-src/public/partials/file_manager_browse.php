@@ -30,9 +30,9 @@ declare(strict_types=1);
 
   <nav aria-label="breadcrumb" class="mb-0 flex-grow-1">
     <ol class="breadcrumb bg-body-tertiary border rounded mb-0 w-100 align-items-center">
-      <li class="breadcrumb-item"><a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>" class="fm-nav-link"><i class="bi bi-hdd"></i> root</a></li>
+      <li class="breadcrumb-item"><a href="/file_manager?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>" class="fm-nav-link"><i class="bi bi-hdd"></i> root</a></li>
       <?php foreach (fm_breadcrumbs($currentPath) as $i => $crumb): ?>
-        <li class="breadcrumb-item"><a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&path=<?= urlencode($crumb['path']) ?>" class="fm-nav-link"><?= e($crumb['label']) ?></a></li>
+        <li class="breadcrumb-item"><a href="/file_manager?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&path=<?= urlencode($crumb['path']) ?>" class="fm-nav-link"><?= e($crumb['label']) ?></a></li>
       <?php endforeach; ?>
     </ol>
   </nav>
@@ -116,7 +116,7 @@ declare(strict_types=1);
               <?php endif; ?>
               <td>
                 <?php if ($isDir): ?>
-                  <a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&path=<?= urlencode($entryRelPath) ?>" class="fm-nav-link">
+                  <a href="/file_manager?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&path=<?= urlencode($entryRelPath) ?>" class="fm-nav-link">
                     <i class="bi bi-folder-fill text-warning me-1"></i><?= e($entry['name']) ?>
                   </a>
                 <?php else: ?>
@@ -130,7 +130,7 @@ declare(strict_types=1);
               <td class="text-muted small"><?= e(date('Y-m-d H:i', $entry['mtime'])) ?></td>
               <td class="text-end text-nowrap">
                 <?php if (!$isDir): ?>
-                <a href="/file_manager.php?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&download=<?= urlencode($entryRelPath) ?>" class="btn btn-sm btn-outline-secondary" title="Download"><i class="bi bi-download"></i></a>
+                <a href="/file_manager?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&download=<?= urlencode($entryRelPath) ?>" class="btn btn-sm btn-outline-secondary" title="Download"><i class="bi bi-download"></i></a>
                 <?php endif; ?>
                 <?php if ($canManage): ?>
                 <button type="button" class="btn btn-sm btn-outline-secondary" title="Ubah Izin" data-bs-toggle="modal" data-bs-target="#chmodModal" data-target="<?= e($entryRelPath) ?>" data-label="<?= e($entry['name']) ?>"><i class="bi bi-shield-lock"></i></button>

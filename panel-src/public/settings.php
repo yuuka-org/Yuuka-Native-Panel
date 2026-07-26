@@ -93,7 +93,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 SettingsService::set('security_entrance_path', '');
                 ActivityLog::record($user['id'], 'settings.security_entrance_disable', 'Security Entrance dinonaktifkan');
-                flash('success', 'Security Entrance dinonaktifkan - login kembali lewat /login.php.');
+                flash('success', 'Security Entrance dinonaktifkan - login kembali lewat /login.');
             } else {
                 if (!Validator::securityEntrancePath($path)) {
                     throw new InvalidArgumentException('Path tidak valid (huruf/angka/-/_, 3-64 karakter)');
@@ -110,7 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/settings.php');
+    redirect('/settings');
 }
 
 $phpmyadminUrl = SettingsService::get('phpmyadmin_url');
@@ -247,12 +247,12 @@ include __DIR__ . '/partials/settings_nav.php';
       <div class="card-body">
         <div class="alert alert-warning small">
           <strong>Hati-hati:</strong> ini mengganti alamat halaman login panel dari
-          <code>/login.php</code> jadi path rahasia - salah/lupa path berarti TIDAK BISA login
+          <code>/login</code> jadi path rahasia - salah/lupa path berarti TIDAK BISA login
           sama sekali lewat browser. Kalau itu terjadi, jalankan
           <code>yp security-entrance off</code> lewat SSH untuk mengembalikan seperti semula.
         </div>
         <p class="text-muted small">
-          Status: <?php if ($securityEntrancePath !== ''): ?><span class="badge text-bg-success">Aktif: /<?= e($securityEntrancePath) ?></span><?php else: ?><span class="badge text-bg-secondary">Nonaktif (/login.php)</span><?php endif; ?>
+          Status: <?php if ($securityEntrancePath !== ''): ?><span class="badge text-bg-success">Aktif: /<?= e($securityEntrancePath) ?></span><?php else: ?><span class="badge text-bg-secondary">Nonaktif (/login)</span><?php endif; ?>
         </p>
         <form method="post" data-confirm="Yakin? Kalau path ini salah/lupa, satu-satunya cara masuk lagi adalah lewat SSH ('yp security-entrance off').">
           <?= Csrf::field() ?>

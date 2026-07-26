@@ -62,10 +62,10 @@ $currentUser = Auth::user();
             <i class="bi bi-person-circle me-1"></i><?= e($currentUser['username'] ?? 'guest') ?>
           </button>
           <ul class="dropdown-menu dropdown-menu-end">
-            <li><a class="dropdown-item" href="/settings.php"><i class="bi bi-gear me-2"></i>Pengaturan</a></li>
+            <li><a class="dropdown-item" href="/settings"><i class="bi bi-gear me-2"></i>Pengaturan</a></li>
             <li><hr class="dropdown-divider"></li>
             <li>
-              <form method="post" action="/logout.php">
+              <form method="post" action="/logout">
                 <?= Csrf::field() ?>
                 <button type="submit" class="dropdown-item text-danger"><i class="bi bi-box-arrow-right me-2"></i>Logout</button>
               </form>

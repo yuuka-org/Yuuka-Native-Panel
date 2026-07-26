@@ -36,7 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/users.php');
+    redirect('/users');
 }
 
 $users = UserService::listUsers();

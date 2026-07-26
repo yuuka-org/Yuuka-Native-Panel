@@ -27,7 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             flash('success', "Restart {$svc} dijadwalkan, tunggu beberapa detik lalu muat ulang halaman.");
             ActivityLog::record($user['id'], 'system.service_restart', "Restart service: {$svc}");
-            header('Location: /system.php');
+            header('Location: /system');
             if (function_exists('fastcgi_finish_request')) {
                 fastcgi_finish_request();
             }
@@ -35,7 +35,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } catch (InvalidArgumentException|RuntimeException $e) {
             flash('error', $e->getMessage());
             if (!headers_sent()) {
-                header('Location: /system.php');
+                header('Location: /system');
             }
         }
         exit;
@@ -60,7 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/system.php');
+    redirect('/system');
 }
 
 $versionInfo = sys_installer_version_info();
@@ -110,7 +110,7 @@ include __DIR__ . '/partials/header.php';
     <div class="card stat-card h-100">
       <div class="card-header bg-white fw-semibold">Log Update</div>
       <div class="card-body">
-        <pre class="log-viewer mb-0" id="updateLogBlock" data-refresh-url="/ajax_update_log.php" data-refresh-interval="4000" style="min-height:180px"><?= e(LogService::selfUpdateLog(300)) ?></pre>
+        <pre class="log-viewer mb-0" id="updateLogBlock" data-refresh-url="/ajax_update_log" data-refresh-interval="4000" style="min-height:180px"><?= e(LogService::selfUpdateLog(300)) ?></pre>
         <div class="small text-muted mt-2" id="updateStatusLine"><?= $updateRunning ? 'Sedang berjalan...' : '' ?></div>
       </div>
     </div>

@@ -6,4 +6,4 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     Csrf::validateRequest();
 }
 Auth::logout();
-redirect('/login.php');
+redirect('/login');

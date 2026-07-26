@@ -24,7 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/settings_alarm.php');
+    redirect('/settings_alarm');
 }
 
 Rbac::require('settings.manage');

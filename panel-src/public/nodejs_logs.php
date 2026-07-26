@@ -9,7 +9,7 @@ $id = (int) ($_GET['id'] ?? 0);
 $app = NodeService::find($id);
 if ($app === null) {
     flash('error', 'Aplikasi tidak ditemukan');
-    redirect('/nodejs.php');
+    redirect('/nodejs');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -19,7 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         NodeService::clearLogs($id);
         flash('success', 'Log dibersihkan.');
     }
-    redirect('/nodejs_logs.php?id=' . $id);
+    redirect('/nodejs_logs?id=' . $id);
 }
 
 $lines = min(1000, max(10, (int) ($_GET['lines'] ?? 150)));
@@ -37,7 +37,7 @@ include __DIR__ . '/partials/nodejs_settings_nav.php';
     <p class="text-muted mb-0">Output &amp; error log dari PM2 (<code>pm2 logs</code>)</p>
   </div>
   <div class="d-flex gap-2">
-    <a href="/nodejs.php" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Kembali</a>
+    <a href="/nodejs" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Kembali</a>
     <?php if (Rbac::can($user['role'], 'nodejs.control')): ?>
     <form method="post" data-confirm="Kosongkan seluruh log aplikasi ini?">
       <?= Csrf::field() ?>

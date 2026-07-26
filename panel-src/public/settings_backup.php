@@ -10,7 +10,7 @@ if (($_GET['download'] ?? '') !== '') {
     $path = BackupService::downloadPath((int) $_GET['download']);
     if ($path === null) {
         flash('error', 'File backup tidak ditemukan.');
-        redirect('/settings_backup.php');
+        redirect('/settings_backup');
     }
     ActivityLog::record($user['id'], 'backup.download', 'Download backup: ' . basename($path));
     header('Content-Type: application/octet-stream');
@@ -37,7 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/settings_backup.php');
+    redirect('/settings_backup');
 }
 
 $backups = BackupService::listBackups();
@@ -84,7 +84,7 @@ function settings_backup_format_bytes(int $bytes): string
           </td>
           <td class="small text-muted"><?= e($b['created_at']) ?></td>
           <td class="text-end">
-            <a href="/settings_backup.php?download=<?= (int) $b['id'] ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download"></i></a>
+            <a href="/settings_backup?download=<?= (int) $b['id'] ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download"></i></a>
             <?php if (Rbac::can($user['role'], 'backup.manage')): ?>
             <button class="btn btn-sm btn-outline-warning" data-bs-toggle="modal" data-bs-target="#restore<?= (int) $b['id'] ?>"><i class="bi bi-arrow-counterclockwise"></i></button>
             <form method="post" class="d-inline" data-confirm="Hapus file backup ini?">

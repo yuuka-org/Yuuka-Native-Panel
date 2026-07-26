@@ -9,7 +9,7 @@ $id = (int) ($_GET['id'] ?? 0);
 $app = NodeService::find($id);
 if ($app === null) {
     flash('error', 'Aplikasi tidak ditemukan');
-    redirect('/nodejs.php');
+    redirect('/nodejs');
 }
 
 // Handle .env export as a file download before any HTML is emitted.
@@ -58,7 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/nodejs_env.php?id=' . $id);
+    redirect('/nodejs_env?id=' . $id);
 }
 
 $variables = EnvService::listForApp($id);
@@ -75,8 +75,8 @@ include __DIR__ . '/partials/nodejs_settings_nav.php';
     <p class="text-muted mb-0">Nilai secret disamarkan secara default. Tidak pernah dicatat ke log.</p>
   </div>
   <div class="d-flex gap-2">
-    <a href="/nodejs.php" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Kembali</a>
-    <a href="/nodejs_env.php?id=<?= (int) $id ?>&export=1" class="btn btn-outline-primary"><i class="bi bi-download me-1"></i>Export .env</a>
+    <a href="/nodejs" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Kembali</a>
+    <a href="/nodejs_env?id=<?= (int) $id ?>&export=1" class="btn btn-outline-primary"><i class="bi bi-download me-1"></i>Export .env</a>
     <?php if (Rbac::can($user['role'], 'nodejs.control')): ?>
     <form method="post"><?= Csrf::field() ?><input type="hidden" name="action" value="apply">
       <button class="btn btn-primary"><i class="bi bi-arrow-repeat me-1"></i>Terapkan &amp; Restart</button>

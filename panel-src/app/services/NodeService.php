@@ -392,6 +392,7 @@ final class NodeService
             'stop' => nodejs_pm2_stop($app['pm2_name']),
             'restart' => nodejs_pm2_restart($app['pm2_name']),
             'reload' => nodejs_pm2_reload($app['pm2_name']),
+            'reset' => nodejs_pm2_reset($app['pm2_name']),
             default => throw new InvalidArgumentException('Aksi tidak dikenal'),
         };
 

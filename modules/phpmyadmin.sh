@@ -82,7 +82,7 @@ if (is_array(\$__pma_cf_visitor) && (\$__pma_cf_visitor['scheme'] ?? '') === 'ht
 \$i++;
 \$cfg['Servers'][\$i]['auth_type']     = 'signon';
 \$cfg['Servers'][\$i]['SignonSession'] = 'PMASignon';
-\$cfg['Servers'][\$i]['SignonURL']     = \$__pma_scheme . '://${PANEL_DOMAIN}/login.php';
+\$cfg['Servers'][\$i]['SignonURL']     = \$__pma_scheme . '://${PANEL_DOMAIN}/login';
 \$cfg['Servers'][\$i]['host']          = '127.0.0.1';
 \$cfg['Servers'][\$i]['port']          = '3306';
 \$cfg['Servers'][\$i]['compress']      = false;

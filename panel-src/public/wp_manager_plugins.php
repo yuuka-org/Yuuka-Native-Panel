@@ -11,7 +11,7 @@ try {
     $site = WpManagerService::getSite($id);
 } catch (InvalidArgumentException $e) {
     flash('error', $e->getMessage());
-    redirect('/wp_manager.php');
+    redirect('/wp_manager');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -43,7 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/wp_manager_plugins.php?id=' . $id);
+    redirect('/wp_manager_plugins?id=' . $id);
 }
 
 $plugins = WpManagerService::listPlugins($site);
@@ -77,10 +77,10 @@ include __DIR__ . '/partials/header.php';
     <p class="text-muted mb-0">Plugin terpasang: <?= count($plugins) ?></p>
   </div>
   <div class="btn-group">
-    <a href="/wp_manager.php" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Daftar</a>
-    <a href="/wp_manager_core.php?id=<?= (int) $id ?>" class="btn btn-outline-secondary">Core</a>
-    <a href="/wp_manager_plugins.php?id=<?= (int) $id ?>" class="btn btn-primary">Plugin</a>
-    <a href="/wp_manager_themes.php?id=<?= (int) $id ?>" class="btn btn-outline-secondary">Tema</a>
+    <a href="/wp_manager" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Daftar</a>
+    <a href="/wp_manager_core?id=<?= (int) $id ?>" class="btn btn-outline-secondary">Core</a>
+    <a href="/wp_manager_plugins?id=<?= (int) $id ?>" class="btn btn-primary">Plugin</a>
+    <a href="/wp_manager_themes?id=<?= (int) $id ?>" class="btn btn-outline-secondary">Tema</a>
   </div>
 </div>
 
@@ -128,7 +128,7 @@ include __DIR__ . '/partials/header.php';
             <?php endif; ?>
           </td>
           <td class="text-end">
-            <a href="/wp_manager_plugins.php?id=<?= (int) $id ?>&check=<?= urlencode($p['folder']) ?>" class="btn btn-sm btn-outline-secondary" title="Cek update"><i class="bi bi-arrow-repeat"></i></a>
+            <a href="/wp_manager_plugins?id=<?= (int) $id ?>&check=<?= urlencode($p['folder']) ?>" class="btn btn-sm btn-outline-secondary" title="Cek update"><i class="bi bi-arrow-repeat"></i></a>
             <?php if (Rbac::can($user['role'], 'wp.manage')): ?>
               <?php if ($p['active'] !== null): ?>
               <form method="post" class="d-inline">

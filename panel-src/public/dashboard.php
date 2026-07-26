@@ -70,7 +70,7 @@ include __DIR__ . '/partials/header.php';
     <h4 class="fw-bold mb-0">Dashboard</h4>
     <p class="text-muted mb-0">Ringkasan status server secara real-time</p>
   </div>
-  <div id="statsBlock" data-refresh-url="/ajax_stats.php" data-refresh-interval="5000"></div>
+  <div id="statsBlock" data-refresh-url="/ajax_stats" data-refresh-interval="5000"></div>
 </div>
 
 <?php
@@ -212,7 +212,7 @@ ob_start(); ?>
 <div class="card stat-card">
   <div class="card-header bg-white fw-semibold d-flex justify-content-between align-items-center">
     <span>Aplikasi Node.js (via PM2)</span>
-    <a href="/nodejs.php" class="btn btn-sm btn-outline-primary">Kelola semua</a>
+    <a href="/nodejs" class="btn btn-sm btn-outline-primary">Kelola semua</a>
   </div>
   <div class="card-body p-0">
     <div class="table-responsive">

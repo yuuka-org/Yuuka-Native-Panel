@@ -51,7 +51,7 @@ include __DIR__ . '/partials/header.php';
       </thead>
       <tbody>
       <?php if (empty($sites)): ?>
-        <tr><td colspan="4" class="text-center text-muted py-4">Belum ada situs WordPress. Instal lewat menu <a href="/app_installer.php">App Installer</a>.</td></tr>
+        <tr><td colspan="4" class="text-center text-muted py-4">Belum ada situs WordPress. Instal lewat menu <a href="/app_installer">App Installer</a>.</td></tr>
       <?php endif; ?>
       <?php foreach ($sites as $site): ?>
         <tr>
@@ -62,11 +62,11 @@ include __DIR__ . '/partials/header.php';
           <td><?= e($site['app_version'] ?? 'tidak diketahui') ?></td>
           <td>PHP <?= e($site['php_version']) ?></td>
           <td class="text-end">
-            <a href="/wp_manager.php?check=<?= (int) $site['website_id'] ?>" class="btn btn-sm btn-outline-secondary" title="Cek update WordPress"><i class="bi bi-arrow-repeat"></i></a>
+            <a href="/wp_manager?check=<?= (int) $site['website_id'] ?>" class="btn btn-sm btn-outline-secondary" title="Cek update WordPress"><i class="bi bi-arrow-repeat"></i></a>
             <div class="btn-group">
-              <a href="/wp_manager_core.php?id=<?= (int) $site['website_id'] ?>" class="btn btn-sm btn-outline-secondary" title="Core"><i class="bi bi-gear"></i></a>
-              <a href="/wp_manager_plugins.php?id=<?= (int) $site['website_id'] ?>" class="btn btn-sm btn-outline-secondary" title="Plugin"><i class="bi bi-puzzle"></i></a>
-              <a href="/wp_manager_themes.php?id=<?= (int) $site['website_id'] ?>" class="btn btn-sm btn-outline-secondary" title="Tema"><i class="bi bi-palette"></i></a>
+              <a href="/wp_manager_core?id=<?= (int) $site['website_id'] ?>" class="btn btn-sm btn-outline-secondary" title="Core"><i class="bi bi-gear"></i></a>
+              <a href="/wp_manager_plugins?id=<?= (int) $site['website_id'] ?>" class="btn btn-sm btn-outline-secondary" title="Plugin"><i class="bi bi-puzzle"></i></a>
+              <a href="/wp_manager_themes?id=<?= (int) $site['website_id'] ?>" class="btn btn-sm btn-outline-secondary" title="Tema"><i class="bi bi-palette"></i></a>
             </div>
           </td>
         </tr>

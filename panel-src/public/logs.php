@@ -26,7 +26,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/logs.php?source=' . urlencode((string) $_POST['source']) . '&target=' . urlencode((string) $_POST['target']));
+    redirect('/logs?source=' . urlencode((string) $_POST['source']) . '&target=' . urlencode((string) $_POST['target']));
 }
 
 $output = '';
