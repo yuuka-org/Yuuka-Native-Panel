@@ -6,6 +6,8 @@ Rbac::require('nodejs.env.manage');
 
 $user = Auth::user();
 $id = (int) ($_GET['id'] ?? 0);
+$embed = ($_GET['embed'] ?? '') === '1';
+$embedSuffix = $embed ? '&embed=1' : '';
 $app = NodeService::find($id);
 if ($app === null) {
     flash('error', 'Aplikasi tidak ditemukan');
@@ -58,17 +60,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/nodejs_env?id=' . $id);
+    redirect('/nodejs_env?id=' . $id . $embedSuffix);
 }
 
 $variables = EnvService::listForApp($id);
 $activeNodejsTab = 'env';
 
 $pageTitle = 'Environment - ' . $app['app_name'];
-include __DIR__ . '/partials/header.php';
-include __DIR__ . '/partials/nodejs_settings_nav.php';
+include __DIR__ . ($embed ? '/partials/embed_header.php' : '/partials/header.php');
 ?>
+<div class="d-flex">
+<?php include __DIR__ . '/partials/nodejs_settings_nav.php'; ?>
+<div class="flex-grow-1">
 
+<?php if (!$embed): ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h4 class="fw-bold mb-0">Environment Variables: <?= e($app['app_name']) ?></h4>
@@ -84,6 +89,17 @@ include __DIR__ . '/partials/nodejs_settings_nav.php';
     <?php endif; ?>
   </div>
 </div>
+<?php else: ?>
+<?php include __DIR__ . '/partials/flash.php'; ?>
+<div class="d-flex gap-2 mb-3">
+  <a href="/nodejs_env?id=<?= (int) $id ?>&export=1" class="btn btn-sm btn-outline-primary"><i class="bi bi-download me-1"></i>Export .env</a>
+  <?php if (Rbac::can($user['role'], 'nodejs.control')): ?>
+  <form method="post"><?= Csrf::field() ?><input type="hidden" name="action" value="apply">
+    <button class="btn btn-sm btn-primary"><i class="bi bi-arrow-repeat me-1"></i>Terapkan &amp; Restart</button>
+  </form>
+  <?php endif; ?>
+</div>
+<?php endif; ?>
 
 <div class="card stat-card mb-4">
   <div class="card-body p-0">
@@ -156,4 +172,7 @@ include __DIR__ . '/partials/nodejs_settings_nav.php';
   </div>
 </div>
 
-<?php include __DIR__ . '/partials/footer.php'; ?>
+</div>
+</div>
+
+<?php include __DIR__ . ($embed ? '/partials/embed_footer.php' : '/partials/footer.php'); ?>

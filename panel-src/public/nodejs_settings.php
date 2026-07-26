@@ -6,6 +6,8 @@ Rbac::require('nodejs.view');
 
 $user = Auth::user();
 $id = (int) ($_GET['id'] ?? 0);
+$embed = ($_GET['embed'] ?? '') === '1';
+$embedSuffix = $embed ? '&embed=1' : '';
 $app = NodeService::find($id);
 if ($app === null) {
     flash('error', 'Aplikasi tidak ditemukan');
@@ -34,17 +36,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/nodejs_settings?id=' . $id);
+    redirect('/nodejs_settings?id=' . $id . $embedSuffix);
 }
 
 $nodeVersions = NodeService::allowedNodeVersions();
 $activeNodejsTab = 'general';
 
 $pageTitle = 'Pengaturan - ' . $app['app_name'];
-include __DIR__ . '/partials/header.php';
-include __DIR__ . '/partials/nodejs_settings_nav.php';
+include __DIR__ . ($embed ? '/partials/embed_header.php' : '/partials/header.php');
 ?>
+<div class="d-flex">
+<?php include __DIR__ . '/partials/nodejs_settings_nav.php'; ?>
+<div class="flex-grow-1">
 
+<?php if (!$embed): ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h4 class="fw-bold mb-0">Pengaturan: <?= e($app['app_name']) ?></h4>
@@ -52,6 +57,10 @@ include __DIR__ . '/partials/nodejs_settings_nav.php';
   </div>
   <a href="/nodejs" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Kembali</a>
 </div>
+<?php else: ?>
+<?php include __DIR__ . '/partials/flash.php'; ?>
+<p class="text-muted small">Port internal: <code><?= e((string) $app['port']) ?></code> - menyimpan perubahan langsung me-redeploy aplikasi via PM2.</p>
+<?php endif; ?>
 
 <div class="card stat-card">
   <div class="card-body">
@@ -118,4 +127,7 @@ include __DIR__ . '/partials/nodejs_settings_nav.php';
   </div>
 </div>
 
-<?php include __DIR__ . '/partials/footer.php'; ?>
+</div>
+</div>
+
+<?php include __DIR__ . ($embed ? '/partials/embed_footer.php' : '/partials/footer.php'); ?>

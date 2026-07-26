@@ -6,6 +6,8 @@ Rbac::require('nodejs.view');
 
 $user = Auth::user();
 $id = (int) ($_GET['id'] ?? 0);
+$embed = ($_GET['embed'] ?? '') === '1';
+$embedSuffix = $embed ? '&embed=1' : '';
 $app = NodeService::find($id);
 if ($app === null) {
     flash('error', 'Aplikasi tidak ditemukan');
@@ -22,7 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/nodejs_backup?id=' . $id);
+    redirect('/nodejs_backup?id=' . $id . $embedSuffix);
 }
 
 $backups = array_values(array_filter(
@@ -32,10 +34,13 @@ $backups = array_values(array_filter(
 $activeNodejsTab = 'backup';
 
 $pageTitle = 'Backup - ' . $app['app_name'];
-include __DIR__ . '/partials/header.php';
-include __DIR__ . '/partials/nodejs_settings_nav.php';
+include __DIR__ . ($embed ? '/partials/embed_header.php' : '/partials/header.php');
 ?>
+<div class="d-flex">
+<?php include __DIR__ . '/partials/nodejs_settings_nav.php'; ?>
+<div class="flex-grow-1">
 
+<?php if (!$embed): ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h4 class="fw-bold mb-0">Backup: <?= e($app['app_name']) ?></h4>
@@ -50,6 +55,14 @@ include __DIR__ . '/partials/nodejs_settings_nav.php';
     <?php endif; ?>
   </div>
 </div>
+<?php else: ?>
+<?php include __DIR__ . '/partials/flash.php'; ?>
+<?php if (Rbac::can($user['role'], 'backup.manage')): ?>
+<form method="post" class="mb-3"><?= Csrf::field() ?>
+  <button class="btn btn-sm btn-primary"><i class="bi bi-cloud-arrow-down me-1"></i>Backup Sekarang</button>
+</form>
+<?php endif; ?>
+<?php endif; ?>
 
 <div class="card stat-card">
   <div class="card-body p-0">
@@ -75,4 +88,7 @@ include __DIR__ . '/partials/nodejs_settings_nav.php';
   </div>
 </div>
 
-<?php include __DIR__ . '/partials/footer.php'; ?>
+</div>
+</div>
+
+<?php include __DIR__ . ($embed ? '/partials/embed_footer.php' : '/partials/footer.php'); ?>

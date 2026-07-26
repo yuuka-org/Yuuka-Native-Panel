@@ -6,6 +6,8 @@ Rbac::require('nodejs.view');
 
 $user = Auth::user();
 $id = (int) ($_GET['id'] ?? 0);
+$embed = ($_GET['embed'] ?? '') === '1';
+$embedSuffix = $embed ? '&embed=1' : '';
 $app = NodeService::find($id);
 if ($app === null) {
     flash('error', 'Aplikasi tidak ditemukan');
@@ -40,17 +42,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (InvalidArgumentException $e) {
         flash('error', $e->getMessage());
     }
-    redirect('/nodejs_health?id=' . $id);
+    redirect('/nodejs_health?id=' . $id . $embedSuffix);
 }
 
 $check = HealthCheckService::forApp($id);
 $activeNodejsTab = 'health';
 
 $pageTitle = 'Health Check - ' . $app['app_name'];
-include __DIR__ . '/partials/header.php';
-include __DIR__ . '/partials/nodejs_settings_nav.php';
+include __DIR__ . ($embed ? '/partials/embed_header.php' : '/partials/header.php');
 ?>
+<div class="d-flex">
+<?php include __DIR__ . '/partials/nodejs_settings_nav.php'; ?>
+<div class="flex-grow-1">
 
+<?php if (!$embed): ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h4 class="fw-bold mb-0">Health Check: <?= e($app['app_name']) ?></h4>
@@ -58,6 +63,10 @@ include __DIR__ . '/partials/nodejs_settings_nav.php';
   </div>
   <a href="/nodejs" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Kembali</a>
 </div>
+<?php else: ?>
+<?php include __DIR__ . '/partials/flash.php'; ?>
+<p class="text-muted small">Informasional - status proses tetap berasal dari PM2, bukan health check ini.</p>
+<?php endif; ?>
 
 <div class="row g-3">
   <div class="col-md-6">
@@ -131,4 +140,7 @@ include __DIR__ . '/partials/nodejs_settings_nav.php';
   </div>
 </div>
 
-<?php include __DIR__ . '/partials/footer.php'; ?>
+</div>
+</div>
+
+<?php include __DIR__ . ($embed ? '/partials/embed_footer.php' : '/partials/footer.php'); ?>

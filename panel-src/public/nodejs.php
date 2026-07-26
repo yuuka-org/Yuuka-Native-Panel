@@ -149,7 +149,7 @@ include __DIR__ . '/partials/header.php';
             <td><?= e((string) $m['port']) ?></td>
             <td class="text-end text-nowrap">
               <div class="btn-group">
-                <a href="/nodejs_settings?id=<?= e((string) $m['id']) ?>" class="btn btn-sm btn-outline-secondary" title="Settings"><i class="bi bi-gear"></i></a>
+                <button type="button" class="btn btn-sm btn-outline-secondary" title="Settings" onclick="nodejsOpenSettings(<?= (int) $m['id'] ?>)"><i class="bi bi-gear"></i></button>
                 <?php if (Rbac::can($user['role'], 'files.view')): ?>
                 <a href="/file_manager?scope=nodeapp&name=<?= urlencode($m['app_name']) ?>" class="btn btn-sm btn-outline-secondary" title="File Manager"><i class="bi bi-folder2-open"></i></a>
                 <?php endif; ?>
@@ -313,6 +313,40 @@ include __DIR__ . '/partials/header.php';
   <input type="hidden" name="id" id="ctlId">
   <input type="hidden" name="control" id="ctlAction">
 </form>
+
+<div class="modal fade" id="nodejsSettingsModal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h5 class="modal-title"><i class="bi bi-gear me-1"></i>Settings</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <iframe id="nodejsSettingsFrame" src="about:blank" style="width:100%; height:75vh; border:0;" title="Settings"></iframe>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+window.nodejsOpenSettings = function (id) {
+  var frame = document.getElementById('nodejsSettingsFrame');
+  if (frame) { frame.src = '/nodejs_settings?id=' + id + '&embed=1'; }
+  var modalEl = document.getElementById('nodejsSettingsModal');
+  if (modalEl && typeof bootstrap !== 'undefined') { bootstrap.Modal.getOrCreateInstance(modalEl).show(); }
+};
+(function () {
+  var modalEl = document.getElementById('nodejsSettingsModal');
+  if (!modalEl) { return; }
+  // Drops the iframe back to about:blank on close, same reasoning as
+  // File Manager's Terminal modal - avoids leaving a stale settings page
+  // (and its own polling/state, if any) alive in the background.
+  modalEl.addEventListener('hidden.bs.modal', function () {
+    var frame = document.getElementById('nodejsSettingsFrame');
+    if (frame) { frame.src = 'about:blank'; }
+  });
+})();
+</script>
 
 <script>
 (function () {
