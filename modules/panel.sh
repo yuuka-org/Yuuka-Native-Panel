@@ -379,15 +379,35 @@ ${basicauth_include}
         # visible redirect), and any remaining hardcoded ".php" link (old
         # bookmark, an external reference) gets a visible 301 to the clean
         # form instead. \$request_uri (unlike \$uri) reflects what the
-        # CLIENT actually requested and is untouched by try_files' own
-        # internal rewrite below, which is what keeps this from looping -
-        # try_files resolving /nodejs to the real nodejs.php file
-        # underneath does NOT re-trigger this redirect, only an externally
-        # requested *.php URL does.
+        # CLIENT actually requested and is untouched by the rewrite below,
+        # which is what keeps this from looping - resolving /nodejs to the
+        # real nodejs.php file underneath does NOT re-trigger this
+        # redirect, only an externally requested *.php URL does.
         if (\$request_uri ~ "^(/[^?]*)\.php(\?.*)?\$") {
             return 301 \$1\$2;
         }
-        try_files \$uri \$uri.php \$uri/ /index.php?\$query_string;
+        # NOT 'try_files \$uri \$uri.php ...' - when try_files' OWN
+        # existence check finds \$uri.php as a real file, nginx serves it
+        # through its static-file path rather than handing off to the
+        # .php\$ fastcgi location below, and static serving rejects
+        # anything but GET/HEAD - every POST to a clean URL (e.g. the
+        # login form) came back 405 Method Not Allowed (confirmed on a
+        # real deployment). 'rewrite ... last' plus a named location is
+        # the standard, method-safe way to do this: it always re-enters
+        # full location matching for the rewritten URI, landing on the
+        # fastcgi handler regardless of request method.
+        try_files \$uri \$uri/ @clean_url;
+    }
+
+    location @clean_url {
+        # -f a real on-disk check (not try_files, see above) - a
+        # genuinely bogus/mistyped URL falls through to index.php exactly
+        # like it always did, instead of handing PHP-FPM a script that
+        # was never there.
+        if (-f \$document_root\$uri.php) {
+            rewrite ^ \$uri.php last;
+        }
+        rewrite ^ /index.php last;
     }
 
     location ~ \.php\$ {
