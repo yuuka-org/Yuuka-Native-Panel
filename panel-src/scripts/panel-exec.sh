@@ -85,6 +85,19 @@ require_path_within() {
 RE_SITENAME='^[a-zA-Z0-9._-]{1,200}$'
 RE_APPNAME='^[a-zA-Z0-9_-]{1,64}$'
 RE_DOMAIN='^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$'
+# HTTPS only, deliberately - no git@host:path SSH form, which would need
+# a deploy key provisioned for the www-data user (a whole separate
+# credential-management surface not built here). A private repo is still
+# reachable by embedding a token in the URL itself
+# (https://user:TOKEN@host/...), which git supports natively.
+# {1,200}, not a rounder/larger number - some regex engines' bounded-
+# repetition (RE_DUP_MAX) silently fails to match ANYTHING once the
+# upper bound crosses an implementation-defined ceiling (confirmed
+# empirically: {1,256} already breaks in one environment tested against
+# this exact codebase, {1,200} does not) - 200 is comfortably clear of
+# that while still far more than any real git URL needs.
+RE_GIT_URL='^https://[a-zA-Z0-9._~:/?#@!$&*+,;=%-]{1,200}$'
+RE_GIT_BRANCH='^[a-zA-Z0-9._/-]{1,200}$'
 RE_EMAIL='^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
 RE_DBNAME='^[a-zA-Z0-9_]{1,64}$'
 RE_LINES='^[0-9]{1,4}$'
@@ -664,6 +677,89 @@ op_fs_mkdir_website() {
     chown -R www-data:www-data "$dir"
     chmod 750 "$dir"
     echo "$dir"
+}
+
+# Clones a git repo directly into the website's root dir (NOT its own
+# subfolder) - the panel's Nginx template always serves from
+# {dir}/public (see NginxService::createWebsite), so this expects the
+# repo to already contain its own public/ folder at the top level, the
+# same convention Laravel/Symfony/Slim/CodeIgniter 4 etc. all use. A repo
+# without one still clones fine, it just won't serve anything useful
+# until one exists (mkdir -p below only guarantees the directory itself
+# is there so Nginx doesn't hard-error on a missing document root).
+op_git_clone_website() {
+    local domain="$1" repo_url="$2" branch="${3:-}"
+    require_match "$domain" "$RE_DOMAIN" "domain"
+    require_match "$repo_url" "$RE_GIT_URL" "repo url"
+    local dir="${WWW_BASE}/${domain}"
+    require_path_within "$dir" "$WWW_BASE" >/dev/null
+    [[ -e "$dir" ]] && fail "Direktori sudah ada: $dir"
+
+    local branch_args=()
+    if [[ -n "$branch" ]]; then
+        require_match "$branch" "$RE_GIT_BRANCH" "branch"
+        branch_args=(--branch "$branch")
+    fi
+
+    if ! git clone --depth 1 "${branch_args[@]}" -- "$repo_url" "$dir" >/tmp/git-clone-out.$$ 2>&1; then
+        local out
+        out=$(cat "/tmp/git-clone-out.$$" 2>/dev/null)
+        rm -f "/tmp/git-clone-out.$$"
+        rm -rf -- "$dir"
+        fail "Gagal clone repository: ${out}"
+    fi
+    rm -f "/tmp/git-clone-out.$$"
+
+    mkdir -p "${dir}/public"
+    chown -R www-data:www-data "$dir"
+    chmod 750 "$dir"
+    fm_reapply_terminal_acl "$dir"
+    echo "$dir"
+}
+
+# Only ever fast-forwards (--ff-only) - never merges/rebases on the
+# server unattended. A diverged/conflicting history fails cleanly with a
+# clear error instead of silently producing a merge commit or, worse, a
+# half-applied working tree nobody asked for.
+op_git_pull_website() {
+    local domain="$1"
+    require_match "$domain" "$RE_DOMAIN" "domain"
+    local dir="${WWW_BASE}/${domain}"
+    require_path_within "$dir" "$WWW_BASE" >/dev/null
+    [[ -d "${dir}/.git" ]] || fail "Website ini bukan deployment git (tidak ada .git)"
+
+    if ! git -C "$dir" pull --ff-only >/tmp/git-pull-out.$$ 2>&1; then
+        local out
+        out=$(cat "/tmp/git-pull-out.$$" 2>/dev/null)
+        rm -f "/tmp/git-pull-out.$$"
+        fail "Gagal git pull (kemungkinan ada perubahan lokal yang konflik, atau branch sudah divergen): ${out}"
+    fi
+    rm -f "/tmp/git-pull-out.$$"
+
+    chown -R www-data:www-data "$dir"
+    fm_reapply_terminal_acl "$dir"
+    echo "OK: pulled $domain"
+}
+
+# NUL-terminated key\tvalue records (same reasoning as op_files_list -
+# a commit message could legally contain a literal newline).
+op_git_status_website() {
+    local domain="$1"
+    require_match "$domain" "$RE_DOMAIN" "domain"
+    local dir="${WWW_BASE}/${domain}"
+    require_path_within "$dir" "$WWW_BASE" >/dev/null
+    if [[ ! -d "${dir}/.git" ]]; then
+        printf 'is_git\tno\0'
+        return 0
+    fi
+
+    local branch commit message date
+    branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null) || branch="unknown"
+    commit=$(git -C "$dir" rev-parse --short HEAD 2>/dev/null) || commit="unknown"
+    message=$(git -C "$dir" log -1 --format=%s 2>/dev/null) || message=""
+    date=$(git -C "$dir" log -1 --format=%cd --date=relative 2>/dev/null) || date=""
+
+    printf 'is_git\tyes\0branch\t%s\0commit\t%s\0message\t%s\0date\t%s\0' "$branch" "$commit" "$message" "$date"
 }
 
 op_fs_remove_website() {
@@ -1526,6 +1622,9 @@ case "$SUBCOMMAND" in
     cloudflared-version)   op_cloudflared_version ;;
     disk-usage)            op_disk_usage ;;
     fs-mkdir-website)      op_fs_mkdir_website "$@" ;;
+    git-clone-website)     op_git_clone_website "$@" ;;
+    git-pull-website)      op_git_pull_website "$@" ;;
+    git-status-website)    op_git_status_website "$@" ;;
     fs-remove-website)     op_fs_remove_website "$@" ;;
     fs-remove-nodeapp)     op_fs_remove_nodeapp "$@" ;;
     port-check)            op_port_check "$@" ;;

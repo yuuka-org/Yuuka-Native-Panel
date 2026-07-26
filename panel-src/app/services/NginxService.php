@@ -20,13 +20,24 @@ final class NginxService
      * @throws InvalidArgumentException on validation failure
      * @throws RuntimeException on system-level failure (nginx test, fs)
      */
-    public static function createWebsite(string $domain, string $phpVersion, ?int $userId): array
-    {
+    public static function createWebsite(
+        string $domain,
+        string $phpVersion,
+        ?int $userId,
+        ?string $gitRepoUrl = null,
+        ?string $gitBranch = null
+    ): array {
         if (!Validator::domain($domain)) {
             throw new InvalidArgumentException('Domain tidak valid');
         }
         if (!PhpService::isValidVersion($phpVersion)) {
             throw new InvalidArgumentException('Versi PHP tidak tersedia di server ini');
+        }
+        if ($gitRepoUrl !== null && $gitRepoUrl !== '' && !Validator::gitUrl($gitRepoUrl)) {
+            throw new InvalidArgumentException('URL repository Git tidak valid (harus https://...)');
+        }
+        if ($gitBranch !== null && $gitBranch !== '' && !Validator::gitBranch($gitBranch)) {
+            throw new InvalidArgumentException('Nama branch tidak valid');
         }
 
         $pdo = Database::app();
@@ -36,9 +47,16 @@ final class NginxService
             throw new InvalidArgumentException('Domain sudah terdaftar');
         }
 
-        $mkdir = Executor::run('fs-mkdir-website', [$domain], null, 15);
-        if (!$mkdir['ok']) {
-            throw new RuntimeException('Gagal membuat direktori website: ' . $mkdir['output']);
+        if ($gitRepoUrl !== null && $gitRepoUrl !== '') {
+            $clone = Executor::run('git-clone-website', [$domain, $gitRepoUrl, (string) $gitBranch], null, 120);
+            if (!$clone['ok']) {
+                throw new RuntimeException('Gagal clone repository Git: ' . $clone['output']);
+            }
+        } else {
+            $mkdir = Executor::run('fs-mkdir-website', [$domain], null, 15);
+            if (!$mkdir['ok']) {
+                throw new RuntimeException('Gagal membuat direktori website: ' . $mkdir['output']);
+            }
         }
         $documentRoot = "/var/www/{$domain}/public";
 
@@ -55,18 +73,73 @@ final class NginxService
         }
 
         $stmt = $pdo->prepare(
-            'INSERT INTO websites (domain, php_version, document_root, nginx_conf_name, is_enabled, created_by)
-             VALUES (:domain, :php, :root, :conf, 1, :uid)'
+            'INSERT INTO websites (domain, php_version, document_root, git_repo_url, git_branch, nginx_conf_name, is_enabled, created_by)
+             VALUES (:domain, :php, :root, :git_url, :git_branch, :conf, 1, :uid)'
         );
-        $stmt->execute(['domain' => $domain, 'php' => $phpVersion, 'root' => $documentRoot, 'conf' => $siteName, 'uid' => $userId]);
+        $stmt->execute([
+            'domain' => $domain, 'php' => $phpVersion, 'root' => $documentRoot,
+            'git_url' => $gitRepoUrl ?: null, 'git_branch' => $gitBranch ?: null,
+            'conf' => $siteName, 'uid' => $userId,
+        ]);
         $id = (int) $pdo->lastInsertId();
 
         $domainStmt = $pdo->prepare('INSERT INTO domains (domain, type, website_id) VALUES (:d, "php", :wid)');
         $domainStmt->execute(['d' => $domain, 'wid' => $id]);
 
-        ActivityLog::record($userId, 'website.create', "Website dibuat: {$domain} (PHP {$phpVersion})");
+        ActivityLog::record($userId, 'website.create', "Website dibuat: {$domain} (PHP {$phpVersion})"
+            . ($gitRepoUrl ? ", git: {$gitRepoUrl}" : ''));
 
         return self::find($id);
+    }
+
+    /**
+     * Fast-forward-only `git pull` in the site's own directory - fails
+     * cleanly (never merges/rebases unattended) if local changes or a
+     * diverged branch would require one.
+     */
+    public static function gitPull(int $id, ?int $userId): array
+    {
+        $site = self::find($id);
+        if ($site === null) {
+            throw new InvalidArgumentException('Website tidak ditemukan');
+        }
+        if (empty($site['git_repo_url'])) {
+            throw new InvalidArgumentException('Website ini bukan deployment Git');
+        }
+
+        $result = Executor::run('git-pull-website', [$site['domain']], null, 60);
+        if (!$result['ok']) {
+            throw new RuntimeException('Gagal git pull: ' . $result['output']);
+        }
+
+        ActivityLog::record($userId, 'website.git_pull', "Git pull untuk {$site['domain']}");
+
+        return self::gitStatus($id);
+    }
+
+    /** @return array{is_git:bool,branch?:string,commit?:string,message?:string,date?:string}|null null if the website doesn't exist */
+    public static function gitStatus(int $id): ?array
+    {
+        $site = self::find($id);
+        if ($site === null) {
+            return null;
+        }
+
+        $result = Executor::run('git-status-website', [$site['domain']], null, 15);
+        if (!$result['ok']) {
+            return ['is_git' => false];
+        }
+
+        $status = ['is_git' => false];
+        foreach (explode("\0", $result['output']) as $record) {
+            if ($record === '' || !str_contains($record, "\t")) {
+                continue;
+            }
+            [$key, $value] = explode("\t", $record, 2);
+            $status[$key] = $key === 'is_git' ? ($value === 'yes') : $value;
+        }
+
+        return $status;
     }
 
     public static function toggleWebsite(int $id, bool $enable, ?int $userId): void

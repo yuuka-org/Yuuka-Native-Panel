@@ -29,6 +29,7 @@ final class Executor
         'cloudflared-status', 'cloudflared-restart', 'cloudflared-stop', 'cloudflared-start', 'cloudflared-version',
         'disk-usage',
         'fs-mkdir-website', 'fs-remove-website', 'fs-remove-nodeapp',
+        'git-clone-website', 'git-pull-website', 'git-status-website',
         'port-check',
         'files-list', 'files-read', 'files-write', 'files-mkdir', 'files-delete',
         'files-rename', 'files-extract-zip', 'files-extract', 'files-compress',
@@ -52,7 +53,7 @@ final class Executor
      * legitimate trailing whitespace byte in the last field), corrupting
      * exactly one entry per call in a way that's easy to miss in testing.
      */
-    private const RAW_OUTPUT_SUBCOMMANDS = ['files-read', 'files-list', 'files-search', 'files-trash-list'];
+    private const RAW_OUTPUT_SUBCOMMANDS = ['files-read', 'files-list', 'files-search', 'files-trash-list', 'git-status-website'];
 
     /**
      * @param string[] $args

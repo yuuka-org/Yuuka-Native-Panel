@@ -16,9 +16,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $site = NginxService::createWebsite(
                 trim((string) ($_POST['domain'] ?? '')),
                 (string) ($_POST['php_version'] ?? ''),
-                $user['id']
+                $user['id'],
+                trim((string) ($_POST['git_repo_url'] ?? '')) ?: null,
+                trim((string) ($_POST['git_branch'] ?? '')) ?: null
             );
             flash('success', "Website {$site['domain']} berhasil dibuat.");
+        } elseif ($action === 'git_pull') {
+            Rbac::require('website.create');
+            NginxService::gitPull((int) $_POST['id'], $user['id']);
+            flash('success', 'Berhasil git pull - situs diperbarui ke commit terbaru.');
         } elseif ($action === 'toggle') {
             Rbac::require('website.toggle');
             NginxService::toggleWebsite((int) $_POST['id'], $_POST['enable'] === '1', $user['id']);
@@ -70,17 +76,26 @@ include __DIR__ . '/partials/header.php';
     <div class="table-responsive">
       <table class="table table-hover mb-0 align-middle">
         <thead class="table-light">
-          <tr><th>Domain</th><th>PHP Version</th><th>Document Root</th><th>SSL</th><th>Status</th><th class="text-end">Aksi</th></tr>
+          <tr><th>Domain</th><th>PHP Version</th><th>Document Root</th><th>Git</th><th>SSL</th><th>Status</th><th class="text-end">Aksi</th></tr>
         </thead>
         <tbody>
         <?php if (empty($websites)): ?>
-          <tr><td colspan="6" class="text-center text-muted py-4">Belum ada website</td></tr>
+          <tr><td colspan="7" class="text-center text-muted py-4">Belum ada website</td></tr>
         <?php endif; ?>
         <?php foreach ($websites as $site): ?>
+          <?php $gitStatus = !empty($site['git_repo_url']) ? NginxService::gitStatus((int) $site['id']) : null; ?>
           <tr>
             <td><a href="http://<?= e($site['domain']) ?>" target="_blank" rel="noopener"><?= e($site['domain']) ?></a></td>
             <td><span class="badge text-bg-light border">PHP <?= e($site['php_version']) ?></span></td>
             <td class="text-muted small"><?= e($site['document_root']) ?></td>
+            <td class="small">
+              <?php if ($gitStatus !== null && $gitStatus['is_git']): ?>
+                <div><i class="bi bi-git me-1"></i><code><?= e($gitStatus['branch'] ?? '?') ?></code> @ <code><?= e($gitStatus['commit'] ?? '?') ?></code></div>
+                <div class="text-muted" title="<?= e($gitStatus['message'] ?? '') ?>"><?= e(mb_strimwidth((string) ($gitStatus['message'] ?? ''), 0, 40, '...')) ?> &middot; <?= e($gitStatus['date'] ?? '') ?></div>
+              <?php else: ?>
+                <span class="text-muted">-</span>
+              <?php endif; ?>
+            </td>
             <td><?= $site['ssl_enabled'] ? '<span class="badge text-bg-success">Aktif</span>' : '<span class="badge text-bg-secondary">Tidak aktif</span>' ?></td>
             <td><?= $site['is_enabled'] ? '<span class="badge text-bg-success">Enabled</span>' : '<span class="badge text-bg-secondary">Disabled</span>' ?></td>
             <td class="text-end">
@@ -93,6 +108,14 @@ include __DIR__ . '/partials/header.php';
                 <button class="btn btn-sm btn-outline-secondary" title="<?= $site['is_enabled'] ? 'Disable' : 'Enable' ?>">
                   <i class="bi <?= $site['is_enabled'] ? 'bi-pause-fill' : 'bi-play-fill' ?>"></i>
                 </button>
+              </form>
+              <?php endif; ?>
+              <?php if ($gitStatus !== null && $gitStatus['is_git'] && Rbac::can($user['role'], 'website.create')): ?>
+              <form method="post" class="d-inline" data-confirm="Git pull untuk <?= e($site['domain']) ?>? (fast-forward only)">
+                <?= Csrf::field() ?>
+                <input type="hidden" name="action" value="git_pull">
+                <input type="hidden" name="id" value="<?= e((string) $site['id']) ?>">
+                <button class="btn btn-sm btn-outline-success" title="Pull / Update dari Git"><i class="bi bi-cloud-download"></i></button>
               </form>
               <?php endif; ?>
               <a href="/domains?website_id=<?= e((string) $site['id']) ?>" class="btn btn-sm btn-outline-primary" title="SSL / Domain"><i class="bi bi-shield-lock"></i></a>
@@ -171,7 +194,17 @@ include __DIR__ . '/partials/header.php';
               <?php endforeach; ?>
             </select>
           </div>
-          <p class="text-muted small mb-0">Document root akan dibuat otomatis di <code>/var/www/&lt;domain&gt;/public</code>.</p>
+          <hr>
+          <div class="mb-3">
+            <label class="form-label">Deploy dari Git (opsional)</label>
+            <input type="url" name="git_repo_url" class="form-control" placeholder="https://github.com/user/repo.git">
+            <div class="form-text">HTTPS saja. Untuk repo privat, sertakan token di URL: <code>https://user:TOKEN@github.com/...</code>. Repo harus punya folder <code>public/</code> di root-nya (seperti Laravel/Symfony) - itu yang jadi document root.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Branch (opsional, kosongkan = default repo)</label>
+            <input type="text" name="git_branch" class="form-control" placeholder="main">
+          </div>
+          <p class="text-muted small mb-0">Kalau URL Git dikosongkan, document root kosong akan dibuat otomatis di <code>/var/www/&lt;domain&gt;/public</code>.</p>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>

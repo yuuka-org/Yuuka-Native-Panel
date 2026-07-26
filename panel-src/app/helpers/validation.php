@@ -114,6 +114,27 @@ final class Validator
         return (bool) preg_match('/^[a-zA-Z0-9_.\/ -]{1,255}$/', $value);
     }
 
+    /**
+     * HTTPS-only git remote URL (no git@host:path SSH form - that would
+     * need a deploy key provisioned for www-data, a whole separate
+     * credential-management surface not built here). A private repo is
+     * still reachable by embedding a token in the URL itself
+     * (https://user:TOKEN@host/...), which git supports natively. Mirrors
+     * RE_GIT_URL in panel-exec.sh exactly.
+     */
+    public static function gitUrl(string $value): bool
+    {
+        // Bound kept in sync with RE_GIT_URL in panel-exec.sh (200, not
+        // 500) - see that constant's comment for why.
+        return (bool) preg_match('/^https:\/\/[a-zA-Z0-9._~:\/?#@!$&*+,;=%-]{1,200}$/', $value);
+    }
+
+    /** Mirrors RE_GIT_BRANCH in panel-exec.sh exactly. */
+    public static function gitBranch(string $value): bool
+    {
+        return (bool) preg_match('/^[a-zA-Z0-9._\/-]{1,200}$/', $value);
+    }
+
     public static function maxMemoryRestart(string $value): bool
     {
         return (bool) preg_match('/^[0-9]{1,6}[KMG]?$/', $value);
