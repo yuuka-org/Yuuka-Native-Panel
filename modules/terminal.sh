@@ -311,31 +311,29 @@ location = /internal/terminal_auth.php {
 }
 
 location ^~ /terminal/ {
+    # A direct top-level browser navigation to this raw ttyd endpoint
+    # (bookmarked, typed manually, opened via right-click "open frame in
+    # new tab") would otherwise render with NO panel chrome at all - just
+    # the bare terminal, no sidebar/header, no way back except the
+    # browser's own back button. Sec-Fetch-Dest distinguishes a real
+    # top-level navigation ('document') from this same URL being loaded
+    # inside terminal.php's own iframe ('iframe') - a sub-resource fetch/
+    # WebSocket upgrade from an ALREADY-loaded terminal page is never
+    # tagged 'document' either, so this only redirects the exact case
+    # being worked around here, never breaks the terminal once it's
+    # actually embedded. Deliberately a plain Nginx-level redirect, not a
+    # script injected into ttyd's own response (sub_filter rewriting
+    # ttyd's page + patching window.onbeforeunload via
+    # Object.defineProperty was tried here first - it sent the terminal
+    # into an unrecoverable auto-refresh loop on a real deployment,
+    # apparently confusing ttyd's own reconnect logic, which reads/writes
+    # that same property. Reverted - this redirect never touches ttyd's
+    # page content or JS at all, so it can't interfere with it).
+    if ($http_sec_fetch_dest = document) {
+        return 302 /terminal;
+    }
     auth_request /internal/terminal_auth.php;
     include ${NGINX_SNIPPETS}/proxy-params.conf;
-    # sub_filter rewrites the response BODY nginx receives from ttyd -
-    # it cannot see through gzip, so ttyd must be told not to compress
-    # its response at all, or sub_filter finds nothing to replace.
-    proxy_set_header Accept-Encoding "";
-    # Injected as early as physically possible (right after <head> opens,
-    # before ttyd's OWN bundled scripts run at all) so this reliably wins
-    # the race regardless of exactly when/how ttyd registers its handler
-    # later (a previous attempt patched window.onbeforeunload from the
-    # PARENT frame's JS on the iframe's 'load' event - too late in
-    # practice, ttyd (re-)sets it again after that, e.g. once its
-    # WebSocket connects). Redefines the onbeforeunload PROPERTY (so any
-    # later assignment is silently swallowed) and neutralizes
-    # addEventListener('beforeunload', ...) too (ttyd's script, running
-    # AFTER this one, calls OUR patched addEventListener, not the native
-    # one). Also: a direct top-level navigation to this raw ttyd endpoint
-    # (bookmarked, typed manually, opened via right-click "open frame in
-    # new tab") rendered with NO panel chrome at all - window.top ===
-    # window.self is only true when this page is its OWN top-level
-    # document, never when it's loaded inside terminal.php's iframe (its
-    # top is the PARENT panel page's window), so this redirects exactly
-    # that case back to the real page, never when actually embedded.
-    sub_filter '<head>' '<head><script>(function(){try{Object.defineProperty(window,"onbeforeunload",{configurable:true,get:function(){return null;},set:function(){}});}catch(e){}try{var a=window.EventTarget.prototype.addEventListener;window.addEventListener=function(t,l,o){if(t==="beforeunload"){return;}return a.call(window,t,l,o);};}catch(e){}if(window.top===window.self){window.location.replace("/terminal");}})();</script>';
-    sub_filter_once on;
     # No URI part after the host:port (deliberately no trailing slash) -
     # this makes nginx forward the ORIGINAL request URI unchanged
     # (including the /terminal/ prefix). ttyd is started with -b /terminal
