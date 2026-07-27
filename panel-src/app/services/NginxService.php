@@ -142,6 +142,66 @@ final class NginxService
         return $status;
     }
 
+    /**
+     * Which site (website or Node.js app) currently holds the wildcard/
+     * default_server slot, if any - nginx allows exactly one
+     * default_server per listen address:port, so only one site across
+     * BOTH tables may ever have this enabled at once.
+     * @return array{type:'website'|'nodejs', id:int, name:string}|null
+     */
+    public static function wildcardHolder(): ?array
+    {
+        $pdo = Database::app();
+        $w = $pdo->query('SELECT id, domain FROM websites WHERE wildcard_enabled = 1 LIMIT 1')->fetch();
+        if ($w) {
+            return ['type' => 'website', 'id' => (int) $w['id'], 'name' => $w['domain']];
+        }
+        $n = $pdo->query('SELECT id, app_name FROM nodejs_apps WHERE wildcard_enabled = 1 LIMIT 1')->fetch();
+        if ($n) {
+            return ['type' => 'nodejs', 'id' => (int) $n['id'], 'name' => $n['app_name']];
+        }
+        return null;
+    }
+
+    public static function enableWildcard(int $id, ?int $userId): void
+    {
+        $site = self::find($id);
+        if ($site === null) {
+            throw new InvalidArgumentException('Website tidak ditemukan');
+        }
+
+        $holder = self::wildcardHolder();
+        if ($holder !== null && !($holder['type'] === 'website' && $holder['id'] === $id)) {
+            throw new InvalidArgumentException("Slot wildcard sudah dipakai oleh {$holder['name']} - nonaktifkan itu dulu (hanya satu situs yang boleh menerima domain apa saja dalam satu server).");
+        }
+
+        $siteName = 'wildcard-' . $site['nginx_conf_name'];
+        $config = nginx_build_php_wildcard_site_config($site['php_version'], $site['document_root']);
+        $write = nginx_write_config($siteName, $config);
+        if (!$write['ok']) {
+            throw new RuntimeException('Konfigurasi Nginx tidak valid: ' . $write['output']);
+        }
+        $enable = nginx_enable_site($siteName);
+        if (!$enable['ok']) {
+            throw new RuntimeException('Gagal mengaktifkan situs wildcard: ' . $enable['output']);
+        }
+
+        Database::app()->prepare('UPDATE websites SET wildcard_enabled = 1 WHERE id = :id')->execute(['id' => $id]);
+        ActivityLog::record($userId, 'website.wildcard_enable', "Wildcard hostname diaktifkan untuk {$site['domain']}");
+    }
+
+    public static function disableWildcard(int $id, ?int $userId): void
+    {
+        $site = self::find($id);
+        if ($site === null) {
+            throw new InvalidArgumentException('Website tidak ditemukan');
+        }
+
+        nginx_delete_site('wildcard-' . $site['nginx_conf_name']);
+        Database::app()->prepare('UPDATE websites SET wildcard_enabled = 0 WHERE id = :id')->execute(['id' => $id]);
+        ActivityLog::record($userId, 'website.wildcard_disable', "Wildcard hostname dinonaktifkan untuk {$site['domain']}");
+    }
+
     public static function toggleWebsite(int $id, bool $enable, ?int $userId): void
     {
         $site = self::find($id);
@@ -168,6 +228,9 @@ final class NginxService
         }
 
         nginx_delete_site($site['nginx_conf_name']);
+        if ($site['wildcard_enabled']) {
+            nginx_delete_site('wildcard-' . $site['nginx_conf_name']);
+        }
 
         if ($deleteFiles) {
             Executor::run('fs-remove-website', [$site['domain']], null, 30);

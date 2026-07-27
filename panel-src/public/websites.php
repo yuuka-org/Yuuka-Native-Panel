@@ -25,6 +25,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             Rbac::require('website.create');
             NginxService::gitPull((int) $_POST['id'], $user['id']);
             flash('success', 'Berhasil git pull - situs diperbarui ke commit terbaru.');
+        } elseif ($action === 'wildcard_enable') {
+            Rbac::require('website.create');
+            NginxService::enableWildcard((int) $_POST['id'], $user['id']);
+            flash('success', 'Wildcard hostname diaktifkan - website ini sekarang menerima domain apa pun yang diarahkan ke server ini.');
+        } elseif ($action === 'wildcard_disable') {
+            Rbac::require('website.create');
+            NginxService::disableWildcard((int) $_POST['id'], $user['id']);
+            flash('success', 'Wildcard hostname dinonaktifkan.');
         } elseif ($action === 'toggle') {
             Rbac::require('website.toggle');
             NginxService::toggleWebsite((int) $_POST['id'], $_POST['enable'] === '1', $user['id']);
@@ -47,6 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $websites = NginxService::listWebsites();
 $phpVersions = PhpService::installedVersions();
+$wildcardHolder = NginxService::wildcardHolder();
 
 $pageTitle = 'Website PHP';
 include __DIR__ . '/partials/header.php';
@@ -118,6 +127,9 @@ include __DIR__ . '/partials/header.php';
                 <button class="btn btn-sm btn-outline-success" title="Pull / Update dari Git"><i class="bi bi-cloud-download"></i></button>
               </form>
               <?php endif; ?>
+              <?php if (Rbac::can($user['role'], 'website.create')): ?>
+              <button type="button" class="btn btn-sm <?= $site['wildcard_enabled'] ? 'btn-success' : 'btn-outline-secondary' ?>" data-bs-toggle="modal" data-bs-target="#wildcardModal<?= e((string) $site['id']) ?>" title="Wildcard Hostname (Cloudflare for SaaS)"><i class="bi bi-broadcast"></i></button>
+              <?php endif; ?>
               <a href="/domains?website_id=<?= e((string) $site['id']) ?>" class="btn btn-sm btn-outline-primary" title="SSL / Domain"><i class="bi bi-shield-lock"></i></a>
               <?php if (Rbac::can($user['role'], 'files.view')): ?>
               <a href="/file_manager?scope=website&name=<?= urlencode($site['domain']) ?>" class="btn btn-sm btn-outline-secondary" title="File Manager"><i class="bi bi-folder2-open"></i></a>
@@ -162,6 +174,47 @@ include __DIR__ . '/partials/header.php';
                   </div>
                 </div>
               </form>
+            </div>
+          </div>
+
+          <div class="modal fade" id="wildcardModal<?= e((string) $site['id']) ?>" tabindex="-1">
+            <div class="modal-dialog">
+              <div class="modal-content">
+                <div class="modal-header">
+                  <h5 class="modal-title">Wildcard Hostname: <?= e($site['domain']) ?></h5>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                  <p class="text-muted small">
+                    Untuk layanan SaaS yang customer-nya pakai domain sendiri lewat Cloudflare Custom Hostname: website ini akan menerima request untuk <strong>domain apa pun</strong>
+                    yang diarahkan ke server ini (bukan cuma domain <?= e($site['domain']) ?> di atas), termasuk akses langsung ke IP server. Hanya satu situs (website atau
+                    aplikasi Node.js) yang boleh mengaktifkan ini dalam satu server - situs lain tetap jalan normal berdasarkan domainnya masing-masing.
+                  </p>
+                  <?php if ($site['wildcard_enabled']): ?>
+                    <p class="mb-0"><span class="badge text-bg-success"><i class="bi bi-check-circle me-1"></i>Aktif</span> untuk website ini.</p>
+                  <?php elseif ($wildcardHolder !== null): ?>
+                    <p class="mb-0 text-muted">Slot wildcard sedang dipakai oleh <strong><?= e($wildcardHolder['name']) ?></strong> (<?= $wildcardHolder['type'] === 'website' ? 'Website PHP' : 'Aplikasi Node.js' ?>) - nonaktifkan di sana dulu untuk memindahkannya ke sini.</p>
+                  <?php endif; ?>
+                </div>
+                <div class="modal-footer">
+                  <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>
+                  <?php if ($site['wildcard_enabled']): ?>
+                  <form method="post" data-confirm="Nonaktifkan wildcard hostname untuk <?= e($site['domain']) ?>?">
+                    <?= Csrf::field() ?>
+                    <input type="hidden" name="action" value="wildcard_disable">
+                    <input type="hidden" name="id" value="<?= e((string) $site['id']) ?>">
+                    <button type="submit" class="btn btn-outline-danger">Nonaktifkan</button>
+                  </form>
+                  <?php elseif ($wildcardHolder === null): ?>
+                  <form method="post" data-confirm="Aktifkan wildcard hostname untuk <?= e($site['domain']) ?>? Website ini akan menerima domain apa pun yang belum terdaftar di situs lain.">
+                    <?= Csrf::field() ?>
+                    <input type="hidden" name="action" value="wildcard_enable">
+                    <input type="hidden" name="id" value="<?= e((string) $site['id']) ?>">
+                    <button type="submit" class="btn btn-primary">Aktifkan</button>
+                  </form>
+                  <?php endif; ?>
+                </div>
+              </div>
             </div>
           </div>
         <?php endforeach; ?>

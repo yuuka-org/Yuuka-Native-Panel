@@ -403,6 +403,46 @@ final class NodeService
         ActivityLog::record($userId, "nodejs.{$action}", "Aplikasi {$app['app_name']}: {$action}");
     }
 
+    /** Cloudflare for SaaS "Custom Hostnames" - see NginxService::wildcardHolder() for the cross-table "only one site total" rule this shares with websites. */
+    public static function enableWildcard(int $id, ?int $userId): void
+    {
+        $app = self::find($id);
+        if ($app === null) {
+            throw new InvalidArgumentException('Aplikasi tidak ditemukan');
+        }
+
+        $holder = NginxService::wildcardHolder();
+        if ($holder !== null && !($holder['type'] === 'nodejs' && $holder['id'] === $id)) {
+            throw new InvalidArgumentException("Slot wildcard sudah dipakai oleh {$holder['name']} - nonaktifkan itu dulu (hanya satu situs yang boleh menerima domain apa saja dalam satu server).");
+        }
+
+        $siteName = "wildcard-node-{$app['app_name']}";
+        $config = nginx_build_nodejs_wildcard_proxy_config((int) $app['port']);
+        $write = nginx_write_config($siteName, $config);
+        if (!$write['ok']) {
+            throw new RuntimeException('Konfigurasi Nginx tidak valid: ' . $write['output']);
+        }
+        $enable = nginx_enable_site($siteName);
+        if (!$enable['ok']) {
+            throw new RuntimeException('Gagal mengaktifkan situs wildcard: ' . $enable['output']);
+        }
+
+        Database::app()->prepare('UPDATE nodejs_apps SET wildcard_enabled = 1 WHERE id = :id')->execute(['id' => $id]);
+        ActivityLog::record($userId, 'nodejs.wildcard_enable', "Wildcard hostname diaktifkan untuk {$app['app_name']}");
+    }
+
+    public static function disableWildcard(int $id, ?int $userId): void
+    {
+        $app = self::find($id);
+        if ($app === null) {
+            throw new InvalidArgumentException('Aplikasi tidak ditemukan');
+        }
+
+        nginx_delete_site("wildcard-node-{$app['app_name']}");
+        Database::app()->prepare('UPDATE nodejs_apps SET wildcard_enabled = 0 WHERE id = :id')->execute(['id' => $id]);
+        ActivityLog::record($userId, 'nodejs.wildcard_disable', "Wildcard hostname dinonaktifkan untuk {$app['app_name']}");
+    }
+
     public static function deleteApp(int $id, bool $deleteFiles, ?int $userId): void
     {
         $app = self::find($id);
@@ -416,6 +456,9 @@ final class NodeService
         // addDomain() lets an app own several, each as its own Nginx site.
         foreach (self::listDomains($id) as $d) {
             nginx_delete_site("node-{$d['domain']}");
+        }
+        if ($app['wildcard_enabled']) {
+            nginx_delete_site("wildcard-node-{$app['app_name']}");
         }
 
         if ($deleteFiles) {

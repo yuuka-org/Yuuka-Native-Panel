@@ -66,6 +66,76 @@ server {
 CONF;
 }
 
+/**
+ * Cloudflare for SaaS "Custom Hostnames": Cloudflare forwards traffic for
+ * arbitrary customer-owned domains to a single fallback origin, so this
+ * vhost can't be registered per-domain like every other site here - it
+ * has to accept ANY Host header. `default_server` makes it nginx's
+ * catch-all for this listen socket (only one site total may hold this,
+ * enforced in NginxService::wildcardHolder() before this is ever
+ * written) - `server_name _` alone does nothing without it, "_" isn't
+ * special syntax, it's just a conventional placeholder hostname nobody
+ * would ever actually send as a real Host header.
+ */
+function nginx_build_php_wildcard_site_config(string $phpVersion, string $documentRoot): string
+{
+    $sock = "/run/php/php{$phpVersion}-fpm.sock";
+
+    return <<<CONF
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+    include snippets/cloudflare-realip.conf;
+
+    root {$documentRoot};
+    index index.php index.html;
+
+    access_log /var/log/nginx/wildcard-php-access.log;
+    error_log  /var/log/nginx/wildcard-php-error.log;
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    location ~ \.php\$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:{$sock};
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+    }
+
+    location ~ /\.(?!well-known) { deny all; }
+
+    include snippets/security-headers.conf;
+}
+CONF;
+}
+
+/** Same reasoning as nginx_build_php_wildcard_site_config() above. */
+function nginx_build_nodejs_wildcard_proxy_config(int $port): string
+{
+    return <<<CONF
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+    include snippets/cloudflare-realip.conf;
+
+    access_log /var/log/nginx/wildcard-nodejs-access.log;
+    error_log  /var/log/nginx/wildcard-nodejs-error.log;
+
+    location / {
+        proxy_pass http://127.0.0.1:{$port};
+        include snippets/proxy-params.conf;
+    }
+
+    include snippets/security-headers.conf;
+}
+CONF;
+}
+
 function nginx_build_ssl_server_block(string $domain, string $upstreamLocationBlock): string
 {
     return <<<CONF
