@@ -220,3 +220,30 @@ dipahami & diaudit, bukan karena keterbatasan teknis:
 - phpMyAdmin diinstall manual dari tarball resmi (bukan `apt install
   phpmyadmin`) khusus untuk menghindari dependency Apache/dbconfig-common
   bawaan paket Ubuntu.
+
+## 8. Menemukan Bug atau Kejanggalan?
+
+Sebelum melapor, cek dulu [Troubleshooting](wiki/Troubleshooting.md) —
+kemungkinan sudah pernah terjadi & ada solusinya di situ. Kalau belum
+ada, laporkan lewat
+[GitHub Issues](https://github.com/yuuka-org/Yuuka-Native-Panel/issues)
+proyek ini, sertakan:
+
+- Versi Ubuntu (`lsb_release -a`) dan mode deployment (`direct`/`tunnel`/
+  `hybrid`).
+- Langkah reproduksi & perilaku yang diharapkan vs. yang sebenarnya
+  terjadi.
+- Baris relevan dari log terkait kalau ada (lihat menu **Log** di panel,
+  atau `storage/logs/php-fpm-error.log`, `storage/logs/panel-exec-audit.log`,
+  `/var/log/nginx/panel-<domain>-error.log`) — **jangan** sertakan isi
+  `.env`, token Cloudflare Tunnel, password, atau kredensial lain apa pun.
+
+Untuk kerentanan keamanan (bukan bug fungsional biasa), lihat
+[Model Keamanan](wiki/Keamanan.md) sebelum melaporkan secara publik di
+Issues — pertimbangkan jalur pelaporan privat kalau tersedia.
+
+## 9. Lisensi
+
+[MIT License](LICENSE) — bebas dipakai, dimodifikasi, dan didistribusikan
+ulang (termasuk untuk keperluan komersial), selama keterangan copyright
+tetap disertakan. Tidak ada garansi apa pun (lihat teks lengkap lisensi).
