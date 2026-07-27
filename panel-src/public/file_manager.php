@@ -1010,12 +1010,31 @@ include __DIR__ . '/partials/header.php';
   // ttyd's own bundled frontend (not panel code) sets window.onbeforeunload
   // inside the iframe to warn about losing the session - same-origin, so
   // it also fires when navigating away from THIS panel page entirely, not
-  // just when the iframe itself navigates. Neutralize it once ttyd's own
-  // script has had a chance to set it.
+  // just when the iframe itself navigates. A single one-time null-out on
+  // 'load' isn't enough - ttyd (re-)sets it again later too, e.g. once its
+  // WebSocket connects. Redefine the property so any future assignment is
+  // silently swallowed, and neutralize the addEventListener path too in
+  // case ttyd registers that way instead.
   var fmTerminalFrameEl = document.getElementById('fmTerminalFrame');
   if (fmTerminalFrameEl) {
     fmTerminalFrameEl.addEventListener('load', function () {
-      try { fmTerminalFrameEl.contentWindow.onbeforeunload = null; } catch (e) {}
+      var win = fmTerminalFrameEl.contentWindow;
+      if (!win) { return; }
+      try {
+        win.onbeforeunload = null;
+        Object.defineProperty(win, 'onbeforeunload', {
+          configurable: true,
+          get: function () { return null; },
+          set: function () {}
+        });
+      } catch (e) {}
+      try {
+        var realAdd = win.EventTarget.prototype.addEventListener;
+        win.addEventListener = function (type, listener, options) {
+          if (type === 'beforeunload') { return; }
+          return realAdd.call(win, type, listener, options);
+        };
+      } catch (e) {}
     });
   }
   // Drops the iframe back to about:blank on close so the ttyd session

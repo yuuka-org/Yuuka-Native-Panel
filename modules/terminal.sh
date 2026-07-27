@@ -311,6 +311,22 @@ location = /internal/terminal_auth.php {
 }
 
 location ^~ /terminal/ {
+    # A direct top-level browser navigation to this raw ttyd endpoint
+    # (bookmarked, typed manually, opened via right-click "open frame in
+    # new tab") would otherwise render with NO panel chrome at all - just
+    # the bare terminal, no sidebar/header, no way back except the
+    # browser's own back button. Sec-Fetch-Dest distinguishes a real
+    # top-level navigation ('document') from this same URL being loaded
+    # inside terminal.php's own iframe ('iframe') - a sub-resource fetch/
+    # WebSocket upgrade from an ALREADY-loaded terminal page is never
+    # tagged 'document' either, so this only redirects the exact case
+    # being worked around here, never breaks the terminal once it's
+    # actually running inside the panel page. Older browsers that don't
+    # send this header at all simply skip the redirect (unchanged
+    # behavior for them, not worse).
+    if ($http_sec_fetch_dest = document) {
+        return 302 /terminal;
+    }
     auth_request /internal/terminal_auth.php;
     include ${NGINX_SNIPPETS}/proxy-params.conf;
     # No URI part after the host:port (deliberately no trailing slash) -

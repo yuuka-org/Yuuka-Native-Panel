@@ -26,14 +26,36 @@ include __DIR__ . '/partials/header.php';
 // inside the iframe to warn about losing the session - since /terminal/ is
 // proxied on the SAME origin as the panel, that handler also fires (and
 // blocks/prompts) when navigating AWAY from this panel page entirely, not
-// just when the iframe itself navigates. Neutralize it once ttyd's own
-// script has had a chance to set it.
+// just when the iframe itself navigates. A single one-time null-out on
+// 'load' wasn't enough - ttyd (re-)sets it again later too, e.g. once its
+// WebSocket connects, well after the iframe's load event already fired.
+// Patch the iframe's window as early as possible and keep it patched:
+// both the onbeforeunload PROPERTY (redefined so any future assignment
+// is silently swallowed, not just cleared once) and addEventListener
+// (in case ttyd registers via that path instead) are neutralized.
 (function () {
   var frame = document.getElementById('terminalFrame');
   if (!frame) { return; }
-  frame.addEventListener('load', function () {
-    try { frame.contentWindow.onbeforeunload = null; } catch (e) {}
-  });
+  function neutralizeBeforeUnload() {
+    var win = frame.contentWindow;
+    if (!win) { return; }
+    try {
+      win.onbeforeunload = null;
+      Object.defineProperty(win, 'onbeforeunload', {
+        configurable: true,
+        get: function () { return null; },
+        set: function () {}
+      });
+    } catch (e) {}
+    try {
+      var realAdd = win.EventTarget.prototype.addEventListener;
+      win.addEventListener = function (type, listener, options) {
+        if (type === 'beforeunload') { return; }
+        return realAdd.call(win, type, listener, options);
+      };
+    } catch (e) {}
+  }
+  frame.addEventListener('load', neutralizeBeforeUnload);
 })();
 </script>
 
