@@ -74,6 +74,11 @@ cd ~/Yuuka-Native-Panel   # clone repo yang kamu pakai
 sudo bash update.sh
 ```
 
+Ini juga persis yang jalan di background saat operator klik tombol
+**Update** di panel sendiri (Settings > System) — tidak ada sesi
+terminal/SSH yang menempel di proses itu, jadi `update.sh` **tidak boleh**
+menyisakan langkah yang cuma bisa dibereskan manual lewat SSH setelahnya.
+
 Yang dilakukan (reuse fungsi yang sama persis dengan `install.sh`, lihat
 `modules/panel.sh`):
 1. `git pull` di clone tempat `update.sh` dijalankan.
@@ -81,20 +86,32 @@ Yang dilakukan (reuse fungsi yang sama persis dengan `install.sh`, lihat
    (dipakai [CLI `yp`](Yp-CLI.md)) + install/refresh binary `yp`.
 3. `module_panel_deploy_files` — rsync `panel-src/` ke `/opt/server-panel`,
    langsung aktif tanpa restart apa pun.
-4. Kalau `yp` sudah tersedia: `yp repair panel` — regenerasi pool PHP-FPM
-   & vhost Nginx dari kode terbaru (**ini yang me-restart PHP-FPM & reload
-   Nginx** — lihat [CLI yp § repair](Yp-CLI.md), sub-detik downtime untuk
-   semua website di versi PHP yang sama).
+4. **Rebuild otomatis tiap modul sistem** — `module_nginx_run_all`,
+   `module_php_run_all`, phpMyAdmin (hanya kalau sebelumnya sudah pernah
+   di-setup — mode path/subdomain-nya dideteksi dari file Nginx yang sudah
+   ada, bukan ditanya ulang), `module_terminal_run_all`,
+   `module_ssl_run_all`. Domain panel & versi PHP dideteksi otomatis dari
+   vhost/pool yang sudah terpasang. Semua fungsi ini idempotent (sama
+   seperti dipakai `install.sh`) — pada server yang sudah lengkap, ini
+   cuma menyamakan config yang mungkin drift dari kode terbaru (mis. aturan
+   Nginx baru, pool FPM baru, unit systemd baru), tidak menginstal ulang
+   apa pun yang sudah ada.
+5. Kalau `yp` sudah tersedia: `yp repair panel` — regenerasi pool PHP-FPM
+   & vhost Nginx panel itu sendiri dari kode terbaru (**ini yang me-restart
+   PHP-FPM & reload Nginx** — lihat [CLI yp § repair](Yp-CLI.md), sub-detik
+   downtime untuk semua website di versi PHP yang sama).
 
 Aman dijalankan berkali-kali. Kalau `/opt/yuuka-installer` sempat rusak/
 belum ada (mis. error `rsync: change_dir "/opt/yuuka-installer/panel-src"
 failed`), `update.sh` otomatis memperbaikinya di langkah 2 — tidak perlu
 bootstrap manual.
 
-**Catatan**: langkah 3 hanya menyalin `panel-src/`. Kalau update itu juga
-menyentuh `modules/*.sh` di luar yang sudah tercakup `yp repair panel`
-(instalasi paket baru, perubahan MariaDB/Nginx/PHP/Node.js/Cloudflare),
-tetap perlu `yp custom-build <modul>` yang relevan atau `install.sh` penuh.
+**Catatan**: modul MariaDB/Node.js/Cloudflare sengaja TIDAK di-rebuild
+otomatis di sini — migrasi skema tambahan tetap tercakup lewat `yp repair
+panel` (langkah 5), sementara instalasi paket Node.js baru atau setup
+Cloudflare Tunnel dari nol tetap butuh `yp custom-build <modul>` yang
+relevan atau `install.sh` penuh (operasi yang jauh lebih jarang dan lebih
+berisiko untuk dijalankan diam-diam tanpa konfirmasi).
 
 ## Re-run `install.sh` Penuh (Alternatif)
 
