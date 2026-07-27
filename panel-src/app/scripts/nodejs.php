@@ -38,6 +38,16 @@ function nodejs_build_ecosystem_config(
             'autorestart' => $autorestart,
             'watch' => $watch,
             'max_memory_restart' => $maxMemoryRestart,
+            // Without this, cluster mode with >1 instances writes a
+            // SEPARATE pair of log files per worker id (app-out-0.log,
+            // app-out-1.log, ...) - `pm2 logs`/the panel's Logs tab
+            // reasonably expect ONE combined stream per app, so whichever
+            // worker happened to log last (or wasn't the one currently
+            // being tailed) made logging look like it "sometimes doesn't
+            // record" when it was actually landing in a different file
+            // entirely. Irrelevant but harmless for fork mode/instances=1.
+            'merge_logs' => true,
+            'log_date_format' => 'YYYY-MM-DD HH:mm:ss Z',
             'env' => $envPayload,
         ]],
     ];

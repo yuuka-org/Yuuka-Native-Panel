@@ -27,7 +27,7 @@ if ($isPicker) {
     <div class="row g-4">
       <div class="col-md-6">
         <div class="card stat-card">
-          <div class="card-header bg-white fw-semibold"><i class="bi bi-globe2 me-1"></i>Website PHP</div>
+          <div class="card-header bg-white fw-semibold"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/php.svg" alt="" style="width:1em;height:1em;vertical-align:-0.125em;" class="me-1">Website PHP</div>
           <div class="list-group list-group-flush">
             <?php if (empty($websites)): ?>
               <div class="list-group-item text-muted">Belum ada website</div>
@@ -42,7 +42,7 @@ if ($isPicker) {
       </div>
       <div class="col-md-6">
         <div class="card stat-card">
-          <div class="card-header bg-white fw-semibold"><i class="bi bi-diagram-3 me-1"></i>Node.js Apps</div>
+          <div class="card-header bg-white fw-semibold"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/nodedotjs.svg" alt="" style="width:1em;height:1em;vertical-align:-0.125em;" class="me-1">Node.js Apps</div>
           <div class="list-group list-group-flush">
             <?php if (empty($nodeApps)): ?>
               <div class="list-group-item text-muted">Belum ada aplikasi Node.js</div>

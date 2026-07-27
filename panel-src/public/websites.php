@@ -54,8 +54,8 @@ include __DIR__ . '/partials/header.php';
 
 <?php if (Rbac::can($user['role'], 'nodejs.view')): ?>
 <div class="btn-group mb-3">
-  <a href="/websites" class="btn btn-sm btn-primary"><i class="bi bi-globe2 me-1"></i>PHP</a>
-  <a href="/nodejs" class="btn btn-sm btn-outline-secondary"><i class="bi bi-diagram-3 me-1"></i>Node.js</a>
+  <a href="/websites" class="btn btn-sm btn-primary"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/php.svg" alt="" style="width:1em;height:1em;vertical-align:-0.125em;" class="me-1">PHP</a>
+  <a href="/nodejs" class="btn btn-sm btn-outline-secondary"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/nodedotjs.svg" alt="" style="width:1em;height:1em;vertical-align:-0.125em;" class="me-1">Node.js</a>
 </div>
 <?php endif; ?>
 

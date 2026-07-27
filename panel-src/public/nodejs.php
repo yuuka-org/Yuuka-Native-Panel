@@ -76,8 +76,8 @@ include __DIR__ . '/partials/header.php';
 
 <?php if (Rbac::can($user['role'], 'website.view')): ?>
 <div class="btn-group mb-3">
-  <a href="/websites" class="btn btn-sm btn-outline-secondary"><i class="bi bi-globe2 me-1"></i>PHP</a>
-  <a href="/nodejs" class="btn btn-sm btn-primary"><i class="bi bi-diagram-3 me-1"></i>Node.js</a>
+  <a href="/websites" class="btn btn-sm btn-outline-secondary"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/php.svg" alt="" style="width:1em;height:1em;vertical-align:-0.125em;" class="me-1">PHP</a>
+  <a href="/nodejs" class="btn btn-sm btn-primary"><img src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/nodedotjs.svg" alt="" style="width:1em;height:1em;vertical-align:-0.125em;" class="me-1">Node.js</a>
 </div>
 <?php endif; ?>
 
@@ -126,7 +126,7 @@ include __DIR__ . '/partials/header.php';
             <td>
               <?php if (Rbac::can($user['role'], 'nodejs.control')): ?>
               <div class="dropdown">
-                <button type="button" class="btn btn-sm btn-link p-0 text-decoration-none text-body dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                <button type="button" class="btn btn-sm btn-link p-0 text-decoration-none text-body status-dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
                   <span class="status-dot <?= e($item['status']) ?>"></span><?= e($item['status']) ?>
                 </button>
                 <ul class="dropdown-menu">
@@ -368,6 +368,21 @@ function pctl(id, action) {
   document.getElementById('ctlId').value = id;
   document.getElementById('ctlAction').value = action;
   document.getElementById('ctlForm').submit();
+}
+
+// The Status dropdown lives inside .table-responsive, which sets
+// overflow-x:auto specifically so wide tables scroll horizontally on
+// small screens - but that same overflow clips anything Bootstrap
+// positions with the default `absolute` Popper strategy, including this
+// dropdown's own menu (it got visually cut off at the table's edge
+// instead of floating above it). `fixed` positions the menu relative to
+// the viewport instead of the scrolling table, escaping that clipping -
+// set here via the JS API rather than a data-bs-* attribute since
+// popperConfig isn't one of Bootstrap's simple data-attribute options.
+if (typeof bootstrap !== 'undefined') {
+  document.querySelectorAll('.status-dropdown-toggle').forEach(function (el) {
+    new bootstrap.Dropdown(el, { popperConfig: { strategy: 'fixed' } });
+  });
 }
 </script>
 
