@@ -322,7 +322,7 @@ include __DIR__ . '/partials/header.php';
     <button type="button" class="btn btn-sm btn-outline-warning" title="Restart" onclick="nodeStatusAction('restart')"><i class="bi bi-arrow-clockwise"></i></button>
     <button type="button" class="btn btn-sm btn-outline-info" title="Reload" onclick="nodeStatusAction('reload')"><i class="bi bi-arrow-repeat"></i></button>
     <button type="button" class="btn btn-sm btn-outline-secondary" title="Stop" onclick="nodeStatusAction('stop')"><i class="bi bi-stop-fill"></i></button>
-    <button type="button" class="btn btn-sm btn-outline-dark" title="Reset Restarts" onclick="nodeStatusAction('reset')"><i class="bi bi-arrow-counterclockwise"></i></button>
+    <button type="button" class="btn btn-sm btn-outline-primary" title="Reset Restarts" onclick="nodeStatusAction('reset')"><i class="bi bi-arrow-counterclockwise"></i></button>
   </div>
 </div>
 <?php endif; ?>
