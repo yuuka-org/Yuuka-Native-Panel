@@ -74,6 +74,27 @@ CRUD website statis/PHP native, ditangani `NginxService`:
   `Host` untuk tahu ini request tenant mana — panel tidak ikut campur di
   situ.
 
+  **Wajib untuk deployment mode `tunnel`/`hybrid`**: kalau Fallback Origin
+  Custom Hostname kamu adalah domain yang di-route lewat Cloudflare
+  Tunnel (bukan IP publik langsung), Tunnel-nya sendiri **wajib** punya
+  **Catch-All Rule** yang diarahkan ke `http://127.0.0.1:80` (target yang
+  sama dengan route domain panel/app biasa) — bukan dibiarkan default
+  (`http_status:404`). Ini gara-gara cloudflared mencocokkan request
+  berdasarkan header `Host` yang benar-benar dikirim, dan trafik Custom
+  Hostname SaaS diteruskan Cloudflare dengan `Host` = domain custom milik
+  tenant (bukan domain Fallback Origin kamu) — jadi tidak akan pernah
+  cocok dengan rule hostname eksplisit mana pun, selalu jatuh ke
+  Catch-All. Tanpa ini, semua request Custom Hostname langsung dapat 404
+  instan dari Tunnel sendiri, sebelum sempat menyentuh Nginx/app sama
+  sekali (tidak akan muncul di log Nginx maupun `journalctl -u
+  cloudflared`, jadi gampang disangka masalah di panel padahal bukan).
+  Dashboard Cloudflare versi baru tidak lagi expose Catch-All Rule lewat
+  UI "Add route" — harus di-set lewat API `PUT
+  /accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations`,
+  menambahkan satu entri di akhir array `ingress` **tanpa** field
+  `hostname`. Lihat [Troubleshooting](Troubleshooting.md) untuk contoh
+  perintahnya.
+
 Setiap website terikat ke satu versi PHP-FPM tertentu (`php_version`,
 kolom di tabel `websites`) — pool PHP-FPM per versi sudah disiapkan saat
 instalasi ([Instalasi](Instalasi.md) tahap 6).

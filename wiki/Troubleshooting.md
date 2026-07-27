@@ -224,6 +224,71 @@ walau tidak pernah "diubah" lewat panel.
 database baru kalau `db_user` yang diminta sudah dipakai database lain
 (cek keunikan sebelum `CREATE USER`).
 
+## Cloudflare Custom Hostname (wildcard) + Tunnel: selalu 404, tidak ada log sama sekali
+
+**Gejala**: domain customer yang didaftarkan lewat Cloudflare for SaaS
+Custom Hostname (fitur wildcard Website/Node.js App di panel) selalu
+menampilkan `HTTP ERROR 404` polos di browser. Certificate status dan
+Hostname status di dashboard Cloudflare sama-sama `Active`, TLS handshake
+sukses (SNI cocok, sertifikat valid) kalau dicek lewat `curl -v`. Tapi
+`sudo journalctl -u cloudflared -f` **maupun** log akses/error Nginx
+(`/var/log/nginx/wildcard-*-access.log`) sama sekali tidak menunjukkan
+request itu pernah masuk, walau sudah dicoba berkali-kali dari browser.
+
+**Cara pastikan ini penyebabnya** (jangan asumsi, verifikasi dulu):
+```bash
+# Test lokal di server, lewati Cloudflare & Tunnel sepenuhnya - kalau ini
+# BERHASIL (dapat respons dari app-nya), infra Nginx/app di server sudah
+# benar, dan masalahnya pasti ada di jalur Cloudflare -> Tunnel.
+curl -sv -H "Host: <domain-custom-hostname>" http://127.0.0.1/ 2>&1 | tail -30
+```
+
+**Akar masalah**: cloudflared mencocokkan Public Hostname rule
+berdasarkan header `Host` request yang **benar-benar diterima**, bukan
+berdasarkan lewat DNS record/Fallback Origin mana request itu datang.
+Untuk trafik Custom Hostname SaaS, Cloudflare meneruskan request ke
+Tunnel dengan `Host` = domain custom milik tenant (mis.
+`pelanggan.domainmereka.com`), **bukan** `Host` = domain Fallback Origin
+kamu sendiri (mis. `cf-origin.domainkamu.com`). Karena domain custom itu
+tidak match dengan hostname manapun yang terdaftar eksplisit di rule
+Tunnel, cloudflared selalu jatuh ke **Catch-All Rule** - yang defaultnya
+`service: http_status:404`, dibalas instan tanpa pernah menyentuh
+Nginx/app sama sekali (makanya tidak ada jejak di log manapun di server).
+
+**Fix**: set Catch-All Rule Tunnel ke target yang sama dengan route
+domain panel/app biasa (`http://127.0.0.1:80`). Dashboard Cloudflare versi
+baru **tidak lagi** menampilkan opsi Catch-All Rule lewat UI "Add route"
+(field hostname-nya wajib diisi, tidak bisa dikosongkan/wildcard) - harus
+lewat API langsung:
+```bash
+# 1. Lihat config ingress yang sekarang ada (jangan asal timpa)
+curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/cfd_tunnel/{TUNNEL_ID}/configurations" \
+  -H "X-Auth-Email: {EMAIL_AKUN}" \
+  -H "X-Auth-Key: {GLOBAL_API_KEY_ATAU_TOKEN}" \
+  -H "Content-Type: application/json"
+
+# 2. PUT ulang array 'ingress' yang sama persis, TAPI baris terakhir
+#    (yang tanpa field "hostname" - itu Catch-All-nya) diganti service-nya
+#    ke http://127.0.0.1:80. Contoh (sesuaikan rule lain dengan hasil GET
+#    di atas, jangan dihapus):
+curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/cfd_tunnel/{TUNNEL_ID}/configurations" \
+  -H "X-Auth-Email: {EMAIL_AKUN}" \
+  -H "X-Auth-Key: {GLOBAL_API_KEY_ATAU_TOKEN}" \
+  -H "Content-Type: application/json" \
+  --data '{"config":{"ingress":[{"service":"http://127.0.0.1:80","hostname":"panel-atau-app-kamu.domain.com"},{"service":"http://127.0.0.1:80"}],"warp-routing":{"enabled":false}}}'
+```
+Respons yang berhasil menaikkan angka `version` di `result` - kalau
+`version`-nya sama dengan sebelum PUT, berarti belum benar-benar
+ke-apply, GET ulang untuk pastikan.
+
+**Peringatan keamanan**: pakai **API Token** yang di-scope ke permission
+`Account > Cloudflare Tunnel > Edit` saja untuk ini, bukan Global API Key
+(akses penuh ke seluruh akun Cloudflare) - kalau terpaksa pakai Global Key
+buat testing cepat, **langsung di-roll/regenerate** setelah selesai, dan
+jangan pernah tempel isi token/key-nya ke tempat yang tercatat/ter-log
+(termasuk chat AI apa pun) - anggap bocor begitu sudah pernah diketik di
+luar terminal sendiri.
+
 ---
 
 Menemukan bug atau kejanggalan lain yang belum ada di sini? Lihat
