@@ -446,7 +446,19 @@ op_pm2_deploy() {
             || fail "Build command gagal: ${build_command}"
     fi
 
-    as_nodeapps "${nvm_use}pm2 start '${app_dir}/ecosystem.config.js' --update-env"
+    # 'pm2' itself is only installed as a global npm package under whichever
+    # Node version was active at setup time (modules/nodejs.sh's `npm
+    # install -g pm2`) - nvm scopes global installs PER version, so once
+    # 'nvm use <version>' above swaps PATH to the app's own chosen version,
+    # 'pm2' silently disappears from PATH for any app pinned to a version
+    # other than the one it was installed under ("pm2: command not found",
+    # only ever hit on deploy since this is the only op that calls nvm use
+    # at all). Resolve pm2's absolute path FIRST, while the default nvm
+    # version (where it actually lives) is still active, then invoke that
+    # absolute path AFTER switching - 'env node' inside pm2's own shebang
+    # still resolves to the just-switched target version, which is what
+    # actually determines the app's runtime interpreter.
+    as_nodeapps "PM2_BIN=\$(command -v pm2); ${nvm_use}\"\${PM2_BIN:?pm2 tidak ditemukan di PATH}\" start '${app_dir}/ecosystem.config.js' --update-env"
     as_nodeapps "pm2 save"
     echo "OK: ${app} deployed via PM2"
 }

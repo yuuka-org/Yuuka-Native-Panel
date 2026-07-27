@@ -289,6 +289,37 @@ jangan pernah tempel isi token/key-nya ke tempat yang tercatat/ter-log
 (termasuk chat AI apa pun) - anggap bocor begitu sudah pernah diketik di
 luar terminal sendiri.
 
+## Deploy Node.js App: `bash: line 1: pm2: command not found`
+
+**Gejala**: menambahkan app Node.js baru lewat panel gagal dengan pesan
+"Gagal menjalankan aplikasi via PM2: bash: line 1: pm2: command not
+found" — padahal PM2 sudah terinstall dan app Node.js lain yang sudah
+ada tetap bisa di-start/restart/stop normal tanpa masalah.
+
+**Akar masalah**: `pm2` di-install sebagai paket npm global
+(`npm install -g pm2`) di bawah **satu** versi Node.js tertentu yang
+dikelola nvm (versi default nodeapps saat instalasi) — nvm menyimpan
+package global terpisah per-versi, tidak dibagi lintas versi. Deploy
+app baru yang memilih **versi Node.js berbeda** dari versi itu
+menjalankan `nvm use <versi-app>` dulu sebelum `pm2 start` (supaya
+proses app-nya benar-benar jalan di versi yang dipilih) — tapi ini juga
+otomatis mengganti `PATH`, sehingga binary `pm2` dari versi default
+ikut hilang dari `PATH` di saat yang sama, tepat sebelum `pm2 start`
+dipanggil. Operasi lain (start/restart/reload/stop app yang **sudah**
+berjalan) tidak kena karena PM2 daemon menyimpan sendiri interpreter
+Node yang dipakai per-app dari saat pertama `pm2 start` — tidak perlu
+`nvm use` lagi setelahnya, jadi cuma proses **deploy app baru** (atau
+redeploy) yang kena.
+
+**Fix**: `op_pm2_deploy()` di `panel-exec.sh` sekarang meresolusi path
+absolut `pm2` (`command -v pm2`) **sebelum** `nvm use` mengganti `PATH`,
+lalu memanggil `pm2` lewat path absolut itu setelah versi Node
+di-switch — jadi `pm2` selalu ketemu terlepas dari versi Node yang
+dipilih untuk app-nya. Update ke commit terbaru (`sudo bash update.sh`)
+untuk dapat fix ini; server yang masih pakai kode lama akan terus kena
+error ini setiap kali deploy app dengan versi Node selain versi
+default.
+
 ---
 
 Menemukan bug atau kejanggalan lain yang belum ada di sini? Lihat
