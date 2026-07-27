@@ -21,8 +21,9 @@ Setiap pemanggilan (sukses maupun ditolak) dicatat ke
 | `nginx-enable` | `<site>` | – | Symlink ke `sites-enabled`, validasi, reload |
 | `nginx-disable` | `<site>` | – | Hapus symlink `sites-enabled`, reload |
 | `nginx-delete` | `<site>` | – | Hapus config available+enabled, reload |
-| `pm2-deploy` | `<app>` | isi `ecosystem.config.js` | Tulis ecosystem file di bawah `nodeapps`, `pm2 start --update-env`, `pm2 save` |
+| `pm2-deploy` | `<app>` `[node_version]` `[build_command]` | isi `ecosystem.config.js` | Tulis ecosystem file di bawah `nodeapps`, `nvm use <node_version>` (kalau diisi) sebelum start supaya versi Node per-app benar-benar dipakai (bukan cuma metadata), jalankan `build_command` (kalau diisi, TIDAK dijalankan saat create pertama kali karena folder masih kosong) di folder app, `pm2 start --update-env`, `pm2 save` |
 | `pm2-start` / `pm2-stop` / `pm2-restart` / `pm2-reload` | `<app>` | – | Kontrol proses PM2 (sebagai user `nodeapps`) |
+| `pm2-reset` | `<app>` | – | `pm2 reset` — reset counter Restarts ke 0 |
 | `pm2-delete` | `<app>` | – | `pm2 delete` + `pm2 save` |
 | `pm2-jlist` | – | – | `pm2 jlist` — sumber kebenaran status runtime Node.js |
 | `pm2-describe` | `<app>` | – | `pm2 describe` |
@@ -32,6 +33,8 @@ Setiap pemanggilan (sukses maupun ditolak) dicatat ke
 | `certbot-issue` | `<domain>` `<email>` | – | `certbot certonly --webroot` |
 | `certbot-remove` | `<domain>` | – | `certbot delete --cert-name` |
 | `service-status` | `<svc>` | – | `systemctl is-active` — whitelist: `nginx`, `mariadb`, `cloudflared`, `php{7.4-8.4}-fpm` |
+| `service-restart` | `<svc>` | – | `systemctl restart` — whitelist sama dengan `service-status` |
+| `installer-version-info` / `installer-check-update` / `installer-self-update` / `installer-self-update-status` | – | – | Info versi & update mandiri installer/CLI `yp` |
 | `mysqldump-db` | `<db>` `<outfile>` | – | `mysqldump --single-transaction --routines --triggers -u root`, output dikunci di `storage/backups` |
 | `mysql-restore-db` | `<db>` `<infile>` | – | `mysql -u root <db> < infile` |
 | `cloudflared-status` | – | – | `systemctl is-active cloudflared` |
@@ -41,7 +44,26 @@ Setiap pemanggilan (sukses maupun ditolak) dicatat ke
 | `fs-mkdir-website` | `<domain>` | – | Buat `/var/www/<domain>/public`, chown `www-data` |
 | `fs-remove-website` | `<domain>` | – | Hapus `/var/www/<domain>` (menolak menghapus base dir itu sendiri) |
 | `fs-remove-nodeapp` | `<app>` | – | Hapus `/home/nodeapps/apps/<app>` |
+| `git-clone-website` | `<domain>` `<repo_url>` `[branch]` | – | `git clone --depth 1` langsung ke `/var/www/<domain>` (bukan sub-folder) — repo harus punya folder `public/` sendiri di root-nya (konvensi Laravel/Symfony/dst), itu yang jadi document root. HTTPS saja, token repo privat disisipkan di URL |
+| `git-pull-website` | `<domain>` | – | `git pull --ff-only` di folder website — gagal bersih (tidak pernah merge/rebase) kalau ada perubahan lokal yang konflik atau branch divergen |
+| `git-status-website` | `<domain>` | – | Branch + commit hash + pesan commit + tanggal terakhir, record NUL-delimited (`is_git`, `branch`, `commit`, `message`, `date`) |
 | `port-check` | `<port>` | – | Cek port sedang listening atau bebas (`ss -ltn`) |
+| `files-list` | `<scope>` `<name>` `[relpath]` | – | List isi direktori (NUL-delimited: `type`, `size`, `mtime`, `mode`, `name`) |
+| `files-read` | `<scope>` `<name>` `<relpath>` | – | Baca isi file mentah (raw output, tidak di-`trim()`) |
+| `files-write` | `<scope>` `<name>` `<relpath>` | isi file | Tulis file, chown ke pemilik scope |
+| `files-mkdir` | `<scope>` `<name>` `<relpath>` | – | `mkdir -p`, chown |
+| `files-delete` | `<scope>` `<name>` `<relpath>` `[orphan-confirmed]` | – | Soft-delete — dipindah ke `.trash/` di dalam scope, bukan `rm -rf` langsung |
+| `files-rename` | `<scope>` `<name>` `<relpath>` `<newbasename>` `[orphan-confirmed]` | – | Rename dalam direktori yang sama saja |
+| `files-extract-zip` | `<scope>` `<name>` `[relpath]` | isi ZIP | Ekstrak ZIP yang baru di-upload (belum pernah jadi file fisik) ke folder tujuan, dengan pengecekan zip-slip |
+| `files-extract` | `<scope>` `<name>` `<relpath-zip>` | – | Ekstrak file `.zip` yang **sudah ada di disk** ke folder baru di sebelahnya (nama = nama ZIP tanpa ekstensi) |
+| `files-compress` | `<scope>` `<name>` `<relpath-dir>` `<dest_name.zip>` `<item1>` `[item2...]` | – | Bikin ZIP baru dari beberapa file/folder terpilih (maks 100 item) di direktori yang sama |
+| `files-copy` / `files-move` | `<src_scope>` `<src_name>` `<src_relpath>` `<dest_scope>` `<dest_name>` `<dest_relpath>` `[orphan-confirmed]` | – | Salin/pindah, termasuk lintas website↔website atau nodeapp↔nodeapp (tidak lintas Website↔Node.js) |
+| `files-chmod` | `<scope>` `<name>` `<relpath>` `<mode>` `[orphan-confirmed]` | – | `chmod`, 3 digit oktal, digit terakhir (other) tidak boleh punya bit tulis |
+| `files-search` | `<scope>` `<name>` `<query>` | – | `find -iname` dalam scope, maks 500 hasil, timeout 20 detik |
+| `files-trash-list` | `<scope>` `<name>` | – | Isi Recycle Bin scope tsb |
+| `files-trash-restore` | `<scope>` `<name>` `<trash_entry>` | – | Kembalikan ke lokasi asal (dicatat di file `.origpath` sidecar) |
+| `files-trash-delete` | `<scope>` `<name>` `<trash_entry>` | – | Hapus permanen satu entri trash |
+| `files-trash-empty` | `<scope>` `<name>` | – | Kosongkan seluruh Recycle Bin scope tsb |
 | `backup-tar-website` | `<domain>` `<outfile>` | – | `tar czf` folder website ke `storage/backups` |
 | `backup-tar-nodeapp` | `<app>` `<outfile>` | – | `tar czf` folder aplikasi Node.js |
 | `restore-tar-website` | `<infile>` `<domain>` | – | Extract tar ke `/var/www`, chown `www-data` |
@@ -50,9 +72,15 @@ Setiap pemanggilan (sukses maupun ditolak) dicatat ke
 | `cron-delete` | `<jobid>` | – | Hapus file cron |
 | `log-tail` | `<logkey>` `[lines]` | – | Tail log, whitelist logkey, maks 2000 baris |
 | `log-clear` | `<logkey>` | – | Kosongkan log (hanya `nginx-access:*` / `nginx-error:*`) |
+| `panel-basicauth-set` | `enable <user> <bcrypt_hash>` atau `disable` | – | Tulis/hapus snippet `auth_basic` di vhost panel |
+| `panel-security-entrance-set` | `enable <path>` atau `disable` | – | Pindahkan form login panel ke path rahasia — lihat [Model Keamanan](Keamanan.md) |
 
 Subcommand di luar daftar ini **selalu** ditolak (`exit 2`), tidak peduli
-argumen apa pun yang diberikan.
+argumen apa pun yang diberikan. Daftar putih ini ada **dua lapis** — sekali
+di `panel-exec.sh` sendiri (blok `case` dispatch) dan sekali lagi di sisi
+PHP (`Executor::WHITELIST`); keduanya harus sinkron atau subcommand yang
+baru ditambahkan akan ditolak PHP sebelum sempat menyentuh
+`panel-exec.sh` sama sekali.
 
 ## Pola Validasi Argumen
 
@@ -69,6 +97,25 @@ Semua argumen dicocokkan ke salah satu regex tetap sebelum dipakai
 | `RE_LINES` | `^[0-9]{1,4}$` | Jumlah baris log |
 | `RE_PORT` | `^[0-9]{1,5}$` | Nomor port |
 | `RE_CRONID` | `^panel-[0-9]+$` | ID file cron |
+| `RE_CHMOD_MODE` | `^[0-7][0-7][0-7]$` | Mode chmod File Manager — digit terakhir (other) tidak boleh 2/3/6/7 (bit tulis) |
+| `RE_FM_SCOPE` | `^(website\|nodeapp\|www\|nodeapps)$` | Scope File Manager |
+| `RE_NODE_VERSION` | `^[0-9]{1,3}$` | Versi Node.js untuk `nvm use` di `pm2-deploy` |
+| `RE_BUILD_COMMAND` | `^[a-zA-Z0-9_./ -]{1,255}$` | Build command Node.js app — charset sengaja tidak mengizinkan karakter shell sama sekali (titik koma, pipe, ampersand, backtick, `$()`, kurung kurawal, `<>`), walau tetap diinterpolasi ke dalam string `bash -lc "..."` di `as_nodeapps()` |
+| `RE_GIT_URL` | `^https://[a-zA-Z0-9._~:/?#@!$&*+,;=%-]{1,200}$` | URL repo Git (HTTPS saja — tidak ada dukungan `git@host:path` SSH) |
+| `RE_GIT_BRANCH` | `^[a-zA-Z0-9._/-]{1,200}$` | Nama branch Git |
+| `RE_SECURITY_ENTRANCE_PATH` | `^[a-zA-Z0-9_-]{3,64}$` | Path rahasia Security Entrance |
+| `RE_BASICAUTH_USERNAME` | `^[a-zA-Z0-9_.-]{3,64}$` | Username BasicAuth |
+| `RE_BCRYPT_HASH` | `^\$2[abxy]\$[0-9]{2}\$[A-Za-z0-9./]{53}$` | Hash bcrypt password BasicAuth |
+| `RE_RESTARTABLE_SERVICE` | `^(nginx\|mariadb\|cloudflared\|php{7.4-8.4}-fpm)$` | Whitelist `service-restart` |
+| `RE_ENABLE_DISABLE` | `^(enable\|disable)$` | Mode `enable`/`disable` untuk BasicAuth & Security Entrance |
+
+> **Catatan bounded repetition (`{n,m}`):** hindari batas atas yang terlalu
+> besar tanpa alasan (misal `{1,500}`) — beberapa implementasi regex
+> (`RE_DUP_MAX`) diam-diam gagal mencocokkan APAPUN begitu batas atasnya
+> melewati ambang tertentu (dikonfirmasi langsung: `{1,256}` sudah gagal,
+> `{1,200}` masih aman, di lingkungan yang dipakai untuk kerja pada
+> codebase ini). Kalau menambah regex baru dengan batas besar, uji dulu
+> `[[ "test" =~ $RE_VAR ]]` manual sebelum deploy.
 
 Path file/direktori selalu ditambah pengecekan `require_path_within()`:
 `realpath -m` hasilnya harus berada tepat di bawah base directory tetap

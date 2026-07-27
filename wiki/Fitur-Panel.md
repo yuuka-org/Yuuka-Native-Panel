@@ -21,6 +21,17 @@ akses):
 | Manajemen User | `users.php` | `users.manage` | `UserService` |
 | Pengaturan | `settings.php` | `settings.manage` | — (tabel `settings`) |
 
+> Kolom "File halaman" di atas adalah nama file `.php` sesungguhnya di
+> `panel-src/public/`, tapi URL yang dipakai admin **tidak** pakai
+> ekstensi (`/dashboard`, bukan `/dashboard.php`) — Nginx men-`rewrite`
+> URL tanpa ekstensi ke file `.php`-nya secara internal, dan me-301-kan
+> link `.php` lama ke bentuk bersihnya (lihat `module_panel_nginx_vhost`
+> di `modules/panel.sh`). Sesi yang habis (idle timeout atau belum login
+> sama sekali) sekarang juga mengingat halaman yang sedang dibuka —
+> setelah login ulang, otomatis kembali ke situ, bukan selalu ke
+> Dashboard (`Auth::requireLogin()`/`enforceSessionPolicy()` di
+> `auth.php`, param `?redirect=`).
+
 ## Dashboard
 
 Ringkasan sistem real-time: status service inti (`SystemService::
@@ -34,15 +45,34 @@ dan statistik umum (`summary()`). Data live disegarkan lewat polling AJAX
 
 CRUD website statis/PHP native, ditangani `NginxService`:
 
-- `createWebsite($domain, $phpVersion, $userId)` — membuat direktori
-  document root (lewat `fs-mkdir-website`), menulis vhost Nginx (lewat
+- `createWebsite($domain, $phpVersion, $userId, $gitRepoUrl, $gitBranch)` —
+  membuat direktori document root (lewat `fs-mkdir-website`) **atau**,
+  kalau URL Git diisi, `git clone --depth 1` langsung ke situ (lewat
+  `git-clone-website` — repo harus punya folder `public/` sendiri di
+  root-nya, konvensi Laravel/Symfony/dst, karena document root vhost
+  selalu `<domain>/public`), menulis vhost Nginx (lewat
   `nginx-write-config` — divalidasi `nginx -t` sebelum diaktifkan, otomatis
   rollback ke config lama kalau invalid), lalu `nginx-enable`.
+- `gitPull($id, $userId)` / `gitStatus($id)` — tombol Pull/Update di tabel
+  Website (cuma muncul untuk situs hasil deploy Git): `git pull --ff-only`
+  di tempat (gagal bersih, tidak pernah merge/rebase otomatis kalau ada
+  konflik/divergen), dan info branch + commit hash + pesan commit terakhir
+  yang ditampilkan di tabel.
 - `toggleWebsite($id, $enable, $userId)` — enable/disable vhost tanpa
   menghapus file (`nginx-enable`/`nginx-disable`).
 - `deleteWebsite($id, $deleteFiles, $userId)` — hapus vhost
   (`nginx-delete`), opsional sekalian hapus folder document root
   (`fs-remove-website`).
+- `enableWildcard($id, $userId)` / `disableWildcard($id, $userId)` —
+  Cloudflare for SaaS "Custom Hostname": website ini jadi `default_server`
+  Nginx, menerima domain apa pun yang diarahkan ke server (bukan cuma
+  domain terdaftarnya). **Hanya satu situs (website atau aplikasi Node.js)
+  yang boleh mengaktifkan ini** di seluruh server sekaligus — Nginx cuma
+  bisa punya satu `default_server` per `listen`, dicegah lewat
+  `NginxService::wildcardHolder()` yang mengecek tabel `websites` maupun
+  `nodejs_apps`. Aplikasi/website customer sendiri yang harus baca header
+  `Host` untuk tahu ini request tenant mana — panel tidak ikut campur di
+  situ.
 
 Setiap website terikat ke satu versi PHP-FPM tertentu (`php_version`,
 kolom di tabel `websites`) — pool PHP-FPM per versi sudah disiapkan saat
@@ -58,19 +88,55 @@ metadata (lihat [Arsitektur](Arsitektur.md) pilar #2).
   `findFreePort`, range default 3000-3999, dicek juga lewat `port-check`
   di server), menulis `ecosystem.config.js` PM2 (lewat `pm2-deploy`,
   dijalankan sebagai user `nodeapps`), lalu `pm2 save` supaya bertahan
-  setelah reboot.
-- `controlApp($id, $action, $userId)` — start/stop/restart/reload lewat
-  subcommand `pm2-start`/`pm2-stop`/`pm2-restart`/`pm2-reload`.
+  setelah reboot. `build_command` **tidak** dijalankan saat create (folder
+  proyek masih kosong, baru diisi lewat File Manager/git setelahnya) —
+  baru benar-benar jalan di redeploy berikutnya.
+- `updateApp(...)` — edit konfigurasi (Start/Build Command, NODE_ENV,
+  Instances, Exec Mode, Autorestart, Watch, Max Memory Restart, versi
+  Node.js) lewat tab **Settings > Umum**, langsung redeploy PM2 dengan
+  config baru. Versi Node.js dan Build Command sekarang **benar-benar
+  dipakai saat deploy** (`nvm use <versi>` sebelum `pm2 start`; Build
+  Command dijalankan di folder app sebagai user `nodeapps`) — sebelumnya
+  cuma metadata tampilan.
+- `controlApp($id, $action, $userId)` — start/stop/restart/reload/**reset
+  restart counter** lewat subcommand `pm2-start`/`pm2-stop`/`pm2-restart`/
+  `pm2-reload`/`pm2-reset`. Di UI, kelima aksi ini muncul lewat klik pada
+  kolom Status (bukan tombol terpisah) — popup kecil berisi ikon, posisinya
+  dihitung manual dari tombol yang diklik (bukan Bootstrap Dropdown, yang
+  ternyata tidak reliable diposisikan di dalam tabel yang bisa di-scroll).
+- `addDomain($id, $domain, $userId)` / `removeDomain(...)` /
+  `listDomains($id)` — satu app boleh punya lebih dari satu domain, masing-
+  masing situs Nginx sendiri (`node-<domain>.conf`) tapi proxy ke port yang
+  sama. Domain pertama yang ditambahkan jadi "primary" (kolom `domain` di
+  `nodejs_apps`, ditampilkan di tabel utama).
+- `enableWildcard($id, $userId)` / `disableWildcard(...)` — sama seperti
+  Website PHP di atas: Cloudflare for SaaS Custom Hostname, satu slot
+  untuk seluruh server (lintas tabel `websites`+`nodejs_apps`).
 - `combinedStatus()` — gabungan data `pm2 jlist` (runtime) + tabel
   `nodejs_apps` (metadata) untuk ditampilkan di UI.
 - `importUnmanaged($pm2Name, $userId)` — mengambil alih proses PM2 yang
   sudah berjalan tapi belum terdaftar di panel (misalnya dideploy manual
   sebelumnya) ke dalam pencatatan panel.
-- `deleteApp($id, $deleteFiles, $userId)` — `pm2-delete` + opsional hapus
-  folder aplikasi (`fs-remove-nodeapp`).
+- `deleteApp($id, $deleteFiles, $userId)` — `pm2-delete` + hapus semua
+  domain (bukan cuma primary) + opsional hapus folder aplikasi
+  (`fs-remove-nodeapp`).
 - `getLogs($id, $lines)` / `clearLogs($id)` — `pm2-logs` (`--nostream`,
-  maksimum 1000 baris dipaksa server-side) / `pm2-flush`. Halaman:
-  `nodejs_logs.php`.
+  maksimum 1000 baris dipaksa server-side) / `pm2-flush`. Ecosystem config
+  selalu set `merge_logs: true` supaya log cluster mode (>1 instances)
+  tidak tercecer ke file terpisah per-worker.
+
+### Settings (popup, bukan halaman terpisah)
+
+Klik ikon gear di baris aplikasi membuka **modal berisi iframe**, bukan
+navigasi ke halaman baru — pola yang sama dengan "Open in Terminal" di
+File Manager. Halaman aslinya (`nodejs_settings.php`, `nodejs_domains.php`,
+`nodejs_env.php`, `nodejs_logs.php`, `nodejs_health.php`,
+`nodejs_backup.php`) tetap ada sebagai file terpisah dan tetap bisa diakses
+langsung (mode non-popup, misal lewat bookmark) — saat dibuka dengan
+`?embed=1` (dari dalam iframe), halaman merender versi ringkas: tanpa
+sidebar/topbar panel (`partials/embed_header.php`/`embed_footer.php`), dan
+navigasi antar-tab (`partials/nodejs_settings_nav.php`) jadi sidebar
+vertikal di kiri, bukan baris tombol horizontal di atas.
 
 ### Environment Variables (`nodejs_env.php`)
 
@@ -95,12 +161,25 @@ apakah proses benar-benar hidup.
 
 ## File Manager
 
-`FileManagerService`, akses via sidebar (`/file_manager.php`) atau tombol
+`FileManagerService`, akses via sidebar (`/file_manager`) atau tombol
 di baris Website PHP/Node.js Apps. Browse/upload/download/edit/rename/
-hapus/upload-ZIP-extract, semua lewat `panel-exec.sh` (`files-*`
+copy/move/hapus/chmod/search, semua lewat `panel-exec.sh` (`files-*`
 subcommand) karena `panel` tidak bisa baca file milik `www-data`/
 `nodeapps` langsung. Editor teks inline pakai CodeMirror (vendor lokal,
 bukan CDN), auto-pilih mode syntax dari ekstensi file.
+
+**Extract & Compress** — klik-kanan file `.zip` yang sudah ada di disk
+untuk **Ekstrak** (ke folder baru di sebelahnya, nama = nama ZIP tanpa
+ekstensi, ada pengecekan zip-slip) — beda dari "Upload & Extract ZIP" yang
+mengekstrak ZIP yang baru di-upload (`files-extract-zip`), ini
+(`files-extract`) untuk ZIP yang **sudah ada di server**. Pilih beberapa
+file/folder (maks 100 item) lalu **Kompres** di toolbar bulk-action untuk
+bikin ZIP baru (`files-compress`) dari item-item tersebut.
+
+**Recycle Bin (soft-delete)** — hapus file/folder tidak langsung `rm -rf`,
+tapi dipindah ke `.trash/` tersembunyi di dalam scope
+(`files-trash-list`/`-restore`/`-delete`/`-empty`), bisa dipulihkan ke
+lokasi asalnya.
 
 Dua mode scope:
 
@@ -221,8 +300,15 @@ database, bukan lewat UI ini).
 
 ## Pengaturan
 
-Key/value sederhana di tabel `settings` (lihat
-[Skema Database](Skema-Database.md#settings)):
-`deployment_mode`, `cpu_alert_threshold`, `mem_alert_threshold`,
-`restart_alert_threshold` — dipakai Dashboard untuk menentukan ambang
-warna/alert monitoring.
+Key/value sederhana di tabel `settings` — daftar lengkap kunci di
+[Skema Database § settings](Skema-Database.md#settings). Beberapa yang
+sebelumnya cuma bisa diubah lewat `.env`/SSH sekarang bisa lewat
+Pengaturan > Umum, jadi admin tidak wajib turun ke terminal untuk hal
+non-krusial: `session_idle_timeout`/`session_lifetime` (override
+`SESSION_IDLE_TIMEOUT`/`SESSION_LIFETIME` di `.env`) dan
+`filemanager_max_upload_mb` (override `FILEMANAGER_MAX_UPLOAD_MB`, maks
+512 MB mengikuti `client_max_body_size` vhost panel) — pola yang sama
+dipakai kalau mau menambah setting lain yang boleh diubah dari UI:
+tambahkan kuncinya ke `SettingsService::KNOWN_KEYS`, baca dengan
+`SettingsService::get($key) ?: Config::getInt(...)` (DB override
+`.env` default).

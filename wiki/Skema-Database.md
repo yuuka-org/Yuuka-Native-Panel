@@ -52,6 +52,8 @@ Website PHP native/multi-versi.
 | `domain` | UNIQUE |
 | `php_version` | Versi PHP-FPM yang dipakai vhost ini |
 | `document_root`, `nginx_conf_name` | |
+| `git_repo_url`, `git_branch` | NULL kalau bukan deployment Git — diisi kalau website dibuat dari `git clone` (lihat `NginxService::createWebsite()`/`gitPull()`/`gitStatus()`) |
+| `wildcard_enabled` | Cloudflare for SaaS Custom Hostname — situs ini jadi `default_server` Nginx, menerima domain apa pun. Cuma satu situs (website ATAU aplikasi Node.js) yang boleh bernilai 1 di seluruh server (`NginxService::wildcardHolder()`) |
 | `is_enabled`, `ssl_enabled` | |
 | `created_by` | FK `panel_users`, `ON DELETE SET NULL` |
 
@@ -64,12 +66,18 @@ dibaca live dari `pm2 jlist`, bukan dari tabel ini (lihat
 | Kolom | Keterangan |
 |---|---|
 | `pm2_name` | UNIQUE, nama proses di PM2 |
-| `domain`, `project_path`, `node_version`, `port` (UNIQUE) | |
-| `start_command`, `build_command` | |
-| `instances`, `exec_mode` (fork/cluster), `autorestart`, `watch`, `max_memory_restart` | Parameter `ecosystem.config.js` |
+| `domain`, `project_path`, `node_version`, `port` (UNIQUE) | `domain` = domain "primary" (ditampilkan di tabel utama) — app bisa punya domain tambahan lewat tabel `domains`, lihat `NodeService::addDomain()`/`listDomains()` |
+| `start_command`, `build_command` | `build_command` dijalankan (sebagai user `nodeapps`, di folder app) setiap redeploy lewat tab Settings > Umum — **kecuali** saat create pertama kali (folder masih kosong) |
+| `instances`, `exec_mode` (fork/cluster), `autorestart`, `watch`, `max_memory_restart` | Parameter `ecosystem.config.js`. Ecosystem juga selalu set `merge_logs: true` supaya log multi-instance (cluster mode) tidak tercecer ke file terpisah per-worker |
 | `node_env` | default `production` |
+| `wildcard_enabled` | Cloudflare for SaaS Custom Hostname — sama seperti `websites.wildcard_enabled`, satu slot untuk seluruh server (lintas tabel `websites`+`nodejs_apps`) |
 | `is_managed` | Membedakan app yang dikelola penuh vs. hasil `importUnmanaged()` |
 | `last_known_status` | **Historis/audit only** — komentar di skema eksplisit menyebut ini bukan sumber kebenaran runtime |
+
+Versi Node.js per-app **benar-benar dipakai saat deploy** (`nvm use
+<node_version>` sebelum `pm2 start`/`pm2 restart` di `op_pm2_deploy`,
+lihat [Referensi panel-exec.sh](Panel-Exec-Reference.md)) — bukan cuma
+metadata tampilan.
 
 ## `app_env_variables`
 
@@ -143,14 +151,23 @@ murni informasional — lihat
 
 ## `settings`
 
-Key/value sederhana.
+Key/value sederhana (`SettingsService`) — kunci yang boleh ditulis dibatasi
+whitelist `SettingsService::KNOWN_KEYS` (dipakai juga oleh Settings >
+Migrate saat impor, menolak kunci di luar daftar ini).
 
-| `setting_key` | Nilai default | Kegunaan |
-|---|---|---|
-| `deployment_mode` | `direct` | Mode deployment aktif (direct/tunnel/hybrid) |
-| `cpu_alert_threshold` | `85` | Ambang alert CPU (%) di Dashboard |
-| `mem_alert_threshold` | `85` | Ambang alert RAM (%) di Dashboard |
-| `restart_alert_threshold` | `10` | Ambang jumlah restart PM2 sebelum dianggap bermasalah |
+| `setting_key` | Kegunaan |
+|---|---|
+| `deployment_mode` | Mode deployment aktif (direct/tunnel/hybrid) |
+| `cpu_alert_threshold`, `mem_alert_threshold`, `restart_alert_threshold` | Ambang alert Dashboard (CPU %, RAM %, jumlah restart PM2) |
+| `phpmyadmin_url` | URL phpMyAdmin (diisi otomatis saat instalasi modul phpMyAdmin, bisa diedit manual di Pengaturan) |
+| `php_installed_versions`, `php_default_version` | Ditulis oleh installer/`update.sh`, bukan lewat UI |
+| `panel_login_title`, `panel_login_logo` | Kustomisasi halaman login (Pengaturan > Page) |
+| `session_idle_timeout`, `session_lifetime` | Override `.env` (`SESSION_IDLE_TIMEOUT`/`SESSION_LIFETIME`) lewat Pengaturan > Umum — kalau kosong/0, fallback ke nilai `.env` |
+| `alarm_webhook_url`, `alarm_last_notified_at` | Notifikasi webhook Dashboard |
+| `dashboard_widget_config` | Widget mana yang tampil di Dashboard |
+| `security_entrance_path` | Path rahasia login — lihat [Model Keamanan](Keamanan.md) |
+| `basicauth_enabled`, `basicauth_username` | Status BasicAuth di depan seluruh panel |
+| `filemanager_max_upload_mb` | Override `.env` (`FILEMANAGER_MAX_UPLOAD_MB`) lewat Pengaturan > Umum, maks 512 (batas `client_max_body_size` vhost panel) |
 
 ## Diagram Relasi (ringkas)
 

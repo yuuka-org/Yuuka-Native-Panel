@@ -19,6 +19,7 @@
 | Secret at rest | Environment variable aplikasi Node.js dienkripsi AES-256-GCM (`EnvService`, kunci dari `APP_KEY` di `.env`, permission 600). Cloudflare Tunnel token tidak pernah masuk database, tidak pernah dicatat ke log, tidak pernah ditampilkan di UI (lihat [Cloudflare Tunnel](Cloudflare-Tunnel.md)). |
 | RBAC | 4 role (`admin`, `operator`, `developer`, `viewer`), matriks permission di `Rbac` class, diperiksa di setiap action state-changing. Detail: [RBAC & Role](RBAC.md). |
 | Audit trail | Setiap aksi penting (login, create/delete website/app/db, restart PM2, dst) dicatat ke tabel `activity_log`. `panel-exec.sh` sendiri juga punya audit log terpisah di `/opt/server-panel/storage/logs/panel-exec-audit.log` (timestamp, uid pemanggil, subcommand, status — **tanpa** payload rahasia). |
+| Wildcard hostname | Cloudflare for SaaS Custom Hostname (`NginxService::enableWildcard()`/`NodeService::enableWildcard()`) sengaja membuat satu situs menjadi `default_server` Nginx yang menerima domain APA PUN, termasuk akses langsung ke IP server — kebalikan dari model "satu vhost = satu domain terdaftar" yang berlaku di semua situs lain. Dibatasi ke **satu situs saja di seluruh server** (`NginxService::wildcardHolder()` mengecek tabel `websites` dan `nodejs_apps` sekaligus) supaya tidak ada dua situs berebut slot `default_server` yang sama. |
 
 ## Prinsip Desain `panel-exec.sh`
 
