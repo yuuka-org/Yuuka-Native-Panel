@@ -125,19 +125,9 @@ include __DIR__ . '/partials/header.php';
             </td>
             <td>
               <?php if (Rbac::can($user['role'], 'nodejs.control')): ?>
-              <div class="dropdown">
-                <button type="button" class="btn btn-sm btn-link p-0 text-decoration-none text-body status-dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
-                  <span class="status-dot <?= e($item['status']) ?>"></span><?= e($item['status']) ?>
-                </button>
-                <ul class="dropdown-menu">
-                  <li><button type="button" class="dropdown-item" onclick="pctl(<?= (int) $m['id'] ?>,'start')"><i class="bi bi-play-fill me-2 text-success"></i>Start</button></li>
-                  <li><button type="button" class="dropdown-item" onclick="pctl(<?= (int) $m['id'] ?>,'restart')"><i class="bi bi-arrow-clockwise me-2 text-warning"></i>Restart</button></li>
-                  <li><button type="button" class="dropdown-item" onclick="pctl(<?= (int) $m['id'] ?>,'reload')"><i class="bi bi-arrow-repeat me-2 text-info"></i>Reload</button></li>
-                  <li><button type="button" class="dropdown-item" onclick="pctl(<?= (int) $m['id'] ?>,'stop')"><i class="bi bi-stop-fill me-2 text-secondary"></i>Stop</button></li>
-                  <li><hr class="dropdown-divider"></li>
-                  <li><button type="button" class="dropdown-item" onclick="pctl(<?= (int) $m['id'] ?>,'reset')"><i class="bi bi-arrow-counterclockwise me-2"></i>Reset Restarts</button></li>
-                </ul>
-              </div>
+              <button type="button" class="btn btn-sm btn-link p-0 text-decoration-none text-body" onclick="nodeStatusToggle(event, <?= (int) $m['id'] ?>)">
+                <span class="status-dot <?= e($item['status']) ?>"></span><?= e($item['status']) ?> <i class="bi bi-caret-down-fill small text-muted"></i>
+              </button>
               <?php else: ?>
               <span class="status-dot <?= e($item['status']) ?>"></span><?= e($item['status']) ?>
               <?php endif; ?>
@@ -314,6 +304,29 @@ include __DIR__ . '/partials/header.php';
   <input type="hidden" name="control" id="ctlAction">
 </form>
 
+<?php if (Rbac::can($user['role'], 'nodejs.control')): ?>
+<!--
+  Shared icon-row popup for the Status column - ONE element, repositioned
+  per click, same pattern as File Manager's #fmContextMenu (manually
+  positioned with plain fixed CSS, no Bootstrap Dropdown/Popper). Tried
+  Bootstrap's Dropdown component here first: even with a 'fixed' Popper
+  strategy it still ended up positioned nowhere near the trigger button
+  inside this table (confirmed on a real deployment) - Popper computing
+  position for a toggle nested this deep, inside a scrolling
+  .table-responsive, apparently isn't reliable here. Manual positioning
+  sidesteps that entirely.
+-->
+<div id="nodeStatusPopup" class="bg-body border rounded shadow-sm p-1 d-none" style="position:fixed; z-index:1080;">
+  <div class="d-flex gap-1">
+    <button type="button" class="btn btn-sm btn-outline-success" title="Start" onclick="nodeStatusAction('start')"><i class="bi bi-play-fill"></i></button>
+    <button type="button" class="btn btn-sm btn-outline-warning" title="Restart" onclick="nodeStatusAction('restart')"><i class="bi bi-arrow-clockwise"></i></button>
+    <button type="button" class="btn btn-sm btn-outline-info" title="Reload" onclick="nodeStatusAction('reload')"><i class="bi bi-arrow-repeat"></i></button>
+    <button type="button" class="btn btn-sm btn-outline-secondary" title="Stop" onclick="nodeStatusAction('stop')"><i class="bi bi-stop-fill"></i></button>
+    <button type="button" class="btn btn-sm btn-outline-dark" title="Reset Restarts" onclick="nodeStatusAction('reset')"><i class="bi bi-arrow-counterclockwise"></i></button>
+  </div>
+</div>
+<?php endif; ?>
+
 <div class="modal fade" id="nodejsSettingsModal" tabindex="-1">
   <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content">
@@ -370,20 +383,50 @@ function pctl(id, action) {
   document.getElementById('ctlForm').submit();
 }
 
-// The Status dropdown lives inside .table-responsive, which sets
-// overflow-x:auto specifically so wide tables scroll horizontally on
-// small screens - but that same overflow clips anything Bootstrap
-// positions with the default `absolute` Popper strategy, including this
-// dropdown's own menu (it got visually cut off at the table's edge
-// instead of floating above it). `fixed` positions the menu relative to
-// the viewport instead of the scrolling table, escaping that clipping -
-// set here via the JS API rather than a data-bs-* attribute since
-// popperConfig isn't one of Bootstrap's simple data-attribute options.
-if (typeof bootstrap !== 'undefined') {
-  document.querySelectorAll('.status-dropdown-toggle').forEach(function (el) {
-    new bootstrap.Dropdown(el, { popperConfig: { strategy: 'fixed' } });
-  });
-}
+// Status column's icon-row popup - manually positioned (fixed, computed
+// from the trigger button's own bounding rect), same approach as File
+// Manager's right-click context menu. Deliberately NOT a Bootstrap
+// Dropdown: that was tried first, and even with popperConfig strategy
+// 'fixed' it still rendered nowhere near the trigger button inside this
+// table on a real deployment.
+var nodeStatusCurrentId = null;
+window.nodeStatusToggle = function (e, id) {
+  e.stopPropagation();
+  var popup = document.getElementById('nodeStatusPopup');
+  if (!popup) { return; }
+  if (nodeStatusCurrentId === id && !popup.classList.contains('d-none')) {
+    popup.classList.add('d-none');
+    nodeStatusCurrentId = null;
+    return;
+  }
+  nodeStatusCurrentId = id;
+  var rect = e.currentTarget.getBoundingClientRect();
+  popup.classList.remove('d-none');
+  var popupWidth = popup.offsetWidth || 260;
+  var left = Math.min(rect.left, window.innerWidth - popupWidth - 8);
+  popup.style.left = Math.max(left, 8) + 'px';
+  popup.style.top = (rect.bottom + 4) + 'px';
+};
+window.nodeStatusAction = function (action) {
+  if (nodeStatusCurrentId === null) { return; }
+  var popup = document.getElementById('nodeStatusPopup');
+  if (popup) { popup.classList.add('d-none'); }
+  pctl(nodeStatusCurrentId, action);
+  nodeStatusCurrentId = null;
+};
+document.addEventListener('click', function (e) {
+  var popup = document.getElementById('nodeStatusPopup');
+  if (popup && !popup.classList.contains('d-none') && !e.target.closest('#nodeStatusPopup')) {
+    popup.classList.add('d-none');
+    nodeStatusCurrentId = null;
+  }
+});
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Escape') { return; }
+  var popup = document.getElementById('nodeStatusPopup');
+  if (popup) { popup.classList.add('d-none'); }
+  nodeStatusCurrentId = null;
+});
 </script>
 
 <?php include __DIR__ . '/partials/footer.php'; ?>
