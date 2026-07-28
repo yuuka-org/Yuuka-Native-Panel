@@ -26,3 +26,4 @@ $pageTitle = $pageTitle ?? 'Yuuka Panel';
 <link href="<?= e(asset_url('/assets/css/app.css')) ?>" rel="stylesheet">
 </head>
 <body class="p-3">
+<div class="panel-loading-bar" id="panelLoadingBar"></div>

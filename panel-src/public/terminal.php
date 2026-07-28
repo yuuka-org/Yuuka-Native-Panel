@@ -41,11 +41,16 @@ include __DIR__ . '/partials/header.php';
   var frame = document.getElementById('terminalFrame');
   if (!frame) { return; }
   frame.addEventListener('load', function () {
-    var tries = 0;
-    var timer = setInterval(function () {
+    // No cutoff - ttyd re-attaches onbeforeunload on its own (WebSocket
+    // (re)connects, etc), and a real terminal session is routinely open
+    // far longer than a short warm-up window. A previous version stopped
+    // after 40 ticks (~10s), which "worked" only for the first few
+    // seconds of any session and then let the warning come back for the
+    // rest of it. Keep re-nulling for as long as this panel page/iframe
+    // is open - a plain property assignment every 250ms is cheap enough
+    // to just never stop.
+    setInterval(function () {
       try { frame.contentWindow.onbeforeunload = null; } catch (e) {}
-      tries++;
-      if (tries > 40) { clearInterval(timer); }
     }, 250);
   });
 })();

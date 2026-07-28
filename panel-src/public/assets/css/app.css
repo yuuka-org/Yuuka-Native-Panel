@@ -292,3 +292,54 @@ body {
     margin-left: 0;
   }
 }
+
+/* Global "something is happening" feedback (see app.js's PanelLoading) - a
+   slim top progress bar for page navigations/form submits, plus a button
+   spinner state so a clicked button visibly acknowledges the click instead
+   of looking dead until the next page finishes loading. */
+.panel-loading-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 3px;
+  width: 0%;
+  background: var(--brand);
+  z-index: 2000;
+  opacity: 0;
+  transition: width 0.25s ease, opacity 0.2s ease;
+  pointer-events: none;
+}
+.panel-loading-bar.is-active {
+  opacity: 1;
+}
+
+.btn.is-loading {
+  position: relative;
+  color: transparent !important;
+  pointer-events: none;
+}
+.btn.is-loading::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 1rem;
+  height: 1rem;
+  margin: -0.5rem 0 0 -0.5rem;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  color: var(--bs-body-color);
+  animation: panel-btn-spin 0.6s linear infinite;
+}
+.btn.is-loading.btn-primary::after,
+.btn.is-loading.btn-danger::after,
+.btn.is-loading.btn-success::after,
+.btn.is-loading.btn-warning::after,
+.btn.is-loading.btn-info::after,
+.btn.is-loading.btn-dark::after {
+  color: #fff;
+}
+@keyframes panel-btn-spin {
+  to { transform: rotate(360deg); }
+}

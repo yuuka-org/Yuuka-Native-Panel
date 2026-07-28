@@ -410,6 +410,21 @@ ${basicauth_include}
         rewrite ^ /index.php last;
     }
 
+    # Server-Sent Events endpoints (real-time Node.js logs/stats, traffic
+    # analysis - see app/helpers/sse.php) - matched BEFORE the generic PHP
+    # location below by filename convention (anything ending in
+    # _stream.php) so only these get fastcgi_buffering off. Left on
+    # (default) for every other PHP script, where buffering the full
+    # response before sending is harmless and avoids tying up a
+    # slow-client connection against Nginx's buffer instead of PHP-FPM's.
+    location ~ _stream\.php\$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:${PANEL_POOL_SOCK};
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        fastcgi_buffering off;
+        fastcgi_read_timeout 3600;
+    }
+
     location ~ \.php\$ {
         include snippets/fastcgi-php.conf;
         fastcgi_pass unix:${PANEL_POOL_SOCK};

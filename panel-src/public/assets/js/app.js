@@ -162,4 +162,105 @@ document.addEventListener('DOMContentLoaded', function () {
         .catch(function () {});
     }, intervalMs);
   });
+
+  // ---------------------------------------------------------------------
+  // Global "it's working" feedback - this panel is a classic multi-page
+  // app (real <form> POSTs and <a> navigations, not a SPA), so between a
+  // click and the next page finishing load there was previously NO visual
+  // feedback at all - a slow operation (deploy, backup, install) just left
+  // the old page looking frozen, making users click again thinking nothing
+  // registered. window.PanelLoading is also exposed for pages doing their
+  // own fetch()-based actions (File Manager, PM2 buttons, etc.) that don't
+  // cause a real navigation, so they can opt into the same bar manually.
+  // ---------------------------------------------------------------------
+  var loadingBar = document.getElementById('panelLoadingBar');
+  var loadingBarTimer = null;
+  var loadingBarWidth = 0;
+  var loadingSafetyTimer = null;
+
+  function loadingStart() {
+    if (!loadingBar) return;
+    window.clearTimeout(loadingSafetyTimer);
+    window.clearInterval(loadingBarTimer);
+    loadingBarWidth = 15;
+    loadingBar.style.width = loadingBarWidth + '%';
+    loadingBar.classList.add('is-active');
+    loadingBarTimer = window.setInterval(function () {
+      // Creep towards 90% but never reach it on its own - real completion
+      // (loadingDone) or the safety timeout snaps it the rest of the way.
+      loadingBarWidth += (90 - loadingBarWidth) * 0.1;
+      loadingBar.style.width = loadingBarWidth + '%';
+    }, 300);
+    // Escape valve: a fetch()-based caller that forgets to call done(), or
+    // a blocked navigation (validation error with no redirect), would
+    // otherwise leave the bar stuck forever.
+    loadingSafetyTimer = window.setTimeout(loadingDone, 20000);
+  }
+
+  function loadingDone() {
+    if (!loadingBar) return;
+    window.clearInterval(loadingBarTimer);
+    window.clearTimeout(loadingSafetyTimer);
+    loadingBar.style.width = '100%';
+    window.setTimeout(function () {
+      loadingBar.classList.remove('is-active');
+      window.setTimeout(function () {
+        loadingBar.style.width = '0%';
+      }, 200);
+    }, 150);
+  }
+
+  window.PanelLoading = { start: loadingStart, done: loadingDone };
+
+  function isPlainLeftClick(e) {
+    return e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+  }
+
+  // Real top-level navigations (<a> clicks) - skip anything that won't
+  // actually replace this page (external/new-tab/download/#anchor/js: link)
+  // so the bar doesn't get stuck showing for a click that never navigates.
+  document.addEventListener('click', function (e) {
+    var link = e.target.closest('a[href]');
+    if (!link || !isPlainLeftClick(e)) return;
+    if (link.target === '_blank' || link.hasAttribute('download')) return;
+    var href = link.getAttribute('href') || '';
+    if (href === '' || href.charAt(0) === '#' || href.indexOf('javascript:') === 0 || href.indexOf('mailto:') === 0) return;
+    if (link.origin && link.origin !== window.location.origin) return;
+    var btn = link.classList.contains('btn') ? link : null;
+    if (btn && !btn.classList.contains('is-loading')) btn.classList.add('is-loading');
+    loadingStart();
+  });
+
+  // Form submits - runs after the data-confirm handler above (registered
+  // earlier in this same DOMContentLoaded block, so it already had a
+  // chance to call preventDefault() on cancel) - if the event was
+  // cancelled, e.defaultPrevented is already true here and nothing shows.
+  document.addEventListener('submit', function (e) {
+    if (e.defaultPrevented) return;
+    var form = e.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    var submitter = e.submitter;
+    if (submitter && submitter.tagName === 'BUTTON') {
+      submitter.classList.add('is-loading');
+      submitter.disabled = true;
+    } else {
+      form.querySelectorAll('button[type="submit"]:not([type="button"])').forEach(function (b) {
+        b.classList.add('is-loading');
+        b.disabled = true;
+      });
+    }
+    loadingStart();
+  });
+
+  // Back/forward via bfcache restores the OLD page (with buttons still
+  // mid-loading-state from before navigation) without re-running
+  // DOMContentLoaded - reset everything visible so it doesn't look stuck.
+  window.addEventListener('pageshow', function (e) {
+    if (!e.persisted) return;
+    loadingDone();
+    document.querySelectorAll('.btn.is-loading').forEach(function (b) {
+      b.classList.remove('is-loading');
+      b.disabled = false;
+    });
+  });
 });

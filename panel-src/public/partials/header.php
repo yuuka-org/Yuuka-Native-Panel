@@ -34,6 +34,7 @@ $currentUser = Auth::user();
 <?php endif; ?>
 </head>
 <body>
+<div class="panel-loading-bar" id="panelLoadingBar"></div>
 <div class="app-shell">
   <nav class="app-sidebar" id="appSidebar">
     <div class="sidebar-brand">
