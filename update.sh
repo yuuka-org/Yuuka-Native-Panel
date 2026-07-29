@@ -37,6 +37,17 @@ export NONINTERACTIVE
 if git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     echo "==> git pull di ${SCRIPT_DIR}"
     git -C "$SCRIPT_DIR" pull || echo "  (git pull gagal/dilewati - lanjut dengan kode yang sudah ada di sini)"
+    # Always print the commit actually in play here, regardless of whether
+    # this pull itself found anything new - when update.sh runs via the
+    # panel's own "Update" button (panel-exec.sh's op_installer_self_update),
+    # THAT command already did its own git fetch + merge --ff-only on this
+    # exact directory moments before scheduling this script, so this pull
+    # is routinely a correct-but-confusing no-op ("Already up to date.")
+    # that reads like nothing happened even though the newest code is
+    # already checked out. Showing the commit hash/date removes the
+    # ambiguity either way - a manual `sudo bash update.sh` run (no prior
+    # fetch) benefits from this exact same line too.
+    echo "  commit aktif: $(git -C "$SCRIPT_DIR" log -1 --format='%h (%cd)' --date=short 2>/dev/null || echo 'tidak diketahui')"
 fi
 
 # shellcheck source=modules/lib.sh
