@@ -141,10 +141,56 @@ metadata (lihat [Arsitektur](Arsitektur.md) pilar #2).
 - `deleteApp($id, $deleteFiles, $userId)` — `pm2-delete` + hapus semua
   domain (bukan cuma primary) + opsional hapus folder aplikasi
   (`fs-remove-nodeapp`).
-- `getLogs($id, $lines)` / `clearLogs($id)` — `pm2-logs` (`--nostream`,
-  maksimum 1000 baris dipaksa server-side) / `pm2-flush`. Ecosystem config
-  selalu set `merge_logs: true` supaya log cluster mode (>1 instances)
-  tidak tercecer ke file terpisah per-worker.
+- `getLogs($id, $lines)` / `clearLogs($id)` — baca langsung dari file log
+  live (bukan `pm2 logs`, lihat subbagian **Log per-run & real-time** di
+  bawah) / `pm2-flush`. Ecosystem config selalu set `merge_logs: true`
+  supaya log cluster mode (>1 instances) tidak tercecer ke file terpisah
+  per-worker.
+
+### Log per-run & real-time (`nodejs_logs.php`)
+
+`out_file` dan `error_file` di ecosystem config **sengaja** diarahkan ke
+path yang SAMA (`/home/nodeapps/.pm2/logs/<pm2_name>.log`) — bukan default
+PM2 (`<name>-out.log`/`<name>-error.log` terpisah) — supaya stdout+stderr
+bercampur di satu file sesuai urutan waktu, dan supaya panel bisa baca
+langsung dari file itu alih-alih lewat `pm2 logs` (yang menambahkan prefix
+`<id>|<nama> |` di tiap baris, berguna kalau memantau banyak app sekaligus
+di satu terminal, cuma jadi noise di sini karena selalu cuma satu app yang
+ditampilkan).
+
+Setiap `start`/`restart`/`reload`/deploy ulang (`rotate_pm2_log()` di
+`panel-exec.sh`) memindahkan isi file live yang sedang berjalan ke arsip
+`<pm2_name><YYYYMMDDHHMMSSmmm 17-digit>.log`, lalu **mengosongkan** (bukan
+menghapus/rename) file live-nya di tempat — PM2 tetap memegang file
+descriptor yang sama sejak proses itu start, rename akan membuat PM2 terus
+menulis ke file yang sudah dipindah namanya (descriptor mengikuti inode,
+bukan path), sedangkan truncate di tempat langsung membuat tulisan
+berikutnya otomatis mulai dari offset 0 lagi tanpa perlu `pm2 reloadLogs`
+(yang efeknya ke SEMUA app di daemon PM2 yang sama, bukan cuma satu).
+Dropdown "Run sebelumnya" di halaman Logs membaca daftar arsip ini
+(`pm2-logs-list`) dan bisa membuka isinya (`pm2-logs-read-archive`) sebagai
+tampilan statis (bukan live).
+
+Log saat ini (bukan arsip) tampil **real-time** lewat Server-Sent Events
+(`nodejs_logs_stream.php`, lihat `app/helpers/sse.php`) — baris baru
+otomatis muncul tanpa refresh manual. Stream berbasis offset byte
+(`pm2-logs-tail`), jadi cuma konten BARU yang dikirim tiap tick (bukan
+tail ulang seluruh file), dan koneksi sengaja diputus paksa tiap ~55 detik
+lalu disambung ulang otomatis dari sisi klien (bukan mengandalkan
+auto-reconnect bawaan `EventSource`, yang akan meminta ulang URL awal apa
+adanya dan menyebabkan baris lama terkirim dobel) — supaya satu worker
+PHP-FPM tidak tertahan tanpa batas waktu.
+
+**App yang sudah dideploy SEBELUM update ini** masih menulis ke path log
+lama (default PM2) sampai di-redeploy ulang — buka **Settings > Umum**
+app tersebut lalu **Simpan** (tanpa perlu ubah apa pun) untuk memicu
+`pm2-deploy` ulang dan pindah ke path log baru.
+
+Statistik CPU/RAM/Uptime/Restart di tabel Node.js Apps dan widget
+Dashboard juga **real-time**, tapi lewat polling `/ajax_pm2` tiap 3 detik
+(bukan SSE — cukup untuk angka yang berubah pelan, dan memakai ulang pola
+`data-refresh-url`/`panel:refresh` yang sudah ada, lihat `app.js`'s
+`PanelNodeStats.apply()`), bukan Server-Sent Events seperti log.
 
 ### Settings (popup, bukan halaman terpisah)
 

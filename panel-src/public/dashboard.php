@@ -209,7 +209,7 @@ ob_start(); ?>
 <?php $widgetHtml['services_status'] = ob_get_clean();
 
 ob_start(); ?>
-<div class="card stat-card">
+<div class="card stat-card" id="dashNodejsTable" data-refresh-url="/ajax_pm2" data-refresh-interval="3000">
   <div class="card-header bg-white fw-semibold d-flex justify-content-between align-items-center">
     <span>Aplikasi Node.js (via PM2)</span>
     <a href="/nodejs" class="btn btn-sm btn-outline-primary">Kelola semua</a>
@@ -225,12 +225,12 @@ ob_start(); ?>
             <tr><td colspan="5" class="text-center text-muted py-4">Belum ada aplikasi Node.js terdaftar</td></tr>
           <?php endif; ?>
           <?php foreach ($nodejsStatus['managed'] as $item): $rt = $item['runtime']; ?>
-            <tr>
+            <tr data-app-row="<?= (int) $item['meta']['id'] ?>">
               <td><?= e($item['meta']['app_name']) ?></td>
-              <td><span class="status-dot <?= e($item['status']) ?>"></span><?= e($item['status']) ?></td>
-              <td><?= $rt ? e((string) $rt['cpu_percent']) . '%' : '-' ?></td>
-              <td><?= $rt ? e((string) round($rt['memory_bytes'] / 1048576, 1)) . ' MB' : '-' ?></td>
-              <td><?= $rt ? e((string) $rt['restart_count']) : '-' ?></td>
+              <td data-stat="status"><span class="status-dot <?= e($item['status']) ?>"></span><?= e($item['status']) ?></td>
+              <td data-stat="cpu"><?= $rt ? e((string) $rt['cpu_percent']) . '%' : '-' ?></td>
+              <td data-stat="ram"><?= $rt ? e((string) round($rt['memory_bytes'] / 1048576, 1)) . ' MB' : '-' ?></td>
+              <td data-stat="restarts"><?= $rt ? e((string) $rt['restart_count']) : '-' ?></td>
             </tr>
           <?php endforeach; ?>
         </tbody>
@@ -238,6 +238,15 @@ ob_start(); ?>
     </div>
   </div>
 </div>
+<script>
+(function () {
+  var block = document.getElementById('dashNodejsTable');
+  if (!block || !window.PanelNodeStats) { return; }
+  block.addEventListener('panel:refresh', function (e) {
+    window.PanelNodeStats.apply(block, (e.detail && e.detail.data && e.detail.data.managed) || []);
+  });
+})();
+</script>
 <?php $widgetHtml['nodejs_table'] = ob_get_clean();
 
 uasort($widgetConfig, static fn(array $a, array $b): int => $a['order'] <=> $b['order']);

@@ -100,7 +100,7 @@ include __DIR__ . '/partials/header.php';
   </div>
 </div>
 
-<div class="card stat-card mb-4">
+<div class="card stat-card mb-4" id="nodejsManagedTable" data-refresh-url="/ajax_pm2" data-refresh-interval="3000">
   <div class="card-header bg-white fw-semibold">Managed by Panel</div>
   <div class="card-body p-0">
     <div class="table-responsive">
@@ -113,7 +113,7 @@ include __DIR__ . '/partials/header.php';
           <tr><td colspan="9" class="text-center text-muted py-4">Belum ada aplikasi Node.js terdaftar</td></tr>
         <?php endif; ?>
         <?php foreach ($status['managed'] as $item): $m = $item['meta']; $rt = $item['runtime']; $domainCount = NodeService::countDomains((int) $m['id']); ?>
-          <tr>
+          <tr data-app-row="<?= (int) $m['id'] ?>">
             <td><?= e($m['app_name']) ?><div class="text-muted small">Node <?= e($m['node_version']) ?></div></td>
             <td>
               <?php if ($m['domain']): ?>
@@ -126,16 +126,16 @@ include __DIR__ . '/partials/header.php';
             <td>
               <?php if (Rbac::can($user['role'], 'nodejs.control')): ?>
               <button type="button" class="btn btn-sm btn-link p-0 text-decoration-none text-body" onclick="nodeStatusToggle(event, <?= (int) $m['id'] ?>)">
-                <span class="status-dot <?= e($item['status']) ?>"></span><?= e($item['status']) ?> <i class="bi bi-caret-down-fill small text-muted"></i>
+                <span data-stat="status"><span class="status-dot <?= e($item['status']) ?>"></span><?= e($item['status']) ?></span> <i class="bi bi-caret-down-fill small text-muted"></i>
               </button>
               <?php else: ?>
-              <span class="status-dot <?= e($item['status']) ?>"></span><?= e($item['status']) ?>
+              <span data-stat="status"><span class="status-dot <?= e($item['status']) ?>"></span><?= e($item['status']) ?></span>
               <?php endif; ?>
             </td>
-            <td><?= $rt ? e((string) $rt['cpu_percent']) . '%' : '-' ?></td>
-            <td><?= $rt ? e((string) round($rt['memory_bytes'] / 1048576, 1)) . ' MB' : '-' ?></td>
-            <td><?= $rt && $rt['uptime_ms'] ? e(gmdate('H:i:s', intdiv((int) $rt['uptime_ms'], 1000))) : '-' ?></td>
-            <td><?= $rt ? e((string) $rt['restart_count']) : '-' ?></td>
+            <td data-stat="cpu"><?= $rt ? e((string) $rt['cpu_percent']) . '%' : '-' ?></td>
+            <td data-stat="ram"><?= $rt ? e((string) round($rt['memory_bytes'] / 1048576, 1)) . ' MB' : '-' ?></td>
+            <td data-stat="uptime"><?= $rt && $rt['uptime_ms'] ? e(gmdate('H:i:s', intdiv((int) $rt['uptime_ms'], 1000))) : '-' ?></td>
+            <td data-stat="restarts"><?= $rt ? e((string) $rt['restart_count']) : '-' ?></td>
             <td><?= e((string) $m['port']) ?></td>
             <td class="text-end text-nowrap">
               <div class="btn-group">
@@ -427,6 +427,14 @@ document.addEventListener('keydown', function (e) {
   if (popup) { popup.classList.add('d-none'); }
   nodeStatusCurrentId = null;
 });
+
+(function () {
+  var block = document.getElementById('nodejsManagedTable');
+  if (!block || !window.PanelNodeStats) { return; }
+  block.addEventListener('panel:refresh', function (e) {
+    window.PanelNodeStats.apply(block, (e.detail && e.detail.data && e.detail.data.managed) || []);
+  });
+})();
 </script>
 
 <?php include __DIR__ . '/partials/footer.php'; ?>

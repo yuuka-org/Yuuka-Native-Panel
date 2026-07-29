@@ -30,6 +30,12 @@ NGINX_SNIPPETS="/etc/nginx/snippets"
 WWW_BASE="/var/www"
 NODEAPPS_BASE="/home/nodeapps/apps"
 NODEAPPS_HOME="/home/nodeapps"
+# Live log for app "foo" is always ${PM2_LOG_DIR}/foo.log (see
+# nodejs_build_ecosystem_config() - out_file AND error_file both point
+# here, merging stdout+stderr into one file). Archived per-run files sit
+# right next to it as ${PM2_LOG_DIR}/foo<17-digit-timestamp>.log, written
+# by rotate_pm2_log() below.
+PM2_LOG_DIR="/home/nodeapps/.pm2/logs"
 BACKUP_BASE="/opt/server-panel/storage/backups"
 ACME_WEBROOT="/var/www/_letsencrypt"
 INSTALLER_DIR="/opt/yuuka-installer"
@@ -101,6 +107,7 @@ RE_GIT_BRANCH='^[a-zA-Z0-9._/-]{1,200}$'
 RE_EMAIL='^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
 RE_DBNAME='^[a-zA-Z0-9_]{1,64}$'
 RE_LINES='^[0-9]{1,4}$'
+RE_BYTE_OFFSET='^[0-9]{1,19}$'
 RE_PORT='^[0-9]{1,5}$'
 RE_NODE_VERSION='^[0-9]{1,3}$'
 # Mirrors Validator::buildCommand()/NodeService's own PHP-side regex - no
@@ -409,6 +416,29 @@ as_nodeapps() {
     runuser -u nodeapps -- bash -lc "cd '${NODEAPPS_HOME}' && export NVM_DIR='${NODEAPPS_HOME}/.nvm'; [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"; $*"
 }
 
+# Gives every PM2 (re)start its own log file ("<app><17-digit
+# YYYYMMDDHHMMSSmmm timestamp>.log") instead of one file that just grows
+# forever - called right before every op that (re)starts an app's
+# process. PM2 keeps an already-open, append-mode file descriptor on the
+# LIVE path (${PM2_LOG_DIR}/${app}.log) for as long as the process is up.
+# Renaming that path away would NOT give it a fresh file - file
+# descriptors follow the inode, not the path, so PM2 would keep silently
+# writing into the (now differently-named) archived file forever.
+# Copying the content out and then truncating the SAME inode in place
+# sidesteps that entirely: PM2's existing fd stays perfectly valid and
+# next write() just lands at offset 0 again - no signal/reopen needed on
+# PM2's side (relying on that, e.g. via `pm2 reloadLogs`, would also
+# affect every OTHER app sharing this same PM2 daemon, not just this one).
+rotate_pm2_log() {
+    local app="$1"
+    local live_log="${PM2_LOG_DIR}/${app}.log"
+    [[ -s "$live_log" ]] || return 0
+    local ts
+    ts=$(date +%Y%m%d%H%M%S%3N)
+    cp -p "$live_log" "${PM2_LOG_DIR}/${app}${ts}.log" 2>/dev/null || true
+    : > "$live_log"
+}
+
 op_pm2_deploy() {
     local app="$1" node_version="${2:-}" build_command="${3:-}"
     require_match "$app" "$RE_APPNAME" "appname"
@@ -458,6 +488,7 @@ op_pm2_deploy() {
     # absolute path AFTER switching - 'env node' inside pm2's own shebang
     # still resolves to the just-switched target version, which is what
     # actually determines the app's runtime interpreter.
+    rotate_pm2_log "$app"
     as_nodeapps "PM2_BIN=\$(command -v pm2); ${nvm_use}\"\${PM2_BIN:?pm2 tidak ditemukan di PATH}\" start '${app_dir}/ecosystem.config.js' --update-env"
     as_nodeapps "pm2 save"
     echo "OK: ${app} deployed via PM2"
@@ -465,6 +496,7 @@ op_pm2_deploy() {
 
 op_pm2_start() {
     local app="$1"; require_match "$app" "$RE_APPNAME" "appname"
+    rotate_pm2_log "$app"
     as_nodeapps "pm2 start '${app}'"
     as_nodeapps "pm2 save"
 }
@@ -477,11 +509,13 @@ op_pm2_stop() {
 
 op_pm2_restart() {
     local app="$1"; require_match "$app" "$RE_APPNAME" "appname"
+    rotate_pm2_log "$app"
     as_nodeapps "pm2 restart '${app}'"
 }
 
 op_pm2_reload() {
     local app="$1"; require_match "$app" "$RE_APPNAME" "appname"
+    rotate_pm2_log "$app"
     as_nodeapps "pm2 reload '${app}'"
 }
 
@@ -500,12 +534,84 @@ op_pm2_describe() {
     as_nodeapps "pm2 describe '${app}'"
 }
 
+# Reads the raw live log FILE directly instead of `pm2 logs` (the CLI
+# command decorates every line with "<pm_id>|<app-name> |", meant for a
+# human watching several apps interleaved in one terminal - there's only
+# ever one app on screen here, so that prefix was pure noise the panel
+# had no way to strip cleanly).
 op_pm2_logs() {
     local app="$1" lines="${2:-100}"
     require_match "$app" "$RE_APPNAME" "appname"
     require_match "$lines" "$RE_LINES" "lines"
     [[ "$lines" -le 1000 ]] || lines=1000
-    as_nodeapps "pm2 logs '${app}' --lines ${lines} --nostream"
+    local live_log="${PM2_LOG_DIR}/${app}.log"
+    [[ -f "$live_log" ]] && tail -n "$lines" "$live_log"
+    return 0
+}
+
+# Current live log file size in bytes - lets the panel start a real-time
+# stream exactly where the initial (separately-fetched, N-line) view left
+# off, without re-sending or re-requesting any content just to find that
+# starting point.
+op_pm2_logs_size() {
+    local app="$1"
+    require_match "$app" "$RE_APPNAME" "appname"
+    local live_log="${PM2_LOG_DIR}/${app}.log"
+    if [[ -f "$live_log" ]]; then
+        stat -c%s "$live_log"
+    else
+        echo "0"
+    fi
+}
+
+# Incremental read for the real-time log viewer (nodejs_logs_stream.php) -
+# avoids re-sending the whole tail on every poll tick. First line of
+# output is always the new byte offset to pass back in next time; every
+# byte after that first newline is the raw new content (may be nothing).
+op_pm2_logs_tail() {
+    local app="$1" offset="${2:-0}"
+    require_match "$app" "$RE_APPNAME" "appname"
+    require_match "$offset" "$RE_BYTE_OFFSET" "offset"
+    local live_log="${PM2_LOG_DIR}/${app}.log"
+    if [[ ! -f "$live_log" ]]; then
+        echo "0"
+        return 0
+    fi
+    local size
+    size=$(stat -c%s "$live_log")
+    # File is smaller than the offset we were tracking - it was rotated
+    # (a start/restart happened) since the last poll, so that offset no
+    # longer means anything against this now-different file. Start over.
+    if (( offset > size )); then
+        offset=0
+    fi
+    echo "$size"
+    tail -c "+$((offset + 1))" "$live_log"
+}
+
+# Archived run files for $app, newest first - filename alone doubles as
+# the human-readable "run started at" label since it IS the timestamp.
+op_pm2_logs_list() {
+    local app="$1"
+    require_match "$app" "$RE_APPNAME" "appname"
+    mkdir -p "$PM2_LOG_DIR"
+    find "$PM2_LOG_DIR" -maxdepth 1 -type f \
+        -name "${app}[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].log" \
+        -printf '%f\n' 2>/dev/null | sort -r
+}
+
+op_pm2_logs_read_archive() {
+    local app="$1" file="$2" lines="${3:-1000}"
+    require_match "$app" "$RE_APPNAME" "appname"
+    require_match "$lines" "$RE_LINES" "lines"
+    [[ "$lines" -le 1000 ]] || lines=1000
+    # Tied to THIS specific app (not just "looks like some archive name")
+    # so one app's log history can't be used to read another's.
+    require_match "$file" "^${app}[0-9]{17}\.log\$" "log file"
+    local path
+    path=$(require_path_within "${PM2_LOG_DIR}/${file}" "$PM2_LOG_DIR")
+    [[ -f "$path" ]] || fail "File log tidak ditemukan"
+    tail -n "$lines" "$path"
 }
 
 op_pm2_flush() {
@@ -1614,6 +1720,10 @@ case "$SUBCOMMAND" in
     pm2-jlist)             op_pm2_jlist ;;
     pm2-describe)          op_pm2_describe "$@" ;;
     pm2-logs)              op_pm2_logs "$@" ;;
+    pm2-logs-size)         op_pm2_logs_size "$@" ;;
+    pm2-logs-tail)         op_pm2_logs_tail "$@" ;;
+    pm2-logs-list)         op_pm2_logs_list "$@" ;;
+    pm2-logs-read-archive) op_pm2_logs_read_archive "$@" ;;
     pm2-flush)             op_pm2_flush "$@" ;;
     pm2-reset)             op_pm2_reset "$@" ;;
     pm2-save)              op_pm2_save ;;

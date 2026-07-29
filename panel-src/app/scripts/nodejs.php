@@ -8,6 +8,9 @@ declare(strict_types=1);
  * reproducible.
  */
 
+/** Mirrors panel-exec.sh's PM2_LOG_DIR constant exactly - keep both in sync. */
+const NODEJS_PM2_LOG_DIR = '/home/nodeapps/.pm2/logs';
+
 /**
  * @param array<string,string> $env Plain (already-decrypted) env vars.
  *                                   Values are safely JSON-encoded, never
@@ -47,6 +50,18 @@ function nodejs_build_ecosystem_config(
             // record" when it was actually landing in a different file
             // entirely. Irrelevant but harmless for fork mode/instances=1.
             'merge_logs' => true,
+            // out_file AND error_file deliberately point at the SAME path
+            // (not PM2's own default naming) - two things depend on this
+            // exact convention matching panel-exec.sh's PM2_LOG_DIR/rotate_pm2_log():
+            // (1) stdout+stderr end up interleaved in ONE file instead of
+            // two, which is what the panel's single combined Logs view
+            // shows; (2) the panel reads this file directly rather than
+            // through `pm2 logs` (whose CLI output prefixes every line
+            // with "<id>|<name> |", meant for watching several apps at
+            // once in a real terminal - noise here since only one app is
+            // ever shown at a time).
+            'out_file' => NODEJS_PM2_LOG_DIR . "/{$pm2Name}.log",
+            'error_file' => NODEJS_PM2_LOG_DIR . "/{$pm2Name}.log",
             'log_date_format' => 'YYYY-MM-DD HH:mm:ss Z',
             'env' => $envPayload,
         ]],
@@ -99,6 +114,46 @@ function nodejs_pm2_logs(string $pm2Name, int $lines = 100): array
 {
     $lines = max(1, min(1000, $lines));
     return Executor::run('pm2-logs', [$pm2Name, (string) $lines], null, 15);
+}
+
+function nodejs_pm2_logs_size(string $pm2Name): int
+{
+    $result = Executor::run('pm2-logs-size', [$pm2Name], null, 10);
+    return $result['ok'] ? (int) trim($result['output']) : 0;
+}
+
+/**
+ * Incremental read for the real-time log viewer - $sinceOffset is the
+ * byte offset already shown to the client (0 on first call). Returns
+ * ['offset' => int new offset to pass next time, 'content' => string new bytes].
+ */
+function nodejs_pm2_logs_tail(string $pm2Name, int $sinceOffset): array
+{
+    $result = Executor::run('pm2-logs-tail', [$pm2Name, (string) max(0, $sinceOffset)], null, 10);
+    if (!$result['ok']) {
+        return ['offset' => $sinceOffset, 'content' => ''];
+    }
+    $parts = explode("\n", $result['output'], 2);
+    return [
+        'offset' => (int) $parts[0],
+        'content' => $parts[1] ?? '',
+    ];
+}
+
+/** @return string[] archived run log filenames, newest first */
+function nodejs_pm2_logs_list(string $pm2Name): array
+{
+    $result = Executor::run('pm2-logs-list', [$pm2Name], null, 10);
+    if (!$result['ok'] || trim($result['output']) === '') {
+        return [];
+    }
+    return array_values(array_filter(explode("\n", trim($result['output']))));
+}
+
+function nodejs_pm2_logs_read_archive(string $pm2Name, string $file, int $lines = 1000): array
+{
+    $lines = max(1, min(1000, $lines));
+    return Executor::run('pm2-logs-read-archive', [$pm2Name, $file, (string) $lines], null, 15);
 }
 
 function nodejs_pm2_flush(string $pm2Name): array

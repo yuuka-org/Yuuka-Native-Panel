@@ -164,6 +164,46 @@ document.addEventListener('DOMContentLoaded', function () {
   });
 
   // ---------------------------------------------------------------------
+  // Shared real-time Node.js/PM2 stats renderer - used by both nodejs.php
+  // (the full Managed-by-Panel table) and dashboard.php's smaller
+  // Node.js widget. Both wire it up themselves via a
+  // data-refresh-url="/ajax_pm2" element + a panel:refresh listener (see
+  // app.js's existing data-refresh-url polling below) - this function
+  // only does the DOM patching, so it works against either table's own
+  // subset of columns (a row simply has no data-stat="x" element for any
+  // column that page doesn't show, which this silently skips).
+  // ---------------------------------------------------------------------
+  window.PanelNodeStats = {
+    apply: function (container, managedItems) {
+      var byId = {};
+      (managedItems || []).forEach(function (item) {
+        byId[String(item.meta.id)] = item;
+      });
+      container.querySelectorAll('[data-app-row]').forEach(function (row) {
+        var item = byId[row.getAttribute('data-app-row')];
+        if (!item) return;
+        var rt = item.runtime;
+        setStat(row, 'status', function (el) {
+          el.innerHTML = '<span class="status-dot ' + item.status + '"></span>' + item.status;
+        });
+        setStat(row, 'cpu', function (el) { el.textContent = rt ? rt.cpu_percent + '%' : '-'; });
+        setStat(row, 'ram', function (el) { el.textContent = rt ? (Math.round(rt.memory_bytes / 1048576 * 10) / 10) + ' MB' : '-'; });
+        setStat(row, 'uptime', function (el) { el.textContent = (rt && rt.uptime_ms) ? formatUptime(rt.uptime_ms) : '-'; });
+        setStat(row, 'restarts', function (el) { el.textContent = rt ? rt.restart_count : '-'; });
+      });
+      function setStat(row, name, fn) {
+        var el = row.querySelector('[data-stat="' + name + '"]');
+        if (el) fn(el);
+      }
+      function formatUptime(ms) {
+        var s = Math.floor(ms / 1000);
+        var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+        return pad(Math.floor(s / 3600)) + ':' + pad(Math.floor((s % 3600) / 60)) + ':' + pad(s % 60);
+      }
+    }
+  };
+
+  // ---------------------------------------------------------------------
   // Global "it's working" feedback - this panel is a classic multi-page
   // app (real <form> POSTs and <a> navigations, not a SPA), so between a
   // click and the next page finishing load there was previously NO visual

@@ -491,6 +491,68 @@ final class NodeService
         return $result['output'];
     }
 
+    /** Current live log file size - the SSE stream's starting offset. */
+    public static function currentLogOffset(int $id): int
+    {
+        $app = self::find($id);
+        if ($app === null) {
+            throw new InvalidArgumentException('Aplikasi tidak ditemukan');
+        }
+        return nodejs_pm2_logs_size($app['pm2_name']);
+    }
+
+    /** @return array{offset:int, content:string} */
+    public static function tailLogs(int $id, int $sinceOffset): array
+    {
+        $app = self::find($id);
+        if ($app === null) {
+            throw new InvalidArgumentException('Aplikasi tidak ditemukan');
+        }
+        return nodejs_pm2_logs_tail($app['pm2_name'], $sinceOffset);
+    }
+
+    /**
+     * Previous runs' log files (each start/restart/reload/deploy gets its
+     * own, see rotate_pm2_log() in panel-exec.sh) - newest first.
+     * @return array<int, array{file:string, label:string}>
+     */
+    public static function listLogArchives(int $id): array
+    {
+        $app = self::find($id);
+        if ($app === null) {
+            throw new InvalidArgumentException('Aplikasi tidak ditemukan');
+        }
+        $files = nodejs_pm2_logs_list($app['pm2_name']);
+        $prefixLen = strlen($app['pm2_name']);
+        $out = [];
+        foreach ($files as $file) {
+            $ts = substr($file, $prefixLen, 17); // YYYYMMDDHHMMSSmmm
+            $label = $file;
+            if (strlen($ts) === 17) {
+                $label = sprintf(
+                    '%s-%s-%s %s:%s:%s.%s',
+                    substr($ts, 0, 4), substr($ts, 4, 2), substr($ts, 6, 2),
+                    substr($ts, 8, 2), substr($ts, 10, 2), substr($ts, 12, 2), substr($ts, 14, 3)
+                );
+            }
+            $out[] = ['file' => $file, 'label' => $label];
+        }
+        return $out;
+    }
+
+    public static function getArchivedLog(int $id, string $file, int $lines = 1000): string
+    {
+        $app = self::find($id);
+        if ($app === null) {
+            throw new InvalidArgumentException('Aplikasi tidak ditemukan');
+        }
+        $result = nodejs_pm2_logs_read_archive($app['pm2_name'], $file, $lines);
+        if (!$result['ok']) {
+            throw new InvalidArgumentException('File log tidak ditemukan atau tidak valid');
+        }
+        return $result['output'];
+    }
+
     /**
      * Registers a Node.js process that is already running in PM2 but not
      * yet tracked by the panel database ("Import to Panel"). Never
