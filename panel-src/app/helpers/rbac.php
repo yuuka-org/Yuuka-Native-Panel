@@ -19,6 +19,12 @@ final class Rbac
         'users.manage'                 => [self::ROLE_ADMIN],
         'settings.manage'               => [self::ROLE_ADMIN],
         'cloudflare.manage'            => [self::ROLE_ADMIN],
+        // Admin-only, no exceptions: an installed+enabled plugin's own
+        // scripts run with full ROOT privilege (see PluginService's
+        // class docblock) - this is intentionally NOT extended to
+        // operator/developer the way most other *.manage permissions
+        // above are.
+        'plugin.manage'                 => [self::ROLE_ADMIN],
 
         'website.create'               => [self::ROLE_ADMIN, self::ROLE_OPERATOR],
         'website.delete'                => [self::ROLE_ADMIN, self::ROLE_OPERATOR],

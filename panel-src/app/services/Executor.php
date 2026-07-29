@@ -32,6 +32,7 @@ final class Executor
         'fs-mkdir-website', 'fs-remove-website', 'fs-remove-nodeapp',
         'git-clone-website', 'git-pull-website', 'git-status-website',
         'port-check',
+        'plugin-install-zip', 'plugin-install-git', 'plugin-remove', 'plugin-exec',
         'files-list', 'files-read', 'files-write', 'files-mkdir', 'files-delete',
         'files-rename', 'files-extract-zip', 'files-extract', 'files-compress',
         'files-copy', 'files-move', 'files-chmod', 'files-search',
@@ -54,7 +55,7 @@ final class Executor
      * legitimate trailing whitespace byte in the last field), corrupting
      * exactly one entry per call in a way that's easy to miss in testing.
      */
-    private const RAW_OUTPUT_SUBCOMMANDS = ['files-read', 'files-list', 'files-search', 'files-trash-list', 'git-status-website'];
+    private const RAW_OUTPUT_SUBCOMMANDS = ['files-read', 'files-list', 'files-search', 'files-trash-list', 'git-status-website', 'plugin-exec'];
 
     /**
      * @param string[] $args

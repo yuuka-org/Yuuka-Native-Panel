@@ -319,6 +319,18 @@ final class Validator
         return true;
     }
 
+    /** Plugin directory/slug name - mirrors panel-exec.sh's RE_PLUGIN_SLUG exactly. */
+    public static function pluginSlug(string $value): bool
+    {
+        return (bool) preg_match('/^[a-z0-9][a-z0-9_-]{0,63}$/', $value);
+    }
+
+    /** Plugin bin/*.sh script name (without extension) - mirrors panel-exec.sh's RE_PLUGIN_SCRIPT exactly. */
+    public static function pluginScript(string $value): bool
+    {
+        return (bool) preg_match('/^[a-zA-Z0-9_-]{1,64}$/', $value);
+    }
+
     /**
      * Settings > General's Security Entrance path - mirrors
      * panel-exec.sh's RE_SECURITY_ENTRANCE_PATH exactly (validated at

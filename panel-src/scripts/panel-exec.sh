@@ -47,6 +47,12 @@ SELF_UPDATE_LOG="/opt/server-panel/storage/logs/self-update.log"
 PANEL_ROOT="/opt/server-panel"
 PANEL_POOL_SOCK="/run/php/panel.sock"
 BASICAUTH_HTPASSWD="/etc/nginx/panel.htpasswd"
+# Plugin system - see op_plugin_exec() below for the trust model (an
+# enabled plugin's OWN scripts run with full root privilege, by explicit
+# operator choice over a sandboxed alternative). Never inside PANEL_ROOT
+# itself (deploy's rsync target) - a plugin surviving `sudo bash
+# update.sh` re-deploys is unrelated to that directory's own lifecycle.
+PLUGIN_DIR="/opt/server-panel-plugins"
 
 # Mirrors yp's own panel_vhost_file() - the panel vhost is the only file
 # generated with this naming pattern (modules/panel.sh), so a glob is
@@ -109,6 +115,8 @@ RE_DBNAME='^[a-zA-Z0-9_]{1,64}$'
 RE_LINES='^[0-9]{1,4}$'
 RE_BYTE_OFFSET='^[0-9]{1,19}$'
 RE_PORT='^[0-9]{1,5}$'
+RE_PLUGIN_SLUG='^[a-z0-9][a-z0-9_-]{0,63}$'
+RE_PLUGIN_SCRIPT='^[a-zA-Z0-9_-]{1,64}$'
 RE_NODE_VERSION='^[0-9]{1,3}$'
 # Mirrors Validator::buildCommand()/NodeService's own PHP-side regex - no
 # shell metacharacters (;&|`$(){}<>) at all, so even though as_nodeapps
@@ -1654,7 +1662,7 @@ op_restore_tar_nodeapp() {
 # Cron job files - written as discrete /etc/cron.d/ files (one per job id),
 # never by editing a shared crontab in place.
 # ---------------------------------------------------------------------------
-RE_CRONID='^panel-[0-9]+$'
+RE_CRONID='^(panel-[0-9]+|plugin-[a-z0-9][a-z0-9_-]{0,63})$'
 
 op_cron_write() {
     local jobid="$1"
@@ -1772,6 +1780,181 @@ op_log_traffic_daily() {
 }
 
 # ---------------------------------------------------------------------------
+# Plugin system - see PLUGIN_DIR comment near the top of this file for the
+# trust model. Every op below re-validates slug/script/path containment
+# independently of whatever PHP already checked (PluginService) - same
+# double-whitelist discipline as every other privileged operation in this
+# script, not weakened just because plugins themselves are trusted.
+# ---------------------------------------------------------------------------
+# Slug is deliberately NOT a caller-supplied argument here - it comes
+# from INSIDE the package's own plugin.json (read via the system PHP CLI
+# for real JSON parsing, not a regex guess), which isn't knowable until
+# after extraction. Extract to a throwaway temp name first, read the
+# slug, THEN move into its final PLUGIN_DIR/<slug> home - the two-step
+# avoids ever having to guess a destination before the content that
+# determines it has actually been inspected.
+plugin_prepare_dir() {
+    # This script's `umask 027` would otherwise leave a freshly-created
+    # PLUGIN_DIR at 750 (root:root) - the unprivileged 'panel' user
+    # (PHP-FPM) couldn't even traverse INTO it to reach an individual
+    # plugin's own 755 directory, regardless of that directory's own
+    # permissions (every ancestor in the path needs execute/traverse
+    # access too, not just the final target).
+    mkdir -p "$PLUGIN_DIR"
+    chmod 755 "$PLUGIN_DIR"
+}
+
+plugin_read_slug() {
+    local manifest="$1"
+    php -r '
+        $d = json_decode(file_get_contents($argv[1]), true);
+        echo (is_array($d) && isset($d["slug"]) && is_string($d["slug"])) ? $d["slug"] : "";
+    ' "$manifest" 2>/dev/null
+}
+
+op_plugin_install_zip() {
+    plugin_prepare_dir
+
+    local tmp_zip tmp_extract
+    tmp_zip=$(mktemp --suffix=.zip)
+    cat > "$tmp_zip"
+    if [[ ! -s "$tmp_zip" ]]; then
+        rm -f "$tmp_zip"
+        fail "File ZIP kosong"
+    fi
+
+    tmp_extract=$(mktemp -d)
+    if ! unzip -q "$tmp_zip" -d "$tmp_extract"; then
+        rm -rf "$tmp_zip" "$tmp_extract"
+        fail "Gagal ekstrak ZIP plugin (bukan file ZIP valid?)"
+    fi
+    rm -f "$tmp_zip"
+
+    # A zip with exactly one top-level folder (GitHub "Download ZIP"
+    # style, e.g. "myplugin-main/") uses THAT folder's contents directly,
+    # rather than nesting the plugin one level too deep.
+    local top_entries top_only content_dir
+    top_entries=$(find "$tmp_extract" -mindepth 1 -maxdepth 1 | wc -l)
+    top_only=$(find "$tmp_extract" -mindepth 1 -maxdepth 1)
+    if [[ "$top_entries" -eq 1 && -d "$top_only" ]]; then
+        content_dir="$top_only"
+    else
+        content_dir="$tmp_extract"
+    fi
+
+    if [[ ! -f "${content_dir}/plugin.json" ]]; then
+        rm -rf "$tmp_extract"
+        fail "plugin.json tidak ditemukan di paket - bukan plugin yang valid"
+    fi
+
+    local slug dest
+    slug=$(plugin_read_slug "${content_dir}/plugin.json")
+    require_match "$slug" "$RE_PLUGIN_SLUG" "plugin slug (dari plugin.json)"
+    dest="${PLUGIN_DIR}/${slug}"
+    if [[ -e "$dest" ]]; then
+        rm -rf "$tmp_extract"
+        fail "Plugin '${slug}' sudah ada"
+    fi
+
+    mv "$content_dir" "$dest"
+    rm -rf "$tmp_extract" 2>/dev/null || true
+
+    plugin_fix_permissions "$dest"
+    echo "OK: plugin ${slug} diinstall di ${dest}"
+    echo "SLUG:${slug}"
+}
+
+op_plugin_install_git() {
+    local repo_url="$1" branch="${2:-}"
+    require_match "$repo_url" "$RE_GIT_URL" "git url"
+    [[ -n "$branch" ]] && require_match "$branch" "$RE_GIT_BRANCH" "branch"
+    plugin_prepare_dir
+
+    local tmp_clone
+    tmp_clone=$(mktemp -d)
+    rmdir "$tmp_clone"
+    local clone_args=(--depth 1)
+    [[ -n "$branch" ]] && clone_args+=(--branch "$branch")
+    if ! GIT_TERMINAL_PROMPT=0 git clone --quiet "${clone_args[@]}" -- "$repo_url" "$tmp_clone"; then
+        rm -rf "$tmp_clone"
+        fail "Gagal clone repository plugin"
+    fi
+
+    if [[ ! -f "${tmp_clone}/plugin.json" ]]; then
+        rm -rf "$tmp_clone"
+        fail "plugin.json tidak ditemukan di repo - bukan plugin yang valid"
+    fi
+
+    local slug dest
+    slug=$(plugin_read_slug "${tmp_clone}/plugin.json")
+    require_match "$slug" "$RE_PLUGIN_SLUG" "plugin slug (dari plugin.json)"
+    dest="${PLUGIN_DIR}/${slug}"
+    if [[ -e "$dest" ]]; then
+        rm -rf "$tmp_clone"
+        fail "Plugin '${slug}' sudah ada"
+    fi
+
+    rm -rf "${tmp_clone}/.git"
+    mv "$tmp_clone" "$dest"
+
+    plugin_fix_permissions "$dest"
+    echo "OK: plugin ${slug} di-clone ke ${dest}"
+    echo "SLUG:${slug}"
+}
+
+# Manifest (plugin.json) and the plugin's own PHP page files must stay
+# readable by the UNPRIVILEGED 'panel' user (PHP-FPM reads them directly
+# on every page load - routing through the root-exec bridge for that
+# would be needless overhead for content that isn't sensitive). ONLY
+# bin/*.sh (the root-exec scripts, see op_plugin_exec below) are locked
+# to root-only - that boundary is what actually enforces "root access
+# only through the sudo bridge", not a mode a plugin package might ship
+# with, so it's reasserted here unconditionally rather than trusted from
+# the zip/git source.
+plugin_fix_permissions() {
+    local dest="$1"
+    chown -R root:root "$dest"
+    find "$dest" -type d -exec chmod 755 {} \;
+    find "$dest" -type f -exec chmod 644 {} \;
+    if [[ -d "${dest}/bin" ]]; then
+        find "${dest}/bin" -maxdepth 1 -type f -name '*.sh' -exec chmod 700 {} \;
+    fi
+    if [[ -d "${dest}/cron" ]]; then
+        find "${dest}/cron" -maxdepth 1 -type f -exec chmod 700 {} \;
+    fi
+}
+
+op_plugin_remove() {
+    local slug="$1"
+    require_match "$slug" "$RE_PLUGIN_SLUG" "plugin slug"
+    local dest
+    dest=$(require_path_within "${PLUGIN_DIR}/${slug}" "$PLUGIN_DIR")
+    [[ -d "$dest" ]] || fail "Plugin tidak ditemukan"
+    rm -rf "$dest"
+    echo "OK: plugin ${slug} dihapus"
+}
+
+# THE trusted root-exec dispatch (chosen explicitly over a sandboxed
+# alternative - see migration 2026072902's comment). Whatever script
+# exists at PLUGIN_DIR/<slug>/bin/<script>.sh runs with FULL ROOT
+# privilege, by design: the whole plugin is trusted at install time, not
+# individually whitelisted per-operation the way core panel features are.
+# PluginService (PHP) is responsible for only ever calling this for a
+# plugin that is actually installed AND enabled, and only for a script
+# name present in that plugin's OWN manifest - this layer re-validates
+# structurally (path containment, file actually exists) but has no
+# database access to re-check "is this plugin enabled" itself.
+op_plugin_exec() {
+    local slug="$1" script="$2"; shift 2
+    require_match "$slug" "$RE_PLUGIN_SLUG" "plugin slug"
+    require_match "$script" "$RE_PLUGIN_SCRIPT" "plugin script"
+    local script_path
+    script_path=$(require_path_within "${PLUGIN_DIR}/${slug}/bin/${script}.sh" "${PLUGIN_DIR}/${slug}")
+    [[ -f "$script_path" ]] || fail "Script plugin tidak ditemukan: ${script}"
+    bash "$script_path" "$@"
+}
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 SUBCOMMAND="${1:-}"
@@ -1827,6 +2010,10 @@ case "$SUBCOMMAND" in
     fs-remove-website)     op_fs_remove_website "$@" ;;
     fs-remove-nodeapp)     op_fs_remove_nodeapp "$@" ;;
     port-check)            op_port_check "$@" ;;
+    plugin-install-zip)    op_plugin_install_zip "$@" ;;
+    plugin-install-git)    op_plugin_install_git "$@" ;;
+    plugin-remove)         op_plugin_remove "$@" ;;
+    plugin-exec)           op_plugin_exec "$@" ;;
     files-list)            op_files_list "$@" ;;
     files-read)            op_files_read "$@" ;;
     files-write)           op_files_write "$@" ;;

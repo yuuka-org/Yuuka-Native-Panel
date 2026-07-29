@@ -1,0 +1,8 @@
+# Plugin source code is deliberately NEVER part of this repo (see
+# wiki/Plugin-Development.md) - installed plugins live entirely outside
+# the deployed panel tree at /opt/server-panel-plugins on a real server,
+# so there is nothing to ignore there by construction. This entry only
+# covers a LOCAL convention for developing/testing a plugin against this
+# checkout before pushing it to its own separate repo.
+/plugins/
+panel-src/plugins/

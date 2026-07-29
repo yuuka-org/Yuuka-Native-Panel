@@ -21,14 +21,19 @@ Setiap pemanggilan (sukses maupun ditolak) dicatat ke
 | `nginx-enable` | `<site>` | – | Symlink ke `sites-enabled`, validasi, reload |
 | `nginx-disable` | `<site>` | – | Hapus symlink `sites-enabled`, reload |
 | `nginx-delete` | `<site>` | – | Hapus config available+enabled, reload |
+| `nginx-write-ratelimit-zones` | – | isi config `limit_req_zone` gabungan | Tulis `/etc/nginx/conf.d/panel-rate-limits.conf` (full di-generate ulang dari semua situs yang Traffic Control-nya aktif tiap kali berubah), validasi `nginx -t`, reload |
 | `pm2-deploy` | `<app>` `[node_version]` `[build_command]` | isi `ecosystem.config.js` | Tulis ecosystem file di bawah `nodeapps`, `nvm use <node_version>` (kalau diisi) sebelum start supaya versi Node per-app benar-benar dipakai (bukan cuma metadata), jalankan `build_command` (kalau diisi, TIDAK dijalankan saat create pertama kali karena folder masih kosong) di folder app, `pm2 start --update-env`, `pm2 save` |
 | `pm2-start` / `pm2-stop` / `pm2-restart` / `pm2-reload` | `<app>` | – | Kontrol proses PM2 (sebagai user `nodeapps`) |
 | `pm2-reset` | `<app>` | – | `pm2 reset` — reset counter Restarts ke 0 |
 | `pm2-delete` | `<app>` | – | `pm2 delete` + `pm2 save` |
 | `pm2-jlist` | – | – | `pm2 jlist` — sumber kebenaran status runtime Node.js |
 | `pm2-describe` | `<app>` | – | `pm2 describe` |
-| `pm2-logs` | `<app>` `[lines]` | – | `pm2 logs --nostream`, maks 1000 baris dipaksa server |
-| `pm2-flush` | `<app>` | – | Bersihkan log PM2 aplikasi |
+| `pm2-logs` | `<app>` `[lines]` | – | Baca langsung file log live (bukan `pm2 logs`, tidak ada prefix `N\|nama \|`), maks 1000 baris dipaksa server |
+| `pm2-logs-size` | `<app>` | – | Ukuran file log live saat ini (byte) — titik mulai stream real-time |
+| `pm2-logs-tail` | `<app>` `<offset>` | – | Baca isi BARU sejak `offset` (baris pertama output = offset baru) — dipakai `nodejs_logs_stream.php` (SSE) |
+| `pm2-logs-list` | `<app>` | – | Daftar file log arsip (per run start/restart/reload/deploy), terbaru dulu |
+| `pm2-logs-read-archive` | `<app>` `<file>` `[lines]` | – | Baca satu file log arsip tertentu milik app itu |
+| `pm2-flush` | `<app>` | – | Bersihkan log PM2 aplikasi (file log live) |
 | `pm2-save` | – | – | `pm2 save` |
 | `certbot-issue` | `<domain>` `<email>` | – | `certbot certonly --webroot` |
 | `certbot-remove` | `<domain>` | – | `certbot delete --cert-name` |
@@ -72,8 +77,13 @@ Setiap pemanggilan (sukses maupun ditolak) dicatat ke
 | `cron-delete` | `<jobid>` | – | Hapus file cron |
 | `log-tail` | `<logkey>` `[lines]` | – | Tail log, whitelist logkey, maks 2000 baris |
 | `log-clear` | `<logkey>` | – | Kosongkan log (hanya `nginx-access:*` / `nginx-error:*`) |
+| `log-traffic-daily` | `<domain>` | – | Request per hari dari access log domain tsb (termasuk yang sudah dirotasi `.gz`), output `YYYY-MM-DD<TAB>count` |
 | `panel-basicauth-set` | `enable <user> <bcrypt_hash>` atau `disable` | – | Tulis/hapus snippet `auth_basic` di vhost panel |
 | `panel-security-entrance-set` | `enable <path>` atau `disable` | – | Pindahkan form login panel ke path rahasia — lihat [Model Keamanan](Keamanan.md) |
+| `plugin-install-zip` | – | isi ZIP plugin | Ekstrak ke `PLUGIN_DIR/<slug>` — **slug dibaca dari `plugin.json` di dalam paket**, bukan argumen. Output berisi baris `SLUG:<slug>` untuk dibaca PHP |
+| `plugin-install-git` | `<repo_url>` `[branch]` | – | `git clone --depth 1` ke lokasi sementara, baca slug dari `plugin.json`, pindah ke `PLUGIN_DIR/<slug>` |
+| `plugin-remove` | `<slug>` | – | Hapus `PLUGIN_DIR/<slug>` sepenuhnya |
+| `plugin-exec` | `<slug>` `<script>` `[args...]` | opsional, diteruskan ke script | **Trust model root penuh** — jalankan `PLUGIN_DIR/<slug>/bin/<script>.sh` sebagai root apa adanya. Lihat [Pengembangan Plugin](Plugin-Development.md) |
 
 Subcommand di luar daftar ini **selalu** ditolak (`exit 2`), tidak peduli
 argumen apa pun yang diberikan. Daftar putih ini ada **dua lapis** — sekali

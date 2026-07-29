@@ -31,7 +31,28 @@ $links = [
     // under Settings > Backup & Restore instead.
     ['href' => '/settings', 'icon' => 'bi-sliders', 'label' => 'Pengaturan', 'perm' => 'settings.manage',
         'match' => ['settings', 'settings_page', 'settings_alarm', 'settings_backup', 'settings_migrate']],
+    ['href' => '/plugins', 'icon' => 'bi-puzzle', 'label' => 'Plugin', 'perm' => 'plugin.manage'],
 ];
+
+// Every enabled plugin's own manifest-declared menu entries - appended
+// after the core links above, same permission ('plugin.manage', admin-
+// only - see PluginService's class docblock on why there's no per-plugin
+// permission). currentPath() strips query string, so a query-routed
+// /plugin.php?slug=X&route=Y page can't be told apart from any OTHER
+// plugin's page by basename alone - every plugin link just highlights
+// whenever ANY plugin page is open, which is an acceptable trade-off for
+// how rarely two plugins would even be open in the same sidebar session.
+if (Rbac::can($role, 'plugin.manage')) {
+    foreach (PluginService::menuItems() as $item) {
+        $links[] = [
+            'href' => '/plugin.php?slug=' . urlencode($item['slug']) . '&route=' . urlencode($item['route']),
+            'icon' => $item['icon'],
+            'label' => $item['label'],
+            'perm' => 'plugin.manage',
+            'match' => ['plugin.php'],
+        ];
+    }
+}
 ?>
 <ul class="sidebar-nav">
 <?php foreach ($links as $link): ?>
