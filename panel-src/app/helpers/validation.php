@@ -243,6 +243,83 @@ final class Validator
     }
 
     /**
+     * A Website PHP/Static document root - must live under /var/www/,
+     * never outside it. Deliberately NOT tied to one specific domain's own
+     * folder: an admin may legitimately point a domain's root at another
+     * site's existing folder/subfolder (shared content, monorepo-style
+     * multi-domain setups), and renaming "Domain" in Settings should not
+     * force Document Root to change in lockstep. Charset is restricted
+     * (not just the /var/www/ + no ".." checks) because this value is
+     * interpolated directly into Nginx's `root` directive - unlike the
+     * previous behavior (always auto-derived as "/var/www/<domain>/public",
+     * never user-supplied), it's now free text from a form, so a stray
+     * `;`/newline/quote here could inject extra directives the exact same
+     * way an unvalidated Reverse Proxy target URL could (see targetUrl()).
+     */
+    public static function documentRoot(string $value): bool
+    {
+        if (!str_starts_with($value, '/var/www/') || str_contains($value, '..') || strlen($value) > 255) {
+            return false;
+        }
+        return (bool) preg_match('#^[a-zA-Z0-9._/-]+$#', $value);
+    }
+
+    /** Space-separated list of index filenames (nginx `index` directive value). */
+    public static function indexFileList(string $value): bool
+    {
+        return (bool) preg_match('/^[a-zA-Z0-9_.-]{1,64}( [a-zA-Z0-9_.-]{1,64}){0,9}$/', $value);
+    }
+
+    /**
+     * Redirect/Reverse-Proxy target - full http(s) URL. Interpolated
+     * directly into an Nginx directive (`proxy_pass`/`return 301`), so
+     * this is NOT just "is it a URL" (parse_url() alone happily accepts
+     * spaces/quotes/semicolons/newlines in the path/query, any of which
+     * could break out of the directive and inject arbitrary extra Nginx
+     * config) - the charset itself is restricted to what a URL actually
+     * needs, same approach as gitUrl() above.
+     */
+    public static function targetUrl(string $value): bool
+    {
+        if (strlen($value) > 255 || !preg_match('/^https?:\/\/[a-zA-Z0-9._~:\/?#\[\]@!$&*+,=%-]{1,240}$/', $value)) {
+            return false;
+        }
+        $parts = parse_url($value);
+        return $parts !== false && isset($parts['scheme'], $parts['host']) && in_array($parts['scheme'], ['http', 'https'], true);
+    }
+
+    /** Reverse Proxy path prefix - an absolute Nginx location path. */
+    public static function urlPathPrefix(string $value): bool
+    {
+        return (bool) preg_match('#^/[a-zA-Z0-9_./-]{0,254}$#', $value);
+    }
+
+    /** Pipe-separated file extensions for Hotlink Protection's regex location. */
+    public static function extensionList(string $value): bool
+    {
+        return (bool) preg_match('/^[a-zA-Z0-9]{1,10}(\|[a-zA-Z0-9]{1,10}){0,29}$/', $value);
+    }
+
+    /** One allowed referrer per line - domains, optionally with a leading "*." wildcard. */
+    public static function referrerList(string $value): bool
+    {
+        if (strlen($value) > 4096) {
+            return false;
+        }
+        foreach (preg_split('/\r\n|\r|\n/', trim($value)) as $line) {
+            $line = trim($line);
+            if ($line === '') {
+                continue;
+            }
+            $bare = str_starts_with($line, '*.') ? substr($line, 2) : $line;
+            if (!self::domain($bare)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Settings > General's Security Entrance path - mirrors
      * panel-exec.sh's RE_SECURITY_ENTRANCE_PATH exactly (validated at
      * both layers, same as every other privileged operation in this

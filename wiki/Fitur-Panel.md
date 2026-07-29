@@ -99,6 +99,74 @@ Setiap website terikat ke satu versi PHP-FPM tertentu (`php_version`,
 kolom di tabel `websites`) — pool PHP-FPM per versi sudah disiapkan saat
 instalasi ([Instalasi](Instalasi.md) tahap 6).
 
+### Settings (popup, sama pola dengan Node.js Apps)
+
+Klik ikon gear di baris website membuka modal berisi iframe, pola identik
+dengan Settings Node.js Apps (`partials/embed_header.php`/`embed_footer.php`,
+`partials/website_settings_nav.php` jadi sidebar vertikal di dalam modal /
+btn-group horizontal di mode halaman penuh). Lima sub-tab:
+
+- **Umum** (`website_settings.php`) — edit Domain/Versi PHP/Document Root,
+  sebelumnya sama sekali tidak bisa (satu-satunya cara ganti domain dulu
+  cuma hapus lalu buat ulang website). `NginxService::updateWebsite()`
+  menulis config situs BARU dulu (tervalidasi `nginx -t`) sebelum config
+  lama dihapus, jadi config yang ditolak tidak pernah meninggalkan situs
+  tanpa apa pun yang melayaninya. Mengganti Domain **tidak** memindahkan
+  file di server (Document Root diedit terpisah, sengaja tidak diikat ke
+  folder domain tertentu — bisa arahkan ke folder situs lain) dan otomatis
+  menonaktifkan SSL (sertifikat lama tidak valid untuk domain baru,
+  terbitkan ulang lewat tab Domain & SSL).
+- **Domain & SSL** (`website_domains.php`) — `NginxService::addDomain()`/
+  `removeDomain()`/`listDomains()`, pola sama persis dengan multi-domain
+  Node.js Apps: tiap domain tambahan dapat situs Nginx sendiri, semuanya
+  melayani Document Root & versi PHP yang sama dengan domain primary.
+  Domain primary tidak bisa dihapus dari sini (harus lewat ganti Domain di
+  tab Umum, atau hapus seluruh website). SSL per-domain (`SSLService`) dan
+  Wildcard Hostname juga pindah ke sini (sebelumnya masing-masing modal
+  terpisah/halaman `/domains?website_id=`).
+- **Traffic & Rewrite** (`website_advanced.php`) — Default Index, Custom
+  URL Rewrite (baris `rewrite` Nginx mentah, disisipkan langsung ke
+  config — validasinya murni `nginx -t`, bukan whitelist syntax, karena
+  ini fitur admin-trusted), Redirect (alihkan seluruh situs), Traffic
+  Control (rate limit per-IP, lihat di bawah), Reverse Proxy (path prefix
+  → target URL, repeatable, tabel `website_reverse_proxies`), dan Hotlink
+  Protection (lihat di bawah). Semua berlaku untuk SELURUH domain website
+  ini sekaligus — `NginxService::regenerateAllConfigs()` menulis ulang
+  config setiap domain terdaftar tiap kali salah satu pengaturan ini
+  berubah.
+
+  **Traffic Control**: `limit_req_zone` Nginx cuma valid di context
+  `http{}`, tidak bisa per-`server{}` — tiap situs yang mengaktifkan ini
+  dapat satu file bersama `/etc/nginx/conf.d/panel-rate-limits.conf`
+  (auto-include bawaan nginx.conf stok Debian/Ubuntu), full di-generate
+  ulang dari SEMUA situs yang rate-limit-nya aktif tiap kali ada
+  perubahan (`nginx_build_rate_limit_zones_config()`). Nama zone di-hash
+  dari domain (`nginx_rate_limit_zone_name()`, MD5 12 karakter) — sengaja
+  bukan sekadar ganti karakter non-alnum jadi underscore, karena dua
+  domain berbeda seperti `a.b.com` dan `a-b.com` bisa collide jadi nama
+  zone yang sama dengan skema sederhana itu.
+
+  **Hotlink Protection**: `valid_referers` Nginx pada `location` khusus
+  ekstensi file yang dilindungi — akses tanpa header Referer (curl/akses
+  langsung) selalu diizinkan, cuma embed dari domain lain yang diblokir.
+
+  **Keamanan validasi**: Document Root dan target URL (Redirect/Reverse
+  Proxy) dibatasi charset ketat (`Validator::documentRoot()`/`targetUrl()`)
+  karena diselipkan langsung ke directive Nginx (`root .../`,
+  `proxy_pass .../`) — tanpa ini, sebuah nilai yang mengandung `;`/newline
+  bisa menyuntik directive Nginx tambahan di luar yang dimaksud (beda dari
+  `custom_rewrite_rules` yang MEMANG sengaja raw passthrough).
+- **Traffic Analysis** (`website_traffic.php`) — request/hari dari access
+  log Nginx domain primary, termasuk log yang sudah dirotasi (`.1` +
+  `.gz`, lewat operasi `log-traffic-daily`/`op_log_traffic_daily` yang
+  parsing `awk` atas format `combined` bawaan Nginx). Bukan real-time/SSE
+  (data harian, push tiap detik tidak ada gunanya) — grafik batang CSS
+  polos, tanpa library chart.
+- **Backup** (`website_backup.php`) — trigger `BackupService::backupWebsite()`
+  + riwayat backup terfilter untuk domain ini saja (sebelumnya tombol
+  "Backup Sekarang" langsung di tabel utama, riwayatnya cuma bisa dilihat
+  gabung semua situs di Pengaturan > Backup & Restore).
+
 ## Node.js Apps
 
 Bagian paling kompleks, ditangani `NodeService`. Prinsip inti: **status

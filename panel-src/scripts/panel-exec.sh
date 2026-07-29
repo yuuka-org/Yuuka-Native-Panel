@@ -180,6 +180,47 @@ op_nginx_write_config() {
     echo "OK: konfigurasi ${site} ditulis dan valid"
 }
 
+# `limit_req_zone` is only valid at nginx's http{} context, never inside a
+# single server{} block - every rate-limited site's zone is declared
+# together in this ONE shared file instead, auto-included at http level
+# by Debian/Ubuntu's stock nginx.conf (`include /etc/nginx/conf.d/*.conf;`)
+# with no further wiring needed. Full content always comes from
+# NginxService, fully regenerated from the current DB state on every call
+# - this just validates+applies it (same test-then-rollback safety net as
+# op_nginx_write_config above).
+op_nginx_write_ratelimit_zones() {
+    local target="/etc/nginx/conf.d/panel-rate-limits.conf"
+    local tmp
+    tmp=$(mktemp)
+    cat > "$tmp"
+    [[ -s "$tmp" ]] || { rm -f "$tmp"; fail "Konten kosong"; }
+
+    local previous_backup=""
+    if [[ -f "$target" ]]; then
+        previous_backup=$(mktemp)
+        cp -a "$target" "$previous_backup"
+    fi
+
+    mv "$tmp" "$target"
+    chown root:root "$target"
+    chmod 644 "$target"
+
+    if ! nginx -t 2>/tmp/nginx-test-err.$$; then
+        if [[ -n "$previous_backup" ]]; then
+            mv "$previous_backup" "$target"
+        else
+            rm -f "$target"
+        fi
+        local err
+        err=$(cat /tmp/nginx-test-err.$$ 2>/dev/null || true)
+        rm -f "/tmp/nginx-test-err.$$"
+        fail "nginx -t gagal, rate limit dibatalkan: ${err}"
+    fi
+    rm -f "/tmp/nginx-test-err.$$" "$previous_backup" 2>/dev/null || true
+    systemctl reload nginx
+    echo "OK: rate limit zones diterapkan"
+}
+
 op_nginx_enable() {
     local site="$1"
     require_match "$site" "$RE_SITENAME" "sitename"
@@ -1695,6 +1736,41 @@ op_log_clear() {
     echo "OK: cleared $logkey"
 }
 
+# Requests-per-day for a domain's Nginx access log, for the panel's
+# Traffic Analysis tab - reads the live log plus whatever Ubuntu's stock
+# logrotate for nginx (/etc/logrotate.d/nginx, matches /var/log/nginx/*.log,
+# already covers per-site logs since they live in the same directory) has
+# rotated so far (.1 uncompressed, .N.gz compressed). Default combined log
+# format's date sits inside "[$time_local]" as e.g. "29/Jul/2026:10:15:32
+# +0000" - reformatted to YYYY-MM-DD (sortable, unlike the original
+# day/Mon/year order) and counted per day. Output: "YYYY-MM-DD<TAB>count",
+# chronological.
+op_log_traffic_daily() {
+    local domain="$1"
+    require_match "$domain" "$RE_DOMAIN" "domain"
+    local base="/var/log/nginx/${domain}-access.log"
+    {
+        [[ -f "$base" ]] && cat "$base"
+        [[ -f "${base}.1" ]] && cat "${base}.1"
+        for gz in "${base}".*.gz; do
+            [[ -f "$gz" ]] && zcat "$gz"
+        done
+    } 2>/dev/null | awk '
+        {
+            split($0, a, "[");
+            if (length(a[2]) < 11) next;
+            split(a[2], b, ":");
+            split(b[1], p, "/");
+            m["Jan"]="01"; m["Feb"]="02"; m["Mar"]="03"; m["Apr"]="04";
+            m["May"]="05"; m["Jun"]="06"; m["Jul"]="07"; m["Aug"]="08";
+            m["Sep"]="09"; m["Oct"]="10"; m["Nov"]="11"; m["Dec"]="12";
+            if (!(p[2] in m)) next;
+            count[p[3] "-" m[p[2]] "-" p[1]]++;
+        }
+        END { for (k in count) print k "\t" count[k]; }
+    ' | sort
+}
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -1706,6 +1782,7 @@ case "$SUBCOMMAND" in
     nginx-test)            op_nginx_test ;;
     nginx-reload)          op_nginx_reload ;;
     nginx-write-config)    op_nginx_write_config "$@" ;;
+    nginx-write-ratelimit-zones) op_nginx_write_ratelimit_zones ;;
     nginx-enable)          op_nginx_enable "$@" ;;
     nginx-disable)         op_nginx_disable "$@" ;;
     nginx-delete)          op_nginx_delete "$@" ;;
@@ -1775,6 +1852,7 @@ case "$SUBCOMMAND" in
     cron-delete)           op_cron_delete "$@" ;;
     log-tail)              op_log_tail "$@" ;;
     log-clear)             op_log_clear "$@" ;;
+    log-traffic-daily)     op_log_traffic_daily "$@" ;;
     *)
         echo "ERROR: subcommand tidak dikenal: ${SUBCOMMAND}" >&2
         audit "$SUBCOMMAND" "rejected:unknown-subcommand"

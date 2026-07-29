@@ -18,7 +18,7 @@ final class Executor
 {
     private const WHITELIST = [
         'nginx-test', 'nginx-reload', 'nginx-write-config', 'nginx-enable',
-        'nginx-disable', 'nginx-delete',
+        'nginx-disable', 'nginx-delete', 'nginx-write-ratelimit-zones',
         'pm2-deploy', 'pm2-start', 'pm2-stop', 'pm2-restart', 'pm2-reload', 'pm2-delete',
         'pm2-jlist', 'pm2-describe', 'pm2-logs', 'pm2-logs-size', 'pm2-logs-tail',
         'pm2-logs-list', 'pm2-logs-read-archive', 'pm2-flush', 'pm2-reset', 'pm2-save',
@@ -38,7 +38,7 @@ final class Executor
         'files-trash-list', 'files-trash-restore', 'files-trash-delete', 'files-trash-empty',
         'backup-tar-website', 'backup-tar-nodeapp', 'restore-tar-website', 'restore-tar-nodeapp',
         'cron-write', 'cron-delete',
-        'log-tail', 'log-clear',
+        'log-tail', 'log-clear', 'log-traffic-daily',
         'panel-basicauth-set', 'panel-security-entrance-set',
     ];
 

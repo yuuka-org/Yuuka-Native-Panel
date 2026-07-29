@@ -6,9 +6,118 @@ declare(strict_types=1);
  * are responsible for validating domain/php-version/paths beforehand.
  */
 
-function nginx_build_php_site_config(string $domain, string $phpVersion, string $documentRoot): string
+/**
+ * Must match exactly between a site's own `limit_req zone=X` reference and
+ * the shared conf.d zone declaration (nginx_build_rate_limit_zones_config)
+ * - both derive the name from the domain via this one function so they
+ * can never drift apart. Hashed rather than a lossy character-replacement
+ * scheme (e.g. stripping non-alnum) - two DIFFERENT domains like
+ * "a.b.com" and "a-b.com" would otherwise both sanitize to the exact same
+ * "zone_a_b_com", silently sharing one rate limit bucket between two
+ * unrelated sites (or failing nginx -t outright on the duplicate zone
+ * declaration).
+ */
+function nginx_rate_limit_zone_name(string $domain): string
 {
+    return 'zone_' . substr(md5(strtolower($domain)), 0, 12);
+}
+
+/**
+ * `limit_req_zone` is only valid at http{} context, never inside a single
+ * server{} block - every rate-limited site's zone is declared together in
+ * ONE shared file (conf.d, auto-included at http level by Debian/Ubuntu's
+ * stock nginx.conf), fully regenerated from the current DB state whenever
+ * any site's Traffic Control setting changes.
+ * @param array<int,array{domain:string,rate_limit_rps:int}> $rateLimitedSites
+ */
+function nginx_build_rate_limit_zones_config(array $rateLimitedSites): string
+{
+    if (empty($rateLimitedSites)) {
+        return "# Tidak ada situs dengan Traffic Control aktif saat ini\n";
+    }
+    $lines = ["# Auto-generated - jangan edit manual, akan ditimpa dari Settings tiap situs"];
+    foreach ($rateLimitedSites as $s) {
+        $zone = nginx_rate_limit_zone_name($s['domain']);
+        $rps = max(1, (int) $s['rate_limit_rps']);
+        $lines[] = "limit_req_zone \$binary_remote_addr zone={$zone}:10m rate={$rps}r/s;";
+    }
+    return implode("\n", $lines) . "\n";
+}
+
+/** @param array{extensions:string,referrers:string} $hotlink */
+function nginx_build_hotlink_block(string $domain, array $hotlink): string
+{
+    $extensions = trim($hotlink['extensions']) !== '' ? $hotlink['extensions'] : 'jpg|jpeg|png|gif|webp|svg|mp4|mp3|css|js';
+    $referrers = array_values(array_filter(array_map('trim', explode("\n", (string) $hotlink['referrers']))));
+    $allowList = implode(' ', array_merge([$domain, "*.{$domain}"], $referrers));
+
+    return <<<CONF
+
+    location ~* \.({$extensions})\$ {
+        valid_referers none blocked {$allowList};
+        if (\$invalid_referer) {
+            return 403;
+        }
+        try_files \$uri =404;
+    }
+CONF;
+}
+
+/**
+ * @param array{
+ *   default_index?:string, custom_rewrite_rules?:string,
+ *   redirect_target?:string,
+ *   rate_limit?:array{rps:int,burst:int}|null,
+ *   hotlink?:array{extensions:string,referrers:string}|null,
+ *   reverse_proxies?:array<int,array{path_prefix:string,target_url:string}>
+ * } $options
+ */
+function nginx_build_php_site_config(string $domain, string $phpVersion, string $documentRoot, array $options = []): string
+{
+    // A full-site Redirect short-circuits everything else below - nothing
+    // is actually served from disk for this domain, every request just
+    // bounces onward.
+    if (!empty($options['redirect_target'])) {
+        $target = $options['redirect_target'];
+        return <<<CONF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name {$domain};
+    include snippets/acme-challenge.conf;
+    return 301 {$target}\$request_uri;
+}
+CONF;
+    }
+
     $sock = "/run/php/php{$phpVersion}-fpm.sock";
+    $index = trim((string) ($options['default_index'] ?? '')) !== '' ? trim($options['default_index']) : 'index.php index.html';
+
+    $extra = '';
+    if (!empty($options['rate_limit'])) {
+        $zone = nginx_rate_limit_zone_name($domain);
+        $burst = max(0, (int) $options['rate_limit']['burst']);
+        $extra .= "    limit_req zone={$zone} burst={$burst} nodelay;\n";
+    }
+    if (!empty($options['hotlink'])) {
+        $extra .= nginx_build_hotlink_block($domain, $options['hotlink']);
+    }
+
+    $rewriteBlock = '';
+    if (!empty($options['custom_rewrite_rules'])) {
+        $rewriteBlock = "\n    # Custom URL Rewrite (dari Settings > Traffic & Rewrite)\n    " . trim($options['custom_rewrite_rules']) . "\n";
+    }
+
+    $reverseProxyLocations = '';
+    foreach ($options['reverse_proxies'] ?? [] as $rp) {
+        $reverseProxyLocations .= <<<LOC
+
+    location {$rp['path_prefix']} {
+        proxy_pass {$rp['target_url']};
+        include snippets/proxy-params.conf;
+    }
+LOC;
+    }
 
     return <<<CONF
 server {
@@ -20,15 +129,15 @@ server {
     include snippets/cloudflare-realip.conf;
 
     root {$documentRoot};
-    index index.php index.html;
+    index {$index};
 
     access_log /var/log/nginx/{$domain}-access.log;
     error_log  /var/log/nginx/{$domain}-error.log;
-
+{$extra}
     location / {
         try_files \$uri \$uri/ /index.php?\$query_string;
     }
-
+{$rewriteBlock}
     location ~ \.php\$ {
         include snippets/fastcgi-php.conf;
         fastcgi_pass unix:{$sock};
@@ -36,7 +145,7 @@ server {
     }
 
     location ~ /\.(?!well-known) { deny all; }
-
+{$reverseProxyLocations}
     include snippets/security-headers.conf;
 }
 CONF;
