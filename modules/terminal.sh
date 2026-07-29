@@ -329,7 +329,7 @@ location ^~ /terminal/ {
     # apparently confusing ttyd's own reconnect logic, which reads/writes
     # that same property. Reverted - this redirect never touches ttyd's
     # page content or JS at all, so it can't interfere with it).
-    if ($http_sec_fetch_dest = document) {
+    if (\$http_sec_fetch_dest = document) {
         return 302 /terminal;
     }
     auth_request /internal/terminal_auth.php;
