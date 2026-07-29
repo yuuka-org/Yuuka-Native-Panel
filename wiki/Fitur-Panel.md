@@ -65,35 +65,78 @@ CRUD website statis/PHP native, ditangani `NginxService`:
   (`fs-remove-website`).
 - `enableWildcard($id, $userId)` / `disableWildcard($id, $userId)` —
   Cloudflare for SaaS "Custom Hostname": website ini jadi `default_server`
-  Nginx, menerima domain apa pun yang diarahkan ke server (bukan cuma
-  domain terdaftarnya). **Hanya satu situs (website atau aplikasi Node.js)
-  yang boleh mengaktifkan ini** di seluruh server sekaligus — Nginx cuma
-  bisa punya satu `default_server` per `listen`, dicegah lewat
-  `NginxService::wildcardHolder()` yang mengecek tabel `websites` maupun
-  `nodejs_apps`. Aplikasi/website customer sendiri yang harus baca header
-  `Host` untuk tahu ini request tenant mana — panel tidak ikut campur di
-  situ.
+  Nginx, menerima domain apa pun yang diarahkan ke port wildcard-nya.
+  **Lebih dari satu situs (website maupun aplikasi Node.js) boleh
+  mengaktifkan ini sekaligus** (sejak migration `2026072901`) — tiap slot
+  dapat **port lokal sendiri** (`wildcard_port`, dipilih otomatis lewat
+  `NginxService::findFreeWildcardPort()`: coba port 80 dulu untuk slot
+  pertama/lama, baru rentang 8880-8979 untuk slot berikutnya), bukan
+  selalu berbagi port 80 — Nginx memang cuma boleh punya satu
+  `default_server` per `listen`, tapi itu artinya per PORT, bukan per
+  server, jadi banyak port berbeda masing-masing boleh punya
+  `default_server` sendiri. Slot non-80 sengaja `listen 127.0.0.1:<port>`
+  (bukan semua-interface) karena satu-satunya jalur masuk yang
+  dimaksudkan untuk slot itu adalah Tunnel Cloudflare-nya sendiri yang
+  jalan lokal — beda dari slot port-80 yang memang publik (perilaku lama,
+  dipertahankan apa adanya). `NginxService::wildcardSlots()` daftar semua
+  slot aktif lintas kedua tabel. Aplikasi/website customer sendiri yang
+  harus baca header `Host` untuk tahu ini request tenant mana — panel
+  tidak ikut campur di situ.
 
   **Wajib untuk deployment mode `tunnel`/`hybrid`**: kalau Fallback Origin
   Custom Hostname kamu adalah domain yang di-route lewat Cloudflare
   Tunnel (bukan IP publik langsung), Tunnel-nya sendiri **wajib** punya
-  **Catch-All Rule** yang diarahkan ke `http://127.0.0.1:80` (target yang
-  sama dengan route domain panel/app biasa) — bukan dibiarkan default
-  (`http_status:404`). Ini gara-gara cloudflared mencocokkan request
-  berdasarkan header `Host` yang benar-benar dikirim, dan trafik Custom
-  Hostname SaaS diteruskan Cloudflare dengan `Host` = domain custom milik
-  tenant (bukan domain Fallback Origin kamu) — jadi tidak akan pernah
-  cocok dengan rule hostname eksplisit mana pun, selalu jatuh ke
-  Catch-All. Tanpa ini, semua request Custom Hostname langsung dapat 404
-  instan dari Tunnel sendiri, sebelum sempat menyentuh Nginx/app sama
-  sekali (tidak akan muncul di log Nginx maupun `journalctl -u
-  cloudflared`, jadi gampang disangka masalah di panel padahal bukan).
-  Dashboard Cloudflare versi baru tidak lagi expose Catch-All Rule lewat
-  UI "Add route" — harus di-set lewat API `PUT
+  **Catch-All Rule** yang diarahkan ke `http://127.0.0.1:<port slot
+  ini>` (untuk slot pertama, sama dengan route domain panel/app biasa:
+  `http://127.0.0.1:80`) — bukan dibiarkan default (`http_status:404`).
+  Ini gara-gara cloudflared mencocokkan request berdasarkan header `Host`
+  yang benar-benar dikirim, dan trafik Custom Hostname SaaS diteruskan
+  Cloudflare dengan `Host` = domain custom milik tenant (bukan domain
+  Fallback Origin kamu) — jadi tidak akan pernah cocok dengan rule
+  hostname eksplisit mana pun, selalu jatuh ke Catch-All. Tanpa ini,
+  semua request Custom Hostname langsung dapat 404 instan dari Tunnel
+  sendiri, sebelum sempat menyentuh Nginx/app sama sekali (tidak akan
+  muncul di log Nginx maupun `journalctl -u cloudflared`, jadi gampang
+  disangka masalah di panel padahal bukan). Dashboard Cloudflare versi
+  baru tidak lagi expose Catch-All Rule lewat UI "Add route" — harus
+  di-set lewat API `PUT
   /accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations`,
   menambahkan satu entri di akhir array `ingress` **tanpa** field
   `hostname`. Lihat [Troubleshooting](Troubleshooting.md) untuk contoh
   perintahnya.
+
+  **Lebih dari satu SaaS/slot wildcard sekaligus** — riset ke dokumentasi
+  resmi Cloudflare (bukan tebakan, lihat sumber di bawah) memastikan:
+  Host header yang dilihat cloudflared untuk mencocokkan `ingress` rule
+  **selalu** domain custom milik tenant, apa pun override "Custom Origin
+  Server"/SNI yang di-set di Cloudflare for SaaS — jadi trafik dari SATU
+  Tunnel yang sama, ke berapa pun banyak zone SaaS, akan selalu jatuh ke
+  **Catch-All yang sama**. Satu-satunya cara memisahkan trafik dua "pool"
+  SaaS yang berbeda adalah lewat **Tunnel Cloudflare yang benar-benar
+  terpisah** (instance `cloudflared` kedua/ketiga/dst, bukan cuma ingress
+  rule tambahan di Tunnel yang sama) — masing-masing Tunnel independen
+  boleh punya Catch-All Rule sendiri, diarahkan ke port slot wildcard yang
+  berbeda-beda di panel ini. Panel **belum** mengotomasi pembuatan Tunnel
+  tambahan (modul `cloudflare.sh` cuma pasang satu service `cloudflared`
+  via token) — untuk slot kedua dst, admin perlu manual:
+  1. Zero Trust Dashboard > Networks > Tunnels > Create a tunnel (dapat
+     token baru).
+  2. Aktifkan wildcard di panel untuk situs yang diinginkan, catat port
+     yang di-assign (ditampilkan di tab Domain & SSL/Domain).
+  3. Install `cloudflared` instance kedua secara manual di server (unit
+     systemd baru, token file terpisah dari
+     `/etc/cloudflared/tunnel.env` yang sudah dipakai instance pertama)
+     dijalankan dengan token dari Tunnel baru itu.
+  4. Set Catch-All Rule Tunnel baru itu ke `http://127.0.0.1:<port slot>`
+     lewat API (sama caranya seperti Tunnel pertama).
+  5. Arahkan Fallback Origin zone SaaS kedua ke domain yang di-CNAME ke
+     Tunnel baru itu (bukan Tunnel pertama).
+
+Sumber riset: [Configuring Cloudflare for SaaS](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/start/getting-started/),
+[Custom origin server](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/start/advanced-settings/custom-origin/)
+(host header tetap domain custom tenant meski origin di-override),
+[Tunnel ingress configuration](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/local-management/configuration-file/)
+(pencocokan ingress rule berdasarkan HTTP Host header, bukan SNI).
 
 Setiap website terikat ke satu versi PHP-FPM tertentu (`php_version`,
 kolom di tabel `websites`) — pool PHP-FPM per versi sudah disiapkan saat
@@ -199,8 +242,10 @@ metadata (lihat [Arsitektur](Arsitektur.md) pilar #2).
   sama. Domain pertama yang ditambahkan jadi "primary" (kolom `domain` di
   `nodejs_apps`, ditampilkan di tabel utama).
 - `enableWildcard($id, $userId)` / `disableWildcard(...)` — sama seperti
-  Website PHP di atas: Cloudflare for SaaS Custom Hostname, satu slot
-  untuk seluruh server (lintas tabel `websites`+`nodejs_apps`).
+  Website PHP di atas: Cloudflare for SaaS Custom Hostname, boleh lebih
+  dari satu slot aktif lintas tabel `websites`+`nodejs_apps`, tiap slot
+  dapat port lokal sendiri (lihat penjelasan lengkap + cara setup Tunnel
+  tambahan di bagian Website PHP).
 - `combinedStatus()` — gabungan data `pm2 jlist` (runtime) + tabel
   `nodejs_apps` (metadata) untuk ditampilkan di UI.
 - `importUnmanaged($pm2Name, $userId)` — mengambil alih proses PM2 yang

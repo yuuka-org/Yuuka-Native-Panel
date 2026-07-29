@@ -403,21 +403,30 @@ final class NodeService
         ActivityLog::record($userId, "nodejs.{$action}", "Aplikasi {$app['app_name']}: {$action}");
     }
 
-    /** Cloudflare for SaaS "Custom Hostnames" - see NginxService::wildcardHolder() for the cross-table "only one site total" rule this shares with websites. */
+    /**
+     * Cloudflare for SaaS "Custom Hostnames" - see
+     * NginxService::wildcardSlots()/findFreeWildcardPort() for the
+     * cross-table (websites + nodejs_apps) port allocation this shares.
+     * More than one site total may hold a slot now, each on its own
+     * dedicated port - see migration 2026072901.
+     */
     public static function enableWildcard(int $id, ?int $userId): void
     {
         $app = self::find($id);
         if ($app === null) {
             throw new InvalidArgumentException('Aplikasi tidak ditemukan');
         }
+        if ((bool) $app['wildcard_enabled']) {
+            return;
+        }
 
-        $holder = NginxService::wildcardHolder();
-        if ($holder !== null && !($holder['type'] === 'nodejs' && $holder['id'] === $id)) {
-            throw new InvalidArgumentException("Slot wildcard sudah dipakai oleh {$holder['name']} - nonaktifkan itu dulu (hanya satu situs yang boleh menerima domain apa saja dalam satu server).");
+        $port = NginxService::findFreeWildcardPort();
+        if ($port === null) {
+            throw new RuntimeException('Tidak ada port kosong tersedia untuk slot wildcard baru.');
         }
 
         $siteName = "wildcard-node-{$app['app_name']}";
-        $config = nginx_build_nodejs_wildcard_proxy_config((int) $app['port']);
+        $config = nginx_build_nodejs_wildcard_proxy_config((int) $app['port'], $port);
         $write = nginx_write_config($siteName, $config);
         if (!$write['ok']) {
             throw new RuntimeException('Konfigurasi Nginx tidak valid: ' . $write['output']);
@@ -427,8 +436,9 @@ final class NodeService
             throw new RuntimeException('Gagal mengaktifkan situs wildcard: ' . $enable['output']);
         }
 
-        Database::app()->prepare('UPDATE nodejs_apps SET wildcard_enabled = 1 WHERE id = :id')->execute(['id' => $id]);
-        ActivityLog::record($userId, 'nodejs.wildcard_enable', "Wildcard hostname diaktifkan untuk {$app['app_name']}");
+        Database::app()->prepare('UPDATE nodejs_apps SET wildcard_enabled = 1, wildcard_port = :p WHERE id = :id')
+            ->execute(['p' => $port, 'id' => $id]);
+        ActivityLog::record($userId, 'nodejs.wildcard_enable', "Wildcard hostname diaktifkan untuk {$app['app_name']} (port {$port})");
     }
 
     public static function disableWildcard(int $id, ?int $userId): void
@@ -439,7 +449,7 @@ final class NodeService
         }
 
         nginx_delete_site("wildcard-node-{$app['app_name']}");
-        Database::app()->prepare('UPDATE nodejs_apps SET wildcard_enabled = 0 WHERE id = :id')->execute(['id' => $id]);
+        Database::app()->prepare('UPDATE nodejs_apps SET wildcard_enabled = 0, wildcard_port = NULL WHERE id = :id')->execute(['id' => $id]);
         ActivityLog::record($userId, 'nodejs.wildcard_disable', "Wildcard hostname dinonaktifkan untuk {$app['app_name']}");
     }
 

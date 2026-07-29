@@ -51,7 +51,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $domains = NginxService::listDomains($id);
-$wildcardHolder = NginxService::wildcardHolder();
 $activeWebsiteTab = 'domains';
 
 $pageTitle = 'Domain - ' . $site['domain'];
@@ -139,11 +138,12 @@ include __DIR__ . ($embed ? '/partials/embed_header.php' : '/partials/header.php
   <div class="card-body">
     <p class="text-muted small">
       Untuk layanan SaaS yang customer-nya pakai domain sendiri lewat Cloudflare Custom Hostname: website ini akan menerima request untuk <strong>domain apa pun</strong>
-      yang diarahkan ke server ini (bukan cuma domain yang terdaftar di atas), termasuk akses langsung ke IP server. Hanya satu situs (website atau aplikasi Node.js)
-      yang boleh mengaktifkan ini dalam satu server - situs lain tetap jalan normal berdasarkan domainnya masing-masing.
+      yang diarahkan ke port wildcard-nya (termasuk akses langsung ke IP server di port itu). Lebih dari satu situs boleh punya slot wildcard sendiri-sendiri
+      sekarang - masing-masing dapat port lokal berbeda otomatis, tapi tetap butuh Cloudflare Tunnel-nya <strong>sendiri</strong> per slot (kecuali slot pertama/port 80).
+      Lihat halaman wiki "Fitur Panel" untuk cara setup Tunnel tambahan.
     </p>
     <?php if ((bool) $site['wildcard_enabled']): ?>
-      <p class="mb-2"><span class="badge text-bg-success"><i class="bi bi-check-circle me-1"></i>Aktif</span> untuk website ini.</p>
+      <p class="mb-2"><span class="badge text-bg-success"><i class="bi bi-check-circle me-1"></i>Aktif</span> di port <code><?= (int) $site['wildcard_port'] ?></code> untuk website ini.</p>
       <?php if (Rbac::can($user['role'], 'website.create')): ?>
       <form method="post" data-confirm="Nonaktifkan wildcard hostname untuk <?= e($site['domain']) ?>?">
         <?= Csrf::field() ?>
@@ -151,14 +151,22 @@ include __DIR__ . ($embed ? '/partials/embed_header.php' : '/partials/header.php
         <button class="btn btn-outline-secondary">Nonaktifkan</button>
       </form>
       <?php endif; ?>
-    <?php elseif ($wildcardHolder !== null): ?>
-      <p class="mb-0 text-muted">Slot wildcard sedang dipakai oleh <strong><?= e($wildcardHolder['name']) ?></strong> (<?= $wildcardHolder['type'] === 'website' ? 'Website PHP' : 'Aplikasi Node.js' ?>) - nonaktifkan di sana dulu untuk memindahkannya ke sini.</p>
     <?php elseif (Rbac::can($user['role'], 'website.create')): ?>
-      <form method="post" data-confirm="Aktifkan wildcard hostname untuk <?= e($site['domain']) ?>? Website ini akan menerima domain apa pun yang belum terdaftar di situs lain.">
+      <form method="post" data-confirm="Aktifkan wildcard hostname untuk <?= e($site['domain']) ?>? Website ini akan dapat port wildcard sendiri (otomatis dipilih) - butuh Cloudflare Tunnel terpisah untuk yang bukan port 80.">
         <?= Csrf::field() ?>
         <input type="hidden" name="action" value="wildcard_enable">
         <button class="btn btn-outline-primary">Aktifkan Wildcard Hostname</button>
       </form>
+    <?php endif; ?>
+    <?php $otherSlots = array_filter(NginxService::wildcardSlots(), static fn(array $s): bool => !($s['type'] === 'website' && $s['id'] === $id)); ?>
+    <?php if (!empty($otherSlots)): ?>
+      <hr>
+      <p class="small text-muted mb-1">Slot wildcard lain yang sedang aktif di server ini:</p>
+      <ul class="small text-muted mb-0">
+        <?php foreach ($otherSlots as $s): ?>
+          <li><?= e($s['name']) ?> (<?= $s['type'] === 'website' ? 'Website PHP' : 'Aplikasi Node.js' ?>) - port <code><?= (int) $s['port'] ?></code></li>
+        <?php endforeach; ?>
+      </ul>
     <?php endif; ?>
   </div>
 </div>

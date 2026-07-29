@@ -206,7 +206,7 @@ final class NginxService
             }
             if ((bool) $site['wildcard_enabled']) {
                 nginx_delete_site('wildcard-' . $site['nginx_conf_name']);
-                self::writeAndEnable('wildcard-' . $newSiteName, nginx_build_php_wildcard_site_config($phpVersion, $documentRoot));
+                self::writeAndEnable('wildcard-' . $newSiteName, nginx_build_php_wildcard_site_config($phpVersion, $documentRoot, (int) $site['wildcard_port']));
             }
         }
 
@@ -513,24 +513,66 @@ final class NginxService
     }
 
     /**
-     * Which site (website or Node.js app) currently holds the wildcard/
-     * default_server slot, if any - nginx allows exactly one
-     * default_server per listen address:port, so only one site across
-     * BOTH tables may ever have this enabled at once.
-     * @return array{type:'website'|'nodejs', id:int, name:string}|null
+     * Every site (website or Node.js app) currently holding a wildcard/
+     * default_server slot. More than one may be active at once (see
+     * migration 2026072901) - each gets its OWN dedicated local port, so
+     * nginx's one-default_server-per-listen-port rule never actually
+     * conflicts between them. Reaching any slot beyond the first (which
+     * keeps the original port 80) from Cloudflare still needs its own
+     * separate Tunnel instance - see wiki/Fitur-Panel.md.
+     * @return array<int,array{type:'website'|'nodejs', id:int, name:string, port:int}>
      */
-    public static function wildcardHolder(): ?array
+    public static function wildcardSlots(): array
     {
         $pdo = Database::app();
-        $w = $pdo->query('SELECT id, domain FROM websites WHERE wildcard_enabled = 1 LIMIT 1')->fetch();
-        if ($w) {
-            return ['type' => 'website', 'id' => (int) $w['id'], 'name' => $w['domain']];
+        $slots = [];
+        foreach ($pdo->query('SELECT id, domain, wildcard_port FROM websites WHERE wildcard_enabled = 1')->fetchAll() as $w) {
+            $slots[] = ['type' => 'website', 'id' => (int) $w['id'], 'name' => $w['domain'], 'port' => (int) $w['wildcard_port']];
         }
-        $n = $pdo->query('SELECT id, app_name FROM nodejs_apps WHERE wildcard_enabled = 1 LIMIT 1')->fetch();
-        if ($n) {
-            return ['type' => 'nodejs', 'id' => (int) $n['id'], 'name' => $n['app_name']];
+        foreach ($pdo->query('SELECT id, app_name, wildcard_port FROM nodejs_apps WHERE wildcard_enabled = 1')->fetchAll() as $n) {
+            $slots[] = ['type' => 'nodejs', 'id' => (int) $n['id'], 'name' => $n['app_name'], 'port' => (int) $n['wildcard_port']];
+        }
+        return $slots;
+    }
+
+    /** Prefers port 80 (the original/only option, kept for anyone whose Tunnel is already pointed there) before allocating a new dedicated port. */
+    public static function findFreeWildcardPort(): ?int
+    {
+        if (self::isWildcardPortFree(80)) {
+            return 80;
+        }
+        for ($port = 8880; $port <= 8979; $port++) {
+            if (self::isWildcardPortFree($port)) {
+                return $port;
+            }
         }
         return null;
+    }
+
+    private static function isWildcardPortFree(int $port): bool
+    {
+        $pdo = Database::app();
+        $w = $pdo->prepare('SELECT COUNT(*) FROM websites WHERE wildcard_port = :p');
+        $w->execute(['p' => $port]);
+        if ((int) $w->fetchColumn() > 0) {
+            return false;
+        }
+        $n = $pdo->prepare('SELECT COUNT(*) FROM nodejs_apps WHERE wildcard_port = :p');
+        $n->execute(['p' => $port]);
+        if ((int) $n->fetchColumn() > 0) {
+            return false;
+        }
+        // Port 80 is nginx's own normal shared public port (the panel and
+        // every regular site already listen there) - a NEW wildcard
+        // server{} block sharing it is exactly how virtual hosting
+        // already works, not a fresh bind, so the OS-level free-port
+        // check below (meant for a brand-new dedicated port) would
+        // wrongly report it "taken" by nginx itself.
+        if ($port === 80) {
+            return true;
+        }
+        $check = Executor::run('port-check', [(string) $port], null, 10);
+        return $check['ok'] && trim($check['output']) === 'free';
     }
 
     public static function enableWildcard(int $id, ?int $userId): void
@@ -539,14 +581,17 @@ final class NginxService
         if ($site === null) {
             throw new InvalidArgumentException('Website tidak ditemukan');
         }
+        if ((bool) $site['wildcard_enabled']) {
+            return;
+        }
 
-        $holder = self::wildcardHolder();
-        if ($holder !== null && !($holder['type'] === 'website' && $holder['id'] === $id)) {
-            throw new InvalidArgumentException("Slot wildcard sudah dipakai oleh {$holder['name']} - nonaktifkan itu dulu (hanya satu situs yang boleh menerima domain apa saja dalam satu server).");
+        $port = self::findFreeWildcardPort();
+        if ($port === null) {
+            throw new RuntimeException('Tidak ada port kosong tersedia untuk slot wildcard baru.');
         }
 
         $siteName = 'wildcard-' . $site['nginx_conf_name'];
-        $config = nginx_build_php_wildcard_site_config($site['php_version'], $site['document_root']);
+        $config = nginx_build_php_wildcard_site_config($site['php_version'], $site['document_root'], $port);
         $write = nginx_write_config($siteName, $config);
         if (!$write['ok']) {
             throw new RuntimeException('Konfigurasi Nginx tidak valid: ' . $write['output']);
@@ -556,8 +601,9 @@ final class NginxService
             throw new RuntimeException('Gagal mengaktifkan situs wildcard: ' . $enable['output']);
         }
 
-        Database::app()->prepare('UPDATE websites SET wildcard_enabled = 1 WHERE id = :id')->execute(['id' => $id]);
-        ActivityLog::record($userId, 'website.wildcard_enable', "Wildcard hostname diaktifkan untuk {$site['domain']}");
+        Database::app()->prepare('UPDATE websites SET wildcard_enabled = 1, wildcard_port = :p WHERE id = :id')
+            ->execute(['p' => $port, 'id' => $id]);
+        ActivityLog::record($userId, 'website.wildcard_enable', "Wildcard hostname diaktifkan untuk {$site['domain']} (port {$port})");
     }
 
     public static function disableWildcard(int $id, ?int $userId): void
@@ -568,7 +614,7 @@ final class NginxService
         }
 
         nginx_delete_site('wildcard-' . $site['nginx_conf_name']);
-        Database::app()->prepare('UPDATE websites SET wildcard_enabled = 0 WHERE id = :id')->execute(['id' => $id]);
+        Database::app()->prepare('UPDATE websites SET wildcard_enabled = 0, wildcard_port = NULL WHERE id = :id')->execute(['id' => $id]);
         ActivityLog::record($userId, 'website.wildcard_disable', "Wildcard hostname dinonaktifkan untuk {$site['domain']}");
     }
 

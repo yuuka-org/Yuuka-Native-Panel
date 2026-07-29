@@ -180,20 +180,54 @@ CONF;
  * arbitrary customer-owned domains to a single fallback origin, so this
  * vhost can't be registered per-domain like every other site here - it
  * has to accept ANY Host header. `default_server` makes it nginx's
- * catch-all for this listen socket (only one site total may hold this,
- * enforced in NginxService::wildcardHolder() before this is ever
- * written) - `server_name _` alone does nothing without it, "_" isn't
+ * catch-all for this listen socket (only one site may hold this per
+ * PORT, enforced in NginxService::findFreeWildcardPort()/wildcardSlots()
+ * before this is ever written - each site gets its own dedicated port
+ * so more than one wildcard slot can coexist, see migration
+ * 2026072901) - `server_name _` alone does nothing without it, "_" isn't
  * special syntax, it's just a conventional placeholder hostname nobody
  * would ever actually send as a real Host header.
  */
-function nginx_build_php_wildcard_site_config(string $phpVersion, string $documentRoot): string
+/**
+ * Port 80 keeps its historical bind-all-interfaces behavior (it's the
+ * server's normal shared public HTTP port - every other site's traffic,
+ * ACME challenges, etc already share this exact same listening socket,
+ * and the very first wildcard slot deliberately being reachable via
+ * direct IP access, not just through Cloudflare, is already documented,
+ * pre-existing, accepted behavior). Every OTHER wildcard port is a
+ * brand-new dedicated port that nothing else on the server binds to -
+ * its only intended access path is its own dedicated Cloudflare Tunnel
+ * instance connecting locally, so it's bound to loopback only. This is a
+ * real security improvement, not just style: without it, each additional
+ * wildcard slot would be a brand-new bare HTTP port wide open to the
+ * entire internet, bypassing Cloudflare's proxy/WAF/TLS entirely.
+ */
+function nginx_wildcard_listen_directives(int $listenPort): string
+{
+    if ($listenPort === 80) {
+        return "    listen 80 default_server;\n    listen [::]:80 default_server;";
+    }
+    return "    listen 127.0.0.1:{$listenPort} default_server;\n    listen [::1]:{$listenPort} default_server;";
+}
+
+/**
+ * $listenPort is this wildcard SLOT's own dedicated local port - NOT
+ * always 80. More than one site can hold a wildcard slot at once (see
+ * migration 2026072901), each bound to a DIFFERENT $listenPort, which is
+ * what makes that possible at all: nginx allows exactly one
+ * default_server per listen address:PORT, but any number of DIFFERENT
+ * ports may each have their own. Reaching a given slot from Cloudflare
+ * still needs its own independent Tunnel instance whose Catch-All Rule
+ * points at this exact port - see wiki/Fitur-Panel.md.
+ */
+function nginx_build_php_wildcard_site_config(string $phpVersion, string $documentRoot, int $listenPort): string
 {
     $sock = "/run/php/php{$phpVersion}-fpm.sock";
+    $listen = nginx_wildcard_listen_directives($listenPort);
 
     return <<<CONF
 server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
+{$listen}
     server_name _;
 
     include snippets/cloudflare-realip.conf;
@@ -201,8 +235,8 @@ server {
     root {$documentRoot};
     index index.php index.html;
 
-    access_log /var/log/nginx/wildcard-php-access.log;
-    error_log  /var/log/nginx/wildcard-php-error.log;
+    access_log /var/log/nginx/wildcard-php-{$listenPort}-access.log;
+    error_log  /var/log/nginx/wildcard-php-{$listenPort}-error.log;
 
     location / {
         try_files \$uri \$uri/ /index.php?\$query_string;
@@ -221,22 +255,27 @@ server {
 CONF;
 }
 
-/** Same reasoning as nginx_build_php_wildcard_site_config() above. */
-function nginx_build_nodejs_wildcard_proxy_config(int $port): string
+/**
+ * $appPort is the Node.js app's own PM2/proxy target port (unrelated to
+ * $listenPort, this wildcard SLOT's dedicated local port) - same
+ * multi-slot reasoning as nginx_build_php_wildcard_site_config() above.
+ */
+function nginx_build_nodejs_wildcard_proxy_config(int $appPort, int $listenPort): string
 {
+    $listen = nginx_wildcard_listen_directives($listenPort);
+
     return <<<CONF
 server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
+{$listen}
     server_name _;
 
     include snippets/cloudflare-realip.conf;
 
-    access_log /var/log/nginx/wildcard-nodejs-access.log;
-    error_log  /var/log/nginx/wildcard-nodejs-error.log;
+    access_log /var/log/nginx/wildcard-nodejs-{$listenPort}-access.log;
+    error_log  /var/log/nginx/wildcard-nodejs-{$listenPort}-error.log;
 
     location / {
-        proxy_pass http://127.0.0.1:{$port};
+        proxy_pass http://127.0.0.1:{$appPort};
         include snippets/proxy-params.conf;
     }
 
