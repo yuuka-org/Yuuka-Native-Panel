@@ -111,6 +111,26 @@ require APP_PATH . '/public/partials/header.php';
 <?php require APP_PATH . '/public/partials/footer.php'; ?>
 ```
 
+## Menyimpan state plugin
+
+Plugin **tidak bisa menulis ke folder instalasinya sendiri** dari PHP
+(`plugin.json`/`pages/*` sengaja read-only untuk user `panel`, lihat di
+atas) - satu-satunya tempat plugin bisa menyimpan state adalah **database
+panel**, yang bisa diakses langsung lewat `Database::app()` (PDO, sama
+persis yang dipakai kode inti panel - tidak ada batasan khusus untuk
+plugin). Konvensinya: prefix nama tabel dengan `plugin_<slug>_`
+(`plugin_hosting_seller_accounts`, dst) dan buat tabelnya sendiri lewat
+`CREATE TABLE IF NOT EXISTS` di kode plugin (dipanggil lazy, bukan lewat
+mekanisme migrasi terpisah - lihat contoh `HostingSellerService::
+ensureSchema()` di plugin `hosting-seller`).
+
+`exec_ops` di manifest boleh dikosongkan (`[]`) kalau plugin sama sekali
+tidak butuh script root sendiri - banyak logika (bikin/hapus website,
+kelola database, dst) sudah tersedia langsung lewat class inti panel
+(`NginxService`, `NodeService`, `DatabaseService`, dst) yang bisa dipanggil
+langsung dari kode plugin tanpa lewat `panel-exec.sh` sama sekali, karena
+kode plugin berjalan di trust level yang sama dengan kode panel inti.
+
 ## Menjalankan operasi root dari halaman plugin
 
 ```php
