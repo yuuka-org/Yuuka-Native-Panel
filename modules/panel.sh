@@ -138,7 +138,17 @@ pm.max_requests = 500
 ; virtual, world-readable kernel counters, not real user files. Disk usage
 ; and every other privileged/system operation still goes exclusively
 ; through panel-exec.sh via sudo (see app/services/Executor.php).
-php_admin_value[open_basedir] = ${PANEL_ROOT}:/tmp:/proc
+; /opt/server-panel-plugins (PluginService's PLUGIN_DIR, mirrors
+; panel-exec.sh's own constant of the same name) is a SIBLING of
+; PANEL_ROOT, not nested inside it - deliberately, so rsync redeploying
+; the panel itself never touches installed plugins. Without it listed
+; here too, PHP-FPM's own open_basedir silently blocks PluginService from
+; ever reading a plugin's manifest.json/pages back after panel-exec.sh
+; (running as root, unaffected by this PHP-level restriction) has
+; already installed it - the install itself reports success, but the
+; panel can never see the result ("Plugin terpasang tapi manifest tidak
+; terbaca").
+php_admin_value[open_basedir] = ${PANEL_ROOT}:/tmp:/proc:/opt/server-panel-plugins
 php_admin_value[disable_functions] = exec,passthru,shell_exec,system,popen,pcntl_exec
 php_admin_flag[allow_url_fopen] = off
 ; Set to a generous static ceiling, matching Nginx's client_max_body_size
