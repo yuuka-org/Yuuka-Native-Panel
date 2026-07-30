@@ -64,7 +64,21 @@ Saat instalasi, panel otomatis:
   mendefinisikan permission sendiri yang lebih longgar.
 - **`routes`** — peta `route name` → path relatif file PHP di dalam
   folder plugin (tidak boleh `..` atau diawali `/`). Diakses lewat
-  `/plugin.php?slug=<slug>&route=<route>`.
+  `/plugin.php?slug=<slug>&route=<route>`, **wajib sesi login admin**
+  (`Rbac::require('plugin.manage')` dicek di dispatcher sebelum file
+  plugin di-`require`).
+- **`api_routes`** — sama persis strukturnya dengan `routes`, tapi
+  diakses lewat dispatcher **terpisah** `/plugin_api.php?slug=<slug>&route=<route>`
+  yang **TIDAK** mengecek sesi login sama sekali - dipakai untuk caller
+  dari luar yang tidak punya sesi panel (modul provisioning WHMCS,
+  webhook, dst). Karena tidak ada sesi untuk dicek, **plugin sendiri yang
+  wajib mengautentikasi pemanggilnya** (misal cek header shared-secret)
+  di baris pertama file `api_routes`-nya sebelum melakukan apa pun -
+  panel cuma menjamin path containment (file yang dijalankan benar-benar
+  ada di dalam folder plugin itu), bukan siapa yang boleh memanggilnya.
+  Dua manifest key ini sengaja dipisah (bukan satu peta yang sama) supaya
+  penulis plugin tidak bisa salah taruh halaman admin-only di dispatcher
+  publik atau sebaliknya.
 - **`cron`** — tiap entri jadi satu baris di `/etc/cron.d/plugin-<slug>`,
   dijalankan **sebagai root langsung** (bukan lewat `plugin-exec`,
   karena file cron.d sudah dikontrol root dari awal). `script` relatif

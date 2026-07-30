@@ -262,15 +262,39 @@ final class PluginService
 
     /**
      * Resolves a manifest-declared route to its PHP file, confined to
-     * the plugin's own directory - used by public/plugin.php.
+     * the plugin's own directory - used by public/plugin.php (admin
+     * session required, see Rbac::require('plugin.manage') there).
      */
     public static function resolveRouteFile(array $plugin, string $route): ?string
+    {
+        return self::resolveManifestFile($plugin, 'routes', $route);
+    }
+
+    /**
+     * Same resolution as resolveRouteFile(), but reads the manifest's
+     * SEPARATE "api_routes" map - used by public/plugin_api.php, which
+     * deliberately does NOT require an admin session (an external caller
+     * like a WHMCS provisioning module has no panel login of its own).
+     * The two are kept as distinct manifest keys/dispatchers so a plugin
+     * author can never accidentally expose an admin-only page (routes)
+     * to the internet, or vice versa - each file only ever ends up
+     * reachable through the ONE dispatcher matching its declared kind.
+     * Authenticating the caller (e.g. a shared-secret header) is the
+     * PLUGIN's own responsibility inside its api_routes file - this
+     * layer only enforces path containment, same as resolveRouteFile().
+     */
+    public static function resolveApiRouteFile(array $plugin, string $route): ?string
+    {
+        return self::resolveManifestFile($plugin, 'api_routes', $route);
+    }
+
+    private static function resolveManifestFile(array $plugin, string $manifestKey, string $route): ?string
     {
         $manifest = $plugin['manifest'];
         if ($manifest === null) {
             return null;
         }
-        $routes = $manifest['routes'] ?? [];
+        $routes = $manifest[$manifestKey] ?? [];
         if (!is_array($routes) || !isset($routes[$route]) || !is_string($routes[$route])) {
             return null;
         }
