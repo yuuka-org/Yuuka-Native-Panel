@@ -124,6 +124,20 @@ plugin). Konvensinya: prefix nama tabel dengan `plugin_<slug>_`
 mekanisme migrasi terpisah - lihat contoh `HostingSellerService::
 ensureSchema()` di plugin `hosting-seller`).
 
+**Jangan `is_file()`/`file_exists()`/`file_get_contents()` langsung ke path
+sistem dari halaman plugin** (mis. `/etc/nginx/...`) untuk mengecek status
+sesuatu - `open_basedir` PHP-FPM pool panel dibatasi HANYA ke
+`${PANEL_ROOT}:/tmp:/proc:/opt/server-panel-plugins`
+(`modules/panel.sh`). Panggilan seperti itu **selalu diam-diam bernilai
+false**, tidak peduli apa yang sebenarnya ada di disk - tidak ada error,
+tidak ada warning yang kelihatan (bug ini kejadian sungguhan di plugin
+WAF: `bin/install.sh` berhasil sepenuhnya, tapi `pages/index.php`-nya
+tetap menampilkan "Belum terpasang" karena baca `is_file()` ke
+`/etc/nginx/modsec/main.conf`). Simpan status "apakah X sudah terpasang/
+aktif" itu sendiri di tabel plugin (di-update lewat kode PHP tepat
+setelah `runScript()` melapor sukses), **bukan** dengan mengecek ulang
+kondisi filesystem tiap kali halaman dibuka.
+
 `exec_ops` di manifest boleh dikosongkan (`[]`) kalau plugin sama sekali
 tidak butuh script root sendiri - banyak logika (bikin/hapus website,
 kelola database, dst) sudah tersedia langsung lewat class inti panel
