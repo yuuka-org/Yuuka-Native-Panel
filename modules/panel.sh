@@ -195,9 +195,22 @@ EOF
     # non-prefixed ReadWritePaths= entry doesn't exist (this exact
     # oversight took a panel down on a tunnel-mode server before it was
     # caught and fixed here).
+    #
+    # /usr was added for the plugin system's trusted root-exec bridge
+    # (see PLUGIN_DIR in panel-exec.sh) - a plugin's bin/*.sh may
+    # legitimately need `apt-get install` (the WAF reference plugin does,
+    # to install the ModSecurity Nginx connector), and ProtectSystem=full
+    # otherwise mounts /usr read-only too, which surfaces as every dpkg
+    # unpack step failing with "Read-only file system" (confirmed live -
+    # apt found and "installed" the packages, dpkg just couldn't unpack
+    # any of them). This does widen what a plugin could touch beyond /etc
+    # alone, but plugins in this panel are ALREADY explicitly trusted with
+    # full root via plugin-exec (an operator choice made before ever
+    # installing one - see wiki/Plugin-Development.md) - this is that same
+    # trust boundary, not a new one.
     write_file_if_changed "${dropin_dir}/panel-write-paths.conf" <<'EOF'
 [Service]
-ReadWritePaths=/etc/nginx /etc/cron.d -/etc/letsencrypt
+ReadWritePaths=/etc/nginx /etc/cron.d -/etc/letsencrypt /usr
 EOF
     systemctl daemon-reload
 
