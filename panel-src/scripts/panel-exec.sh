@@ -1944,6 +1944,26 @@ op_plugin_remove() {
 # name present in that plugin's OWN manifest - this layer re-validates
 # structurally (path containment, file actually exists) but has no
 # database access to re-check "is this plugin enabled" itself.
+#
+# Runs via `systemd-run --pipe --wait`, NOT as a direct child of this
+# process - panel-exec.sh itself is normally invoked as a child of a
+# PHP-FPM worker, which (unlike an interactive root shell) runs inside
+# ITS OWN systemd sandbox (ProtectSystem=full etc - see
+# modules/panel.sh's module_panel_configure_fpm_pool). Confirmed live on
+# a real server: ReadWritePaths= punching a hole in that sandbox for
+# something as broad as /usr does NOT reliably work even though
+# systemd's own docs say it should (reproduced in complete isolation via
+# `systemd-run --property=ProtectSystem=full
+# --property=ReadWritePaths=/usr` - still read-only). Since plugins are
+# explicitly a FULL ROOT trust model (an operator's deliberate choice -
+# see wiki/Plugin-Development.md), a plugin script must never end up MORE
+# constrained than a plain root shell would be - systemd-run launches it
+# as a brand new, independent unit with systemd's normal DEFAULT
+# (unsandboxed) properties, escaping the calling PHP-FPM worker's sandbox
+# entirely, exactly like installer-self-update already runs update.sh
+# for the identical reason. --pipe transparently connects the new unit's
+# stdin/stdout/stderr back to this process's own, so Executor::run() on
+# the PHP side sees no difference at all.
 op_plugin_exec() {
     local slug="$1" script="$2"; shift 2
     require_match "$slug" "$RE_PLUGIN_SLUG" "plugin slug"
@@ -1951,7 +1971,10 @@ op_plugin_exec() {
     local script_path
     script_path=$(require_path_within "${PLUGIN_DIR}/${slug}/bin/${script}.sh" "${PLUGIN_DIR}/${slug}")
     [[ -f "$script_path" ]] || fail "Script plugin tidak ditemukan: ${script}"
-    bash "$script_path" "$@"
+    systemd-run --pipe --wait --quiet --collect \
+        --unit="yuuka-plugin-exec-${slug}-$$" \
+        --description="Yuuka plugin exec: ${slug}/${script}" \
+        -- bash "$script_path" "$@"
 }
 
 # ---------------------------------------------------------------------------
