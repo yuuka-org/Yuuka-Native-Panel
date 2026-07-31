@@ -13,7 +13,7 @@ Murni PHP array, tanpa gettext/.po dan tanpa dependency Composer apa pun
   sebelum i18n dibuat.
 - `app/lang/en.php` — terjemahan bahasa Inggris DARI `id.php`, bukan
   sebaliknya. Struktur key-nya harus identik dengan `id.php`.
-- `app/helpers/locale.php` — class `Locale` + fungsi global `t('group.key')`.
+- `app/helpers/locale.php` — class `PanelLocale` + fungsi global `t('group.key')`.
 
 ```php
 <?= e(t('sidebar.dashboard')) ?>
@@ -28,7 +28,7 @@ kelihatan jelas ada terjemahan yang kurang.
 ## Resolusi bahasa aktif
 
 Urutan: **override per-sesi** (tombol bahasa di topbar/halaman login,
-`Locale::setSessionLocale()`, disimpan di `$_SESSION['locale']`) →
+`PanelLocale::setSessionLocale()`, disimpan di `$_SESSION['locale']`) →
 **default panel** (`Settings > Umum`, `SettingsService` key
 `default_locale`) → `id` (fallback terakhir).
 
@@ -37,7 +37,7 @@ beberapa admin sering pakai panel yang sama dari akun berbeda tapi mau
 bahasa yang sama tanpa mengatur ulang tiap login, cukup ubah default
 panel di Settings. Kalau nanti benar-benar dibutuhkan preferensi
 per-user yang persisten, tinggal tambah kolom `locale` ke `panel_users`
-dan baca itu duluan sebelum session override di `Locale::current()`.
+dan baca itu duluan sebelum session override di `PanelLocale::current()`.
 
 ## Status cakupan (per commit ini)
 
@@ -67,6 +67,6 @@ bertahap, bukan sekaligus.
 ## Menambah bahasa baru (Crowdin dkk, menyusul)
 
 Tambahkan `app/lang/<kode>.php` baru dengan struktur key identik dengan
-`id.php`, lalu daftarkan kode-nya di `Locale::AVAILABLE`
+`id.php`, lalu daftarkan kode-nya di `PanelLocale::AVAILABLE`
 (`app/helpers/locale.php`) - otomatis muncul di pemilih bahasa topbar,
 halaman login, dan dropdown Settings > Umum tanpa perubahan lain.

@@ -25,7 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new InvalidArgumentException('Batas upload File Manager harus 1-512 MB (mengikuti batas Nginx client_max_body_size)');
             }
             $defaultLocale = (string) ($_POST['default_locale'] ?? '');
-            if (!in_array($defaultLocale, Locale::AVAILABLE, true)) {
+            if (!in_array($defaultLocale, PanelLocale::AVAILABLE, true)) {
                 throw new InvalidArgumentException('Bahasa default tidak valid');
             }
             SettingsService::set('phpmyadmin_url', $pma);
@@ -165,7 +165,7 @@ include __DIR__ . '/partials/settings_nav.php';
           <div class="mb-3">
             <label class="form-label"><?= e(t('settings.default_language')) ?></label>
             <select name="default_locale" class="form-select">
-              <?php foreach (Locale::AVAILABLE as $loc): ?>
+              <?php foreach (PanelLocale::AVAILABLE as $loc): ?>
                 <option value="<?= e($loc) ?>" <?= $defaultLocale === $loc ? 'selected' : '' ?>><?= e(strtoupper($loc)) ?></option>
               <?php endforeach; ?>
             </select>

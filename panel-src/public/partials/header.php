@@ -4,7 +4,7 @@ $pageTitle = $pageTitle ?? 'Dashboard';
 $currentUser = Auth::user();
 ?>
 <!DOCTYPE html>
-<html lang="<?= e(Locale::current()) ?>">
+<html lang="<?= e(PanelLocale::current()) ?>">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -59,16 +59,16 @@ $currentUser = Auth::user();
         </button>
         <div class="dropdown">
           <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" title="<?= e(t('topbar.language')) ?>">
-            <?= e(strtoupper(Locale::current())) ?>
+            <?= e(strtoupper(PanelLocale::current())) ?>
           </button>
           <ul class="dropdown-menu dropdown-menu-end">
-            <?php foreach (Locale::AVAILABLE as $loc): ?>
+            <?php foreach (PanelLocale::AVAILABLE as $loc): ?>
             <li>
               <form method="post" action="/set_locale">
                 <?= Csrf::field() ?>
                 <input type="hidden" name="locale" value="<?= e($loc) ?>">
                 <input type="hidden" name="back" value="<?= e((string) ($_SERVER['REQUEST_URI'] ?? '/dashboard')) ?>">
-                <button type="submit" class="dropdown-item <?= Locale::current() === $loc ? 'active' : '' ?>"><?= e(strtoupper($loc)) ?></button>
+                <button type="submit" class="dropdown-item <?= PanelLocale::current() === $loc ? 'active' : '' ?>"><?= e(strtoupper($loc)) ?></button>
               </form>
             </li>
             <?php endforeach; ?>

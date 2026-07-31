@@ -16,8 +16,15 @@ declare(strict_types=1);
  * library - this codebase has no build step and no Composer dependency
  * at all (see wiki/Arsitektur.md), and a `require`'d PHP array is both
  * the simplest and the fastest option available without either.
+ *
+ * Named PanelLocale, NOT Locale - `Locale` is a REAL built-in PHP class
+ * from the intl extension (Locale::getDefault() etc). Declaring our own
+ * `class Locale` fatally crashed EVERY page on a server that has intl
+ * enabled ("Cannot redeclare class Locale") - intl ships with most
+ * distro PHP-FPM packages and is common enough that this must never be
+ * reused as a class name here again.
  */
-final class Locale
+final class PanelLocale
 {
     /** Every locale a language file actually exists for - the only valid values for Settings > General's dropdown and the topbar switcher. */
     public const AVAILABLE = ['id', 'en'];
@@ -112,5 +119,5 @@ final class Locale
  */
 function t(string $key, array $params = []): string
 {
-    return Locale::get($key, $params);
+    return PanelLocale::get($key, $params);
 }

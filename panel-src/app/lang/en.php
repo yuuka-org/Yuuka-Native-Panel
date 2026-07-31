@@ -3,9 +3,9 @@ declare(strict_types=1);
 
 /**
  * English translation of app/lang/id.php. Keep the KEY STRUCTURE
- * identical between every language file - Locale::get() looks up the
- * same dotted path regardless of which file is active, and falls back
- * to this file for anything missing from a non-English locale (see
+ * identical between every language file - PanelLocale::get() looks up
+ * the same dotted path regardless of which file is active, and falls
+ * back to this file for anything missing from a non-English locale (see
  * app/helpers/locale.php).
  */
 return [

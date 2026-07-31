@@ -43,7 +43,7 @@ $securityEntrancePath = SettingsService::get('security_entrance_path');
 $loginFormAction = $securityEntrancePath !== '' ? '/' . $securityEntrancePath : '/login';
 ?>
 <!DOCTYPE html>
-<html lang="<?= e(Locale::current()) ?>">
+<html lang="<?= e(PanelLocale::current()) ?>">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -91,11 +91,11 @@ $loginFormAction = $securityEntrancePath !== '' ? '/' . $securityEntrancePath : 
       <button type="submit" class="btn btn-primary w-100"><?= e(t('login.submit')) ?></button>
     </form>
     <div class="text-center mt-3">
-      <?php foreach (Locale::AVAILABLE as $loc): ?>
+      <?php foreach (PanelLocale::AVAILABLE as $loc): ?>
       <form method="post" action="/set_locale" class="d-inline">
         <?= Csrf::field() ?>
         <input type="hidden" name="locale" value="<?= e($loc) ?>">
-        <button type="submit" class="btn btn-sm btn-link text-decoration-none <?= Locale::current() === $loc ? 'fw-bold' : 'text-muted' ?>"><?= e(strtoupper($loc)) ?></button>
+        <button type="submit" class="btn btn-sm btn-link text-decoration-none <?= PanelLocale::current() === $loc ? 'fw-bold' : 'text-muted' ?>"><?= e(strtoupper($loc)) ?></button>
       </form>
       <?php endforeach; ?>
     </div>

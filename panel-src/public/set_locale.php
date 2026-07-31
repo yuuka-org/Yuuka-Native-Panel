@@ -6,7 +6,7 @@ require __DIR__ . '/../bootstrap.php';
 // a locale preference is harmless regardless of auth state.
 Csrf::validateRequest();
 
-Locale::setSessionLocale((string) ($_POST['locale'] ?? ''));
+PanelLocale::setSessionLocale((string) ($_POST['locale'] ?? ''));
 
 $back = (string) ($_POST['back'] ?? '');
 $fallback = Auth::check() ? '/dashboard' : '/login';
