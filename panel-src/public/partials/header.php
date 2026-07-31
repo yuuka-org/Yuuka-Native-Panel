@@ -4,7 +4,7 @@ $pageTitle = $pageTitle ?? 'Dashboard';
 $currentUser = Auth::user();
 ?>
 <!DOCTYPE html>
-<html lang="id">
+<html lang="<?= e(Locale::current()) ?>">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -49,26 +49,43 @@ $currentUser = Auth::user();
       <button class="btn btn-sm btn-outline-secondary d-lg-none" id="sidebarToggle" type="button">
         <i class="bi bi-list"></i>
       </button>
-      <button class="btn btn-sm btn-outline-secondary d-none d-lg-inline-flex" id="sidebarCollapseToggle" type="button" title="Ciutkan/lebarkan sidebar">
+      <button class="btn btn-sm btn-outline-secondary d-none d-lg-inline-flex" id="sidebarCollapseToggle" type="button" title="<?= e(t('topbar.toggle_sidebar')) ?>">
         <i class="bi bi-chevron-bar-left" id="sidebarCollapseIconExpanded"></i>
         <i class="bi bi-chevron-bar-right d-none" id="sidebarCollapseIconCollapsed"></i>
       </button>
       <div class="ms-auto d-flex align-items-center gap-3">
-        <button class="btn btn-sm btn-outline-secondary" id="themeToggle" type="button" title="Ganti mode gelap/terang">
+        <button class="btn btn-sm btn-outline-secondary" id="themeToggle" type="button" title="<?= e(t('topbar.toggle_theme')) ?>">
           <i class="bi bi-moon-stars"></i>
         </button>
+        <div class="dropdown">
+          <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" title="<?= e(t('topbar.language')) ?>">
+            <?= e(strtoupper(Locale::current())) ?>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end">
+            <?php foreach (Locale::AVAILABLE as $loc): ?>
+            <li>
+              <form method="post" action="/set_locale">
+                <?= Csrf::field() ?>
+                <input type="hidden" name="locale" value="<?= e($loc) ?>">
+                <input type="hidden" name="back" value="<?= e((string) ($_SERVER['REQUEST_URI'] ?? '/dashboard')) ?>">
+                <button type="submit" class="dropdown-item <?= Locale::current() === $loc ? 'active' : '' ?>"><?= e(strtoupper($loc)) ?></button>
+              </form>
+            </li>
+            <?php endforeach; ?>
+          </ul>
+        </div>
         <span class="badge text-bg-light border"><i class="bi bi-person-badge me-1"></i><?= e($currentUser['role'] ?? '') ?></span>
         <div class="dropdown">
           <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
             <i class="bi bi-person-circle me-1"></i><?= e($currentUser['username'] ?? 'guest') ?>
           </button>
           <ul class="dropdown-menu dropdown-menu-end">
-            <li><a class="dropdown-item" href="/settings"><i class="bi bi-gear me-2"></i>Pengaturan</a></li>
+            <li><a class="dropdown-item" href="/settings"><i class="bi bi-gear me-2"></i><?= e(t('topbar.settings')) ?></a></li>
             <li><hr class="dropdown-divider"></li>
             <li>
               <form method="post" action="/logout">
                 <?= Csrf::field() ?>
-                <button type="submit" class="dropdown-item text-danger"><i class="bi bi-box-arrow-right me-2"></i>Logout</button>
+                <button type="submit" class="dropdown-item text-danger"><i class="bi bi-box-arrow-right me-2"></i><?= e(t('topbar.logout')) ?></button>
               </form>
             </li>
           </ul>

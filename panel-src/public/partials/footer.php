@@ -1,6 +1,6 @@
     </main>
     <footer class="app-footer">
-      <span>Yuuka Server Panel</span>
+      <span><?= e(t('footer.brand')) ?></span>
       <span class="text-muted">&middot; PHP <?= e(PHP_VERSION) ?> &middot; <?= e(date('Y')) ?></span>
     </footer>
   </div>

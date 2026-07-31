@@ -33,6 +33,7 @@ final class SettingsService
         'basicauth_enabled',
         'basicauth_username',
         'filemanager_max_upload_mb',
+        'default_locale',
     ];
 
     public static function get(string $key, string $default = ''): string

@@ -24,8 +24,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($maxUploadMb < 1 || $maxUploadMb > 512) {
                 throw new InvalidArgumentException('Batas upload File Manager harus 1-512 MB (mengikuti batas Nginx client_max_body_size)');
             }
+            $defaultLocale = (string) ($_POST['default_locale'] ?? '');
+            if (!in_array($defaultLocale, Locale::AVAILABLE, true)) {
+                throw new InvalidArgumentException('Bahasa default tidak valid');
+            }
             SettingsService::set('phpmyadmin_url', $pma);
             SettingsService::set('filemanager_max_upload_mb', (string) $maxUploadMb);
+            SettingsService::set('default_locale', $defaultLocale);
             flash('success', 'Pengaturan disimpan.');
         } elseif ($action === 'change_password') {
             $current = (string) ($_POST['current_password'] ?? '');
@@ -121,6 +126,7 @@ $sessionLifetime = (int) SettingsService::get('session_lifetime') ?: Config::get
 $basicauthEnabled = SettingsService::get('basicauth_enabled') === '1';
 $basicauthUsername = SettingsService::get('basicauth_username');
 $securityEntrancePath = SettingsService::get('security_entrance_path');
+$defaultLocale = SettingsService::get('default_locale') ?: 'id';
 $activeSettingsTab = 'general';
 
 $pageTitle = 'Pengaturan';
@@ -155,6 +161,15 @@ include __DIR__ . '/partials/settings_nav.php';
             <label class="form-label">Batas Upload File Manager (MB)</label>
             <input type="number" name="filemanager_max_upload_mb" class="form-control" value="<?= e((string) $filemanagerMaxUploadMb) ?>" min="1" max="512" required>
             <div class="form-text">Berlaku untuk upload file & ZIP di File Manager. Maks 512 MB (batas Nginx).</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label"><?= e(t('settings.default_language')) ?></label>
+            <select name="default_locale" class="form-select">
+              <?php foreach (Locale::AVAILABLE as $loc): ?>
+                <option value="<?= e($loc) ?>" <?= $defaultLocale === $loc ? 'selected' : '' ?>><?= e(strtoupper($loc)) ?></option>
+              <?php endforeach; ?>
+            </select>
+            <div class="form-text"><?= e(t('settings.default_language_help')) ?></div>
           </div>
           <button class="btn btn-primary">Simpan</button>
         </form>

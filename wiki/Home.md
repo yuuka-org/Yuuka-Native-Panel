@@ -19,6 +19,7 @@ berbasis PHP native + Bootstrap 5 — tanpa Docker, tanpa Apache.
 11. [Pemulihan Akun Admin](Pemulihan-Akun-Admin.md) — cara cek username & reset password lewat database
 12. [CLI `yp`](Yp-CLI.md) — CLI administrasi server via SSH (start/stop/restart, reset kredensial, repair, update, custom-build)
 13. [Pengembangan Plugin](Plugin-Development.md) — format manifest, hook menu/routes/cron, dispatch root-exec, model trust (root penuh, tanpa sandbox)
+14. [Internasionalisasi](Internasionalisasi.md) — cara kerja `t()`, resolusi bahasa aktif, cara menambah string/bahasa baru
 
 ## Ringkasan Cepat
 

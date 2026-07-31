@@ -23,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $password = (string) ($_POST['password'] ?? '');
 
     if ($username === '' || $password === '') {
-        flash('error', 'Username dan password wajib diisi.');
+        flash('error', t('login.error_required'));
     } elseif (Auth::attempt($username, $password)) {
         redirect($redirectTo !== '' ? $redirectTo : '/dashboard');
     }
@@ -43,7 +43,7 @@ $securityEntrancePath = SettingsService::get('security_entrance_path');
 $loginFormAction = $securityEntrancePath !== '' ? '/' . $securityEntrancePath : '/login';
 ?>
 <!DOCTYPE html>
-<html lang="id">
+<html lang="<?= e(Locale::current()) ?>">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -72,7 +72,7 @@ $loginFormAction = $securityEntrancePath !== '' ? '/' . $securityEntrancePath : 
         <i class="bi bi-hdd-network-fill fs-1 text-primary"></i>
       <?php endif; ?>
       <h4 class="mt-2 mb-0 fw-bold"><?= e($loginTitle) ?></h4>
-      <p class="text-muted small">Masuk untuk mengelola server Anda</p>
+      <p class="text-muted small"><?= e(t('login.subtitle')) ?></p>
     </div>
     <?php include __DIR__ . '/partials/flash.php'; ?>
     <form method="post" action="<?= e($loginFormAction) ?>">
@@ -81,15 +81,24 @@ $loginFormAction = $securityEntrancePath !== '' ? '/' . $securityEntrancePath : 
       <input type="hidden" name="redirect" value="<?= e($redirectTo) ?>">
       <?php endif; ?>
       <div class="mb-3">
-        <label class="form-label">Username</label>
+        <label class="form-label"><?= e(t('login.username')) ?></label>
         <input type="text" name="username" class="form-control" required autofocus autocomplete="username">
       </div>
       <div class="mb-3">
-        <label class="form-label">Password</label>
+        <label class="form-label"><?= e(t('login.password')) ?></label>
         <input type="password" name="password" class="form-control" required autocomplete="current-password">
       </div>
-      <button type="submit" class="btn btn-primary w-100">Login</button>
+      <button type="submit" class="btn btn-primary w-100"><?= e(t('login.submit')) ?></button>
     </form>
+    <div class="text-center mt-3">
+      <?php foreach (Locale::AVAILABLE as $loc): ?>
+      <form method="post" action="/set_locale" class="d-inline">
+        <?= Csrf::field() ?>
+        <input type="hidden" name="locale" value="<?= e($loc) ?>">
+        <button type="submit" class="btn btn-sm btn-link text-decoration-none <?= Locale::current() === $loc ? 'fw-bold' : 'text-muted' ?>"><?= e(strtoupper($loc)) ?></button>
+      </form>
+      <?php endforeach; ?>
+    </div>
   </div>
 </div>
 </body>
