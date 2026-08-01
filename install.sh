@@ -142,6 +142,15 @@ main() {
         log_info "Mode tunnel dipilih, SSL publik dilewati (Cloudflare menangani TLS di edge)."
         PANEL_SSL_ENABLED="0"
     fi
+    # module_panel_nginx_vhost/module_panel_write_env already ran back in
+    # step 10, BEFORE SSL was even attempted here - both wrote the safe
+    # HTTP-only defaults at that point. Re-running them now (self-healing,
+    # both re-check the cert file directly rather than trusting a flag)
+    # picks up a cert that just got issued above, so a fresh install with
+    # working SSL is immediately usable - not just on the NEXT
+    # 'sudo bash update.sh'/'yp repair panel' run.
+    module_panel_nginx_vhost
+    module_panel_sync_ssl_env
 
     print_section "12. Cloudflare Tunnel"
     step_progress

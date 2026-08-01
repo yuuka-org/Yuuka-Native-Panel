@@ -233,11 +233,17 @@ module_panel_write_env() {
     local app_key
     app_key=$(openssl rand -hex 32)
 
+    # APP_URL/SESSION_SECURE_COOKIE start HTTP/off here on purpose - this
+    # function only runs once, before SSL is even attempted (see
+    # install.sh's step ordering). module_panel_sync_ssl_env() runs right
+    # after every module_panel_run_all() and upgrades both to https/1 the
+    # moment a real cert exists for PANEL_DOMAIN, so this is just the
+    # honest starting state, never a value an operator needs to fix by hand.
     cat > "$env_file" <<EOF
 APP_NAME="Yuuka Server Panel"
 APP_ENV=production
 APP_KEY=${app_key}
-APP_URL=https://${PANEL_DOMAIN}
+APP_URL=http://${PANEL_DOMAIN}
 APP_DEPLOYMENT_MODE=${PANEL_DEPLOYMENT_MODE:-direct}
 
 DB_HOST=127.0.0.1
@@ -251,7 +257,7 @@ DB_PROVISIONER_PASSWORD=${PANEL_DB_PROVISIONER_PASS}
 
 SESSION_LIFETIME=1800
 SESSION_IDLE_TIMEOUT=900
-SESSION_SECURE_COOKIE=1
+SESSION_SECURE_COOKIE=0
 
 PANEL_EXEC_SCRIPT=${PANEL_ROOT}/scripts/panel-exec.sh
 NODEAPPS_HOME=/home/nodeapps
@@ -379,13 +385,15 @@ module_panel_nginx_vhost() {
         security_entrance_include="    include ${NGINX_SNIPPETS}/includes/security-entrance.conf;"
     fi
 
-    write_file_if_changed "$conf_file" <<EOF
-server {
-    listen 80;
-    listen [::]:80;
-    server_name ${PANEL_DOMAIN};
-
-    include ${NGINX_SNIPPETS}/acme-challenge.conf;
+    # Shared between the plain-HTTP-only vhost and the HTTPS vhost below -
+    # captured once via command substitution so a literal '$' written here
+    # (backslash-escaped, e.g. \$request_uri) survives as a literal '$' in
+    # the variable's value. Interpolating ${panel_body} into the OUTER
+    # heredoc further down does NOT re-expand it (bash never rescans an
+    # already-substituted variable's contents for more '$...'), so nginx's
+    # own variables stay untouched either way this function branches.
+    local panel_body
+    panel_body=$(cat <<EOF
     include ${NGINX_SNIPPETS}/cloudflare-realip.conf;
 ${basicauth_include}
 
@@ -462,19 +470,102 @@ ${pma_include}
 ${terminal_include}
 ${security_entrance_include}
     include ${NGINX_SNIPPETS}/security-headers.conf;
+EOF
+)
+
+    # Self-healing SSL detection: this function alone decides whether the
+    # vhost gets an HTTPS server block, purely from whether a cert already
+    # exists on disk for PANEL_DOMAIN - no caller-passed flag to keep in
+    # sync with reality. Mirrors module_panel_sync_ssl_env()'s own check,
+    # so both always agree regardless of call order/timing relative to SSL
+    # issuance (which may succeed on this very run, on a later run, or
+    # never, e.g. tunnel mode where TLS terminates at Cloudflare's edge).
+    local cert_file="/etc/letsencrypt/live/${PANEL_DOMAIN}/fullchain.pem"
+
+    if [[ -f "$cert_file" ]]; then
+        write_file_if_changed "$conf_file" <<EOF
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${PANEL_DOMAIN};
+
+    ssl_certificate     ${cert_file};
+    ssl_certificate_key /etc/letsencrypt/live/${PANEL_DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+${panel_body}
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${PANEL_DOMAIN};
+    include ${NGINX_SNIPPETS}/acme-challenge.conf;
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
 }
 EOF
+    else
+        write_file_if_changed "$conf_file" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${PANEL_DOMAIN};
+
+    include ${NGINX_SNIPPETS}/acme-challenge.conf;
+${panel_body}
+}
+EOF
+    fi
 
     ln -sf "$conf_file" "${NGINX_SITES_ENABLED}/panel-${PANEL_DOMAIN}.conf"
 
     if nginx -t >>"$INSTALL_LOG_FILE" 2>&1; then
         systemctl reload nginx
-        log_ok "Nginx panel aktif untuk http://${PANEL_DOMAIN}"
+        if [[ -f "$cert_file" ]]; then
+            log_ok "Nginx panel aktif untuk https://${PANEL_DOMAIN} (HTTP otomatis redirect ke HTTPS)"
+        else
+            log_ok "Nginx panel aktif untuk http://${PANEL_DOMAIN}"
+        fi
     else
         die "Konfigurasi Nginx panel tidak valid. Cek: $INSTALL_LOG_FILE"
     fi
 
     state_mark "panel:nginx_vhost"
+}
+
+# Keeps .env's SESSION_SECURE_COOKIE/APP_URL truthful to whether the panel's
+# own domain ACTUALLY has a working HTTPS listener right now (see
+# module_panel_nginx_vhost() just above, which decides that from the exact
+# same cert-file check). Without this, a 'Secure' session cookie served over
+# plain HTTP is silently refused by every browser - the panel then LOOKS
+# fine (login page renders, PHP never errors) but every successful login
+# just bounces straight back to /login, because the cookie proving the
+# session never actually got stored client-side. Runs unconditionally on
+# every module_panel_run_all() call (install, update, 'yp repair panel') so
+# this self-heals whichever direction reality just changed - SSL freshly
+# issued, or a cert that expired/got removed.
+module_panel_sync_ssl_env() {
+    local env_file="${PANEL_ROOT}/.env"
+    [[ -f "$env_file" ]] || return 0
+
+    local cert_file="/etc/letsencrypt/live/${PANEL_DOMAIN}/fullchain.pem"
+    local want_secure="0" want_proto="http"
+    if [[ -f "$cert_file" ]]; then
+        want_secure="1"
+        want_proto="https"
+    fi
+
+    local cur_secure
+    cur_secure=$(grep -m1 '^SESSION_SECURE_COOKIE=' "$env_file" | cut -d= -f2-)
+
+    if [[ "$cur_secure" != "$want_secure" ]]; then
+        sed -i "s|^SESSION_SECURE_COOKIE=.*|SESSION_SECURE_COOKIE=${want_secure}|" "$env_file"
+        sed -i "s|^APP_URL=.*|APP_URL=${want_proto}://${PANEL_DOMAIN}|" "$env_file"
+        log_ok "Sinkronisasi .env ke status SSL nyata: SESSION_SECURE_COOKIE=${want_secure}, APP_URL=${want_proto}://${PANEL_DOMAIN}"
+    fi
 }
 
 module_panel_logrotate() {
@@ -542,6 +633,7 @@ module_panel_run_all() {
     module_panel_create_admin
     module_panel_write_settings
     module_panel_nginx_vhost
+    module_panel_sync_ssl_env
     module_panel_health_check_cron
     module_panel_logrotate
 }

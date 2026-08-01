@@ -6,6 +6,41 @@ Kumpulan masalah nyata yang pernah ditemui di proyek ini beserta akar
 masalah dan cara diagnosanya. Ditambahkan berdasarkan insiden aktual, bukan
 teori — kalau menemukan kasus baru, tambahkan pola yang sama di sini.
 
+## Login sukses (tidak ada error) tapi selalu balik lagi ke halaman `/login`
+
+**Gejala**: instalasi selesai tanpa error, akun admin berhasil dibuat,
+halaman login tampil normal. Username/password yang benar dimasukkan,
+tombol Login ditekan, tidak ada pesan error — tapi browser cuma balik lagi
+ke `/login?redirect=%2Fdashboard`, seolah tidak pernah login sama sekali.
+`storage/logs/php-fpm-error.log` dan `app-error.log` kosong/tidak ada
+(bukan fatal error PHP — kalau itu penyebabnya, error itu SELALU
+tercatat di sana).
+
+**Akar masalah**: cookie session panel diset `Secure` (`bootstrap.php`,
+dikontrol oleh `.env`'s `SESSION_SECURE_COOKIE`) supaya tidak bisa dicuri
+lewat koneksi HTTP biasa. Browser MANA PUN menolak menyimpan cookie
+`Secure` kalau halamannya sendiri diakses lewat HTTP polos (bukan HTTPS) —
+jadi server-side login benar-benar berhasil (session dibuat, redirect ke
+`/dashboard` dikirim), tapi cookie pembuktinya tidak pernah tersimpan di
+browser, sehingga request berikutnya ke `/dashboard` dianggap belum login
+dan dilempar balik ke `/login`. Paling sering kejadian pada instalasi baru
+di mode *direct* saat DNS domain panel belum diarahkan ke server pada
+waktu instalasi — penerbitan SSL otomatis gagal (`Certbot ... DNS problem:
+NXDOMAIN`), panel jatuh ke mode HTTP-only, tapi `.env` dulu tetap
+memaksa `SESSION_SECURE_COOKIE=1`.
+
+**Fix**: `module_panel_sync_ssl_env()` (`modules/panel.sh`) sekarang
+menyamakan `SESSION_SECURE_COOKIE`/`APP_URL` di `.env` dengan status SSL
+yang SEBENARNYA (cek langsung keberadaan
+`/etc/letsencrypt/live/<domain>/fullchain.pem`), dan `module_panel_nginx_vhost()`
+di file yang sama sekarang benar-benar menambahkan blok `listen 443` +
+redirect HTTP→HTTPS begitu sertifikat ada (sebelumnya vhost panel SELALU
+HTTP-only apa pun status SSL-nya). Keduanya berjalan otomatis di setiap
+`install.sh`/`update.sh`/`yp repair panel` — kalau baru mengalami ini di
+instalasi lama, jalankan `sudo bash update.sh` untuk memperbaikinya tanpa
+perlu login dulu (perbaikan ini murni di level installer/Nginx, tidak
+memerlukan sesi panel yang valid).
+
 ## `Service cloudflared tidak ditemukan` langsung disusul `aktif dan terhubung`
 
 **Gejala**: log installer menampilkan `[WARN] Service cloudflared tidak

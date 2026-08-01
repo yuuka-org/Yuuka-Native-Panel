@@ -14,7 +14,7 @@ Lokasi di server: **`/opt/server-panel/.env`** (permission `600`, owner
 | `APP_NAME` | `Yuuka Server Panel` | |
 | `APP_ENV` | `production` | |
 | `APP_KEY` | (random, di-generate saat install) | Kunci enkripsi AES-256-GCM untuk `app_env_variables` (lihat `EnvService`) |
-| `APP_URL` | `https://panel.example.com` | |
+| `APP_URL` | `https://panel.example.com` | Di-sync otomatis ke `http://`/`https://` sesuai status SSL nyata - lihat baris `SESSION_SECURE_COOKIE` |
 | `APP_DEPLOYMENT_MODE` | `direct` / `tunnel` / `hybrid` | Diisi sesuai pilihan mode saat instalasi |
 | `DB_HOST` | `127.0.0.1` | |
 | `DB_PORT` | `3306` | |
@@ -25,7 +25,7 @@ Lokasi di server: **`/opt/server-panel/.env`** (permission `600`, owner
 | `DB_PROVISIONER_PASSWORD` | (random, unik per install) | |
 | `SESSION_LIFETIME` | `1800` (detik) | Absolute timeout session |
 | `SESSION_IDLE_TIMEOUT` | `900` (detik) | Idle timeout session |
-| `SESSION_SECURE_COOKIE` | `1` | Cookie `Secure` flag |
+| `SESSION_SECURE_COOKIE` | `1` jika domain panel punya sertifikat SSL, `0` jika belum | Cookie `Secure` flag - browser MENOLAK menyimpan cookie `Secure` lewat HTTP polos, jadi kalau ini `1` sementara panel belum punya HTTPS aktif, login akan selalu terlihat "sukses" di server tapi terus terlempar balik ke `/login` (session tidak pernah benar-benar tersimpan di browser). `module_panel_sync_ssl_env()` (`modules/panel.sh`) menjaga nilai ini tetap sesuai kenyataan secara otomatis setiap kali `install.sh`/`update.sh`/`yp repair panel` jalan - jangan diubah manual kecuali tahu persis apa yang sedang dilakukan. |
 | `PANEL_EXEC_SCRIPT` | `/opt/server-panel/scripts/panel-exec.sh` | Path yang dipanggil `Executor` |
 | `NODEAPPS_HOME` | `/home/nodeapps` | |
 | `NGINX_SITES_AVAILABLE` / `NGINX_SITES_ENABLED` | `/etc/nginx/sites-available` / `sites-enabled` | |
