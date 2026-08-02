@@ -20,7 +20,7 @@ final class Executor
         'nginx-test', 'nginx-reload', 'nginx-write-config', 'nginx-enable',
         'nginx-disable', 'nginx-delete', 'nginx-write-ratelimit-zones',
         'pm2-deploy', 'pm2-start', 'pm2-stop', 'pm2-restart', 'pm2-reload', 'pm2-delete',
-        'pm2-jlist', 'pm2-describe', 'pm2-logs', 'pm2-logs-size', 'pm2-logs-tail',
+        'pm2-jlist', 'pm2-restart-all', 'pm2-describe', 'pm2-logs', 'pm2-logs-size', 'pm2-logs-tail',
         'pm2-logs-list', 'pm2-logs-read-archive', 'pm2-flush', 'pm2-reset', 'pm2-save',
         'certbot-issue', 'certbot-remove', 'panel-ssl-issue',
         'service-status', 'service-restart',
@@ -55,7 +55,15 @@ final class Executor
      * legitimate trailing whitespace byte in the last field), corrupting
      * exactly one entry per call in a way that's easy to miss in testing.
      */
-    private const RAW_OUTPUT_SUBCOMMANDS = ['files-read', 'files-list', 'files-search', 'files-trash-list', 'git-status-website', 'plugin-exec'];
+    /**
+     * pm2-logs-tail additionally needs this because its output is
+     * offset-prefixed content read incrementally and concatenated
+     * client-side (nodejs_logs_stream.php) - a generic trim() strips the
+     * final trailing newline of whatever new content just arrived, which
+     * silently merges that batch's last log line with the FIRST line of
+     * the next poll's batch once appended together in the browser.
+     */
+    private const RAW_OUTPUT_SUBCOMMANDS = ['files-read', 'files-list', 'files-search', 'files-trash-list', 'git-status-website', 'plugin-exec', 'pm2-logs-tail'];
 
     /**
      * @param string[] $args

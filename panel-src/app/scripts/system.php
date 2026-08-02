@@ -175,6 +175,23 @@ function sys_service_restart(string $serviceName): bool
     return true;
 }
 
+/**
+ * Restarts EVERY PM2-managed Node.js app at once - PM2 isn't a systemd
+ * service, so this is deliberately separate from sys_service_restart()
+ * above (which only ever targets systemctl-managed units). Runs
+ * synchronously (unlike a systemd service restart, this never touches the
+ * panel's own PHP-FPM pool, so there's no self-kill risk requiring
+ * fastcgi_finish_request()/backgrounding).
+ */
+function sys_pm2_restart_all(): bool
+{
+    $result = Executor::run('pm2-restart-all', [], null, 60);
+    if (!$result['ok']) {
+        throw new RuntimeException('Gagal restart semua aplikasi Node.js: ' . $result['output']);
+    }
+    return true;
+}
+
 /** Parses the `key:value` per-line output panel-exec.sh's installer-* ops emit. */
 function sys_parse_kv_lines(string $output): array
 {

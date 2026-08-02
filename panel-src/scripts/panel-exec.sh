@@ -579,6 +579,19 @@ op_pm2_jlist() {
     as_nodeapps "pm2 jlist"
 }
 
+# Bulk "restart all Node.js apps" for Sistem > Status & Restart Layanan -
+# distinct from op_pm2_restart's single-app form (used from each app's own
+# page). Rotates every app's live log first, same as the single-app path,
+# so a bulk restart doesn't silently mix multiple runs into one log file.
+op_pm2_restart_all() {
+    local app
+    while IFS= read -r app; do
+        [[ -n "$app" ]] || continue
+        rotate_pm2_log "$app"
+    done < <(as_nodeapps "pm2 jlist" | jq -r '.[].name' 2>/dev/null)
+    as_nodeapps "pm2 restart all"
+}
+
 op_pm2_describe() {
     local app="$1"; require_match "$app" "$RE_APPNAME" "appname"
     as_nodeapps "pm2 describe '${app}'"
@@ -2045,6 +2058,7 @@ case "$SUBCOMMAND" in
     pm2-reload)            op_pm2_reload "$@" ;;
     pm2-delete)            op_pm2_delete "$@" ;;
     pm2-jlist)             op_pm2_jlist ;;
+    pm2-restart-all)       op_pm2_restart_all ;;
     pm2-describe)          op_pm2_describe "$@" ;;
     pm2-logs)              op_pm2_logs "$@" ;;
     pm2-logs-size)         op_pm2_logs_size "$@" ;;

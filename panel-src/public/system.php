@@ -56,6 +56,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             sys_installer_self_update();
             ActivityLog::record($user['id'], 'system.self_update', 'Update panel dimulai');
             flash('success', 'Update dimulai di background - pantau log di bawah.');
+        } elseif ($action === 'restart_pm2_all') {
+            Rbac::require('server.manage_configuration');
+            sys_pm2_restart_all();
+            ActivityLog::record($user['id'], 'system.pm2_restart_all', 'Restart semua aplikasi Node.js (PM2)');
+            flash('success', 'Semua aplikasi Node.js sedang direstart.');
         }
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
@@ -67,6 +72,7 @@ $versionInfo = sys_installer_version_info();
 $services = SystemService::serviceStatuses();
 $updateRunning = sys_installer_self_update_status() === 'active';
 $panelPhpFpmService = 'php' . PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION . '-fpm';
+$nodejsRunningCount = SystemService::nodejsRunningCount();
 
 $pageTitle = 'Sistem';
 include __DIR__ . '/partials/header.php';
@@ -138,6 +144,18 @@ include __DIR__ . '/partials/header.php';
           </div>
         </div>
       <?php endforeach; ?>
+      <div class="col-md-6">
+        <div class="d-flex justify-content-between align-items-center border rounded px-3 py-2">
+          <span><span class="status-dot <?= $nodejsRunningCount > 0 ? 'active' : 'inactive' ?>"></span>PM2 (Node.js Apps) <span class="text-muted small">- <?= e((string) $nodejsRunningCount) ?> online</span></span>
+          <?php if ($canManage): ?>
+          <form method="post" data-confirm="Restart SEMUA aplikasi Node.js sekarang?">
+            <?= Csrf::field() ?>
+            <input type="hidden" name="action" value="restart_pm2_all">
+            <button class="btn btn-sm btn-outline-secondary">Restart Semua</button>
+          </form>
+          <?php endif; ?>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -173,8 +191,15 @@ document.getElementById('updateLogBlock').addEventListener('panel:refresh', func
   var d = e.detail;
   if (!d || !d.ok) return;
   var block = document.getElementById('updateLogBlock');
+  // Only follow the tail if the user was already there before this
+  // refresh - otherwise every 4s poll yanks them back to the bottom mid-
+  // scroll, making it impossible to read earlier lines while an update is
+  // running. 20px threshold so "basically at the bottom" still counts.
+  var wasAtBottom = block.scrollHeight - block.scrollTop - block.clientHeight < 20;
   block.textContent = d.log;
-  block.scrollTop = block.scrollHeight;
+  if (wasAtBottom) {
+    block.scrollTop = block.scrollHeight;
+  }
   document.getElementById('updateStatusLine').textContent = d.running ? 'Sedang berjalan...' : '';
 });
 </script>
