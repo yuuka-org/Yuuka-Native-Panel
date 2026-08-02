@@ -481,7 +481,7 @@ cmd_repair_reset_env() {
 APP_NAME="Yuuka Server Panel"
 APP_ENV=production
 APP_KEY=${app_key}
-APP_URL=https://${domain}
+APP_URL=http://${domain}
 APP_DEPLOYMENT_MODE=${deploy_mode}
 
 DB_HOST=127.0.0.1
@@ -495,7 +495,7 @@ DB_PROVISIONER_PASSWORD=${new_prov_pass}
 
 SESSION_LIFETIME=1800
 SESSION_IDLE_TIMEOUT=900
-SESSION_SECURE_COOKIE=1
+SESSION_SECURE_COOKIE=0
 
 PANEL_EXEC_SCRIPT=${PANEL_ROOT}/scripts/panel-exec.sh
 NODEAPPS_HOME=/home/nodeapps
@@ -511,6 +511,16 @@ APP_INSTALLER_MAX_DOWNLOAD_MB=200
 EOF
     chown panel:panel "$PANEL_ENV"
     chmod 600 "$PANEL_ENV"
+
+    # APP_URL/SESSION_SECURE_COOKIE above start HTTP/off unconditionally
+    # (same reasoning as module_panel_write_env() in modules/panel.sh) -
+    # this immediately upgrades both to https/1 if PANEL_DOMAIN already has
+    # a real cert, so a repair-triggered regen never leaves an
+    # SSL-enabled panel downgraded to insecure cookies by mistake.
+    PANEL_DOMAIN="$domain"
+    export PANEL_DOMAIN
+    module_panel_sync_ssl_env
+
     log_ok ".env diregenerasi, password panel_app/panel_provisioner disinkronkan ulang di MariaDB (tidak akan hilang sinkron seperti bug lama)."
 }
 
@@ -581,6 +591,14 @@ cmd_repair_panel() {
         export PANEL_DOMAIN
         module_panel_nginx_vhost
         log_ok "Vhost Nginx panel diregenerasi"
+        # module_panel_run_all() (dipakai install.sh/update.sh) sudah
+        # memanggil ini sendiri, tapi jalur 'yp repair panel' ini
+        # memanggil fungsi satu-satu secara manual dan sebelumnya TIDAK
+        # menyertakan sync ini sama sekali - .env bisa selamanya tidak
+        # sinkron dengan status SSL nyata walau vhost-nya sendiri sudah
+        # benar. Lihat wiki/Troubleshooting.md, bagian "Login sukses tapi
+        # selalu balik lagi ke /login".
+        module_panel_sync_ssl_env
     else
         log_warn "Tidak bisa mendeteksi domain panel - lewati regenerasi vhost"
     fi
