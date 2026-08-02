@@ -539,6 +539,22 @@ op_pm2_deploy() {
     # still resolves to the just-switched target version, which is what
     # actually determines the app's runtime interpreter.
     rotate_pm2_log "$app"
+    # 'pm2 start ecosystem.config.js --update-env' on an app that's ALREADY
+    # registered does not reliably re-apply structural launch options like
+    # out_file/error_file - only env vars are guaranteed to update that
+    # way. PM2 keeps using whatever log paths were set the very FIRST time
+    # this app name was started, so a deploy predating out_file/error_file
+    # being pointed at PM2_LOG_DIR/${app}.log (see
+    # nodejs_build_ecosystem_config()) kept silently writing to PM2's own
+    # default <name>-out-N.log/<name>-error-N.log forever - confirmed live
+    # (every existing app's log dir still had exactly that split-file
+    # pattern, panel's combined Logs tab showing "Belum ada output log."
+    # for all of them). Deleting first forces every deploy to register the
+    # process fresh, so out_file/error_file (and anything else PM2 only
+    # honors at creation time) are always current. Harmless no-op (the
+    # `|| true`) on a genuinely first-ever deploy, where there's nothing to
+    # delete yet.
+    as_nodeapps "pm2 delete '${app}' >/dev/null 2>&1 || true"
     as_nodeapps "PM2_BIN=\$(command -v pm2); ${nvm_use}\"\${PM2_BIN:?pm2 tidak ditemukan di PATH}\" start '${app_dir}/ecosystem.config.js' --update-env"
     as_nodeapps "pm2 save"
     echo "OK: ${app} deployed via PM2"
