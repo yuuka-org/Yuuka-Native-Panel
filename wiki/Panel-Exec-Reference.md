@@ -37,6 +37,7 @@ Setiap pemanggilan (sukses maupun ditolak) dicatat ke
 | `pm2-save` | – | – | `pm2 save` |
 | `certbot-issue` | `<domain>` `<email>` | – | `certbot certonly --webroot` |
 | `certbot-remove` | `<domain>` | – | `certbot delete --cert-name` |
+| `panel-ssl-issue` | `<email>` | – | SSL untuk domain PANEL sendiri (Settings > SSL Panel) - domain diambil dari vhost panel yang sudah ada di disk, BUKAN dari argumen caller. Setelah certbot sukses, otomatis jalankan `yp repair panel` supaya vhost dapat blok `listen 443` + `.env` ikut sinkron (`SESSION_SECURE_COOKIE`/`APP_URL`) - lihat `wiki/Troubleshooting.md` |
 | `service-status` | `<svc>` | – | `systemctl is-active` — whitelist: `nginx`, `mariadb`, `cloudflared`, `php{7.4-8.4}-fpm` |
 | `service-restart` | `<svc>` | – | `systemctl restart` — whitelist sama dengan `service-status` |
 | `installer-version-info` / `installer-check-update` / `installer-self-update` / `installer-self-update-status` | – | – | Info versi & update mandiri installer/CLI `yp` |

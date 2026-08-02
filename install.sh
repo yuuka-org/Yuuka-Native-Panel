@@ -191,8 +191,8 @@ print_summary() {
     echo -e "  ${C_BOLD}Log instalasi${C_RESET}   : ${INSTALL_LOG_FILE}"
     echo ""
     echo -e "${C_YELLOW}  PENTING: catat password di atas sekarang, tidak akan ditampilkan lagi.${C_RESET}"
-    echo -e "${C_YELLOW}  Jika DNS domain belum diarahkan ke server ini, arahkan A record lalu jalankan${C_RESET}"
-    echo -e "${C_YELLOW}  ulang penerbitan SSL dari menu Domain Management di panel.${C_RESET}"
+    echo -e "${C_YELLOW}  Jika DNS domain belum diarahkan ke server ini, arahkan A record lalu terbitkan${C_RESET}"
+    echo -e "${C_YELLOW}  SSL dari dalam panel: Settings > SSL Panel.${C_RESET}"
     echo ""
     echo -e "${C_BOLD}${C_GREEN}$(printf '%.0s═' $(seq 1 78))${C_RESET}"
 

@@ -23,6 +23,29 @@ final class SSLService
         ActivityLog::record($userId, 'ssl.issue', "SSL diterbitkan untuk {$domain}");
     }
 
+    /**
+     * SSL for the PANEL'S OWN domain - deliberately separate from
+     * issueForDomain() above, which only ever operates on rows in the
+     * `domains`/`websites` tables (customer sites). The panel's own vhost
+     * isn't tracked there at all, so panel-exec.sh's op_panel_ssl_issue
+     * derives the domain itself from the live Nginx vhost on disk rather
+     * than trusting a caller-supplied value - this method intentionally
+     * takes no $domain parameter to match that contract.
+     */
+    public static function issueForPanelDomain(string $email, ?int $userId): void
+    {
+        if (!Validator::email($email)) {
+            throw new InvalidArgumentException('Email tidak valid');
+        }
+
+        $result = Executor::run('panel-ssl-issue', [$email], null, 120);
+        if (!$result['ok']) {
+            throw new RuntimeException('Penerbitan SSL untuk domain panel gagal (pastikan DNS domain panel sudah mengarah ke server ini): ' . $result['output']);
+        }
+
+        ActivityLog::record($userId, 'ssl.issue_panel', 'SSL diterbitkan untuk domain panel');
+    }
+
     public static function removeCertificate(string $domain, ?int $userId): void
     {
         if (!Validator::domain($domain)) {

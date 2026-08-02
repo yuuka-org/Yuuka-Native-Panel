@@ -41,6 +41,14 @@ instalasi lama, jalankan `sudo bash update.sh` untuk memperbaikinya tanpa
 perlu login dulu (perbaikan ini murni di level installer/Nginx, tidak
 memerlukan sesi panel yang valid).
 
+Begitu DNS domain panel sudah diarahkan ke server, terbitkan SSL langsung
+dari **Settings > SSL Panel** di dalam panel (tidak perlu SSH lagi) - lihat
+`panel-ssl-issue` di `wiki/Panel-Exec-Reference.md`. Sebelum fitur ini ada,
+"Domain Management" yang disebut pesan penutup installer TIDAK menangani
+domain panel sendiri (menu itu cuma untuk domain website customer) -
+kalau ketemu instalasi lama yang masih menunjuk ke sana, arahkan ke
+Settings > SSL Panel sebagai gantinya.
+
 ## `Service cloudflared tidak ditemukan` langsung disusul `aktif dan terhubung`
 
 **Gejala**: log installer menampilkan `[WARN] Service cloudflared tidak

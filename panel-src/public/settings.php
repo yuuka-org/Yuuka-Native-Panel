@@ -111,6 +111,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ActivityLog::record($user['id'], 'settings.security_entrance_enable', 'Security Entrance diaktifkan');
                 flash('success', "Security Entrance aktif - CATAT path ini: /{$path}. Kalau lupa, jalankan 'yp security-entrance' via SSH.");
             }
+        } elseif ($action === 'issue_panel_ssl') {
+            Rbac::require('settings.manage');
+            $email = trim((string) ($_POST['panel_ssl_email'] ?? ''));
+            SSLService::issueForPanelDomain($email, $user['id']);
+            flash('success', 'SSL untuk domain panel berhasil diterbitkan. Panel sekarang bisa diakses lewat HTTPS - buka lagi di tab/browser baru untuk memastikan sebelum menutup sesi ini.');
         }
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
@@ -127,6 +132,16 @@ $basicauthEnabled = SettingsService::get('basicauth_enabled') === '1';
 $basicauthUsername = SettingsService::get('basicauth_username');
 $securityEntrancePath = SettingsService::get('security_entrance_path');
 $defaultLocale = SettingsService::get('default_locale') ?: 'id';
+// SESSION_SECURE_COOKIE doubles as "does the panel's own domain actually
+// have a working HTTPS listener right now" - module_panel_sync_ssl_env()
+// (modules/panel.sh) keeps it truthful to the real cert status on every
+// install/update/repair, so it's a safe status source here without PHP
+// ever needing to check /etc/letsencrypt directly (outside open_basedir -
+// see wiki/Plugin-Development.md's open_basedir warning for why that trap
+// matters).
+$panelSslActive = Config::getBool('SESSION_SECURE_COOKIE', false);
+$panelUrl = Config::get('APP_URL', '');
+$panelDomain = preg_replace('#^https?://#', '', $panelUrl) ?: ($_SERVER['HTTP_HOST'] ?? '');
 $activeSettingsTab = 'general';
 
 $pageTitle = 'Pengaturan';
@@ -219,6 +234,42 @@ include __DIR__ . '/partials/settings_nav.php';
           </div>
           <button class="btn btn-primary">Simpan</button>
         </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6">
+    <div class="card stat-card h-100">
+      <div class="card-header bg-white fw-semibold">SSL Panel</div>
+      <div class="card-body">
+        <p class="text-muted small">
+          Domain panel: <strong><?= e($panelDomain) ?></strong> &middot;
+          Status: <?php if ($panelSslActive): ?><span class="badge text-bg-success">Aktif (HTTPS)</span><?php else: ?><span class="badge text-bg-secondary">Belum aktif (HTTP)</span><?php endif; ?>
+        </p>
+        <?php if ($deploymentMode === 'tunnel'): ?>
+          <p class="text-muted small mb-0">Mode deployment <strong>tunnel</strong> - TLS ditangani Cloudflare di edge, tidak perlu diterbitkan manual di sini.</p>
+        <?php elseif ($panelSslActive): ?>
+          <p class="text-muted small mb-0">Sertifikat diperpanjang otomatis oleh certbot. Kalau perlu diterbitkan ulang (mis. domain panel berubah), gunakan form di bawah.</p>
+          <form method="post" class="mt-2">
+            <?= Csrf::field() ?>
+            <input type="hidden" name="action" value="issue_panel_ssl">
+            <div class="input-group">
+              <input type="email" name="panel_ssl_email" class="form-control" value="<?= e($user['email']) ?>" placeholder="email@domainanda.com" required>
+              <button class="btn btn-outline-primary">Terbitkan Ulang</button>
+            </div>
+          </form>
+        <?php else: ?>
+          <p class="text-muted small">Syarat: A record domain di atas sudah mengarah ke IP server ini. Setelah SSL aktif, panel otomatis redirect HTTP ke HTTPS dan cookie sesi jadi lebih aman.</p>
+          <form method="post">
+            <?= Csrf::field() ?>
+            <input type="hidden" name="action" value="issue_panel_ssl">
+            <div class="mb-3">
+              <label class="form-label">Email (untuk notifikasi Let's Encrypt)</label>
+              <input type="email" name="panel_ssl_email" class="form-control" value="<?= e($user['email']) ?>" required>
+            </div>
+            <button class="btn btn-primary">Terbitkan SSL</button>
+          </form>
+        <?php endif; ?>
       </div>
     </div>
   </div>

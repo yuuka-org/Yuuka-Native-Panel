@@ -22,7 +22,7 @@ final class Executor
         'pm2-deploy', 'pm2-start', 'pm2-stop', 'pm2-restart', 'pm2-reload', 'pm2-delete',
         'pm2-jlist', 'pm2-describe', 'pm2-logs', 'pm2-logs-size', 'pm2-logs-tail',
         'pm2-logs-list', 'pm2-logs-read-archive', 'pm2-flush', 'pm2-reset', 'pm2-save',
-        'certbot-issue', 'certbot-remove',
+        'certbot-issue', 'certbot-remove', 'panel-ssl-issue',
         'service-status', 'service-restart',
         'installer-version-info', 'installer-check-update',
         'installer-self-update', 'installer-self-update-status',

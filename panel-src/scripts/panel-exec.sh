@@ -694,6 +694,34 @@ op_certbot_remove() {
     certbot delete --cert-name "$domain" --non-interactive
 }
 
+# Issues SSL specifically for the PANEL'S OWN domain (Settings > SSL
+# Panel), not a generic website domain - see SSLService::issueForPanelDomain().
+# Deliberately takes no domain argument from the caller: derives it from
+# the already-live panel vhost on disk, so this can never be pointed at an
+# arbitrary domain by a buggy/compromised PHP layer. After certbot
+# succeeds, hands off to 'yp repair panel' - the exact same self-healing
+# routine 'sudo bash update.sh' already runs at its end - so the vhost
+# picks up its 443 block and .env's SESSION_SECURE_COOKIE/APP_URL flip to
+# match reality, in one step (see wiki/Troubleshooting.md, "Login sukses
+# tapi selalu balik lagi ke /login").
+op_panel_ssl_issue() {
+    local email="$1"
+    require_match "$email" "$RE_EMAIL" "email"
+
+    local vhost domain
+    vhost=$(find /etc/nginx/sites-available -maxdepth 1 -name 'panel-*.conf' 2>/dev/null | head -1)
+    [[ -n "$vhost" ]] || fail "Vhost panel tidak ditemukan"
+    domain=$(grep -h 'server_name' "$vhost" | head -1 | awk '{print $2}' | tr -d ';')
+    require_match "$domain" "$RE_DOMAIN" "domain (dari vhost panel)"
+
+    certbot certonly --webroot -w "$ACME_WEBROOT" -d "$domain" \
+        --non-interactive --agree-tos -m "$email" --no-eff-email \
+        || fail "Penerbitan sertifikat gagal (pastikan DNS ${domain} sudah mengarah ke server ini)"
+
+    command -v yp >/dev/null 2>&1 || fail "SSL terbit untuk ${domain} tapi 'yp' tidak ditemukan di PATH - jalankan manual: sudo yp repair panel"
+    yp repair panel || fail "SSL terbit untuk ${domain} tapi 'yp repair panel' gagal menerapkannya - cek log, coba manual: sudo yp repair panel"
+}
+
 # ---------------------------------------------------------------------------
 # Service status (whitelist only - never arbitrary systemctl targets)
 # ---------------------------------------------------------------------------
@@ -2012,6 +2040,7 @@ case "$SUBCOMMAND" in
     pm2-save)              op_pm2_save ;;
     certbot-issue)         op_certbot_issue "$@" ;;
     certbot-remove)        op_certbot_remove "$@" ;;
+    panel-ssl-issue)       op_panel_ssl_issue "$@" ;;
     service-status)        op_service_status "$@" ;;
     service-restart)       op_service_restart "$@" ;;
     installer-version-info)       op_installer_version_info ;;
