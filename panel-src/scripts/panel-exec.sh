@@ -40,6 +40,7 @@ BACKUP_BASE="/opt/server-panel/storage/backups"
 ACME_WEBROOT="/var/www/_letsencrypt"
 INSTALLER_DIR="/opt/yuuka-installer"
 SELF_UPDATE_LOG="/opt/server-panel/storage/logs/self-update.log"
+PANEL_SSL_APPLY_LOG="/opt/server-panel/storage/logs/ssl-apply.log"
 # Mirrors modules/panel.sh's PANEL_ROOT/PANEL_POOL_SOCK exactly - this
 # script is standalone (not sourced from modules/panel.sh), so these are
 # duplicated constants rather than a shared include, matching how every
@@ -698,12 +699,19 @@ op_certbot_remove() {
 # Panel), not a generic website domain - see SSLService::issueForPanelDomain().
 # Deliberately takes no domain argument from the caller: derives it from
 # the already-live panel vhost on disk, so this can never be pointed at an
-# arbitrary domain by a buggy/compromised PHP layer. After certbot
-# succeeds, hands off to 'yp repair panel' - the exact same self-healing
-# routine 'sudo bash update.sh' already runs at its end - so the vhost
-# picks up its 443 block and .env's SESSION_SECURE_COOKIE/APP_URL flip to
-# match reality, in one step (see wiki/Troubleshooting.md, "Login sukses
-# tapi selalu balik lagi ke /login").
+# arbitrary domain by a buggy/compromised PHP layer.
+#
+# certbot itself runs synchronously (fast, no service restart involved -
+# safe to wait for and report errors from). Applying it, though
+# ('yp repair panel' - regenerates the vhost's 443 block and syncs .env's
+# SESSION_SECURE_COOKIE/APP_URL), restarts the panel's OWN PHP-FPM pool.
+# Running that synchronously here would kill the very worker process
+# handling THIS request before it can ever send a response - confirmed
+# live as a 502 Bad Gateway on the settings.php POST that triggered this.
+# Same escape hatch op_installer_self_update() already uses for the exact
+# same class of problem: schedule it as an independent transient unit and
+# return immediately - the cert is already safely on disk by that point,
+# only the vhost/.env sync is deferred by a few seconds.
 op_panel_ssl_issue() {
     local email="$1"
     require_match "$email" "$RE_EMAIL" "email"
@@ -718,8 +726,16 @@ op_panel_ssl_issue() {
         --non-interactive --agree-tos -m "$email" --no-eff-email \
         || fail "Penerbitan sertifikat gagal (pastikan DNS ${domain} sudah mengarah ke server ini)"
 
-    command -v yp >/dev/null 2>&1 || fail "SSL terbit untuk ${domain} tapi 'yp' tidak ditemukan di PATH - jalankan manual: sudo yp repair panel"
-    yp repair panel || fail "SSL terbit untuk ${domain} tapi 'yp repair panel' gagal menerapkannya - cek log, coba manual: sudo yp repair panel"
+    command -v yp >/dev/null 2>&1 || fail "Sertifikat terbit untuk ${domain} tapi 'yp' tidak ditemukan di PATH - jalankan manual: sudo yp repair panel"
+
+    mkdir -p "$(dirname "$PANEL_SSL_APPLY_LOG")"
+    systemd-run --unit=yuuka-panel-ssl-apply --collect \
+        --description="Yuuka Panel: terapkan SSL domain panel" \
+        -- /bin/bash -c "{ echo \"=== \$(date -Iseconds) mulai ===\"; yp repair panel; echo \"=== \$(date -Iseconds) selesai (exit=\$?) ===\"; } >>'${PANEL_SSL_APPLY_LOG}' 2>&1" \
+        < /dev/null \
+        || fail "Sertifikat terbit untuk ${domain} tapi gagal menjadwalkan penerapannya - jalankan manual: sudo yp repair panel"
+
+    echo "OK: sertifikat terbit untuk ${domain}, menerapkan konfigurasi di background (PHP-FPM panel akan restart sebentar - refresh halaman dalam beberapa detik)"
 }
 
 # ---------------------------------------------------------------------------

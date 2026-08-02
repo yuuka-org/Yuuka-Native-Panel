@@ -38,7 +38,7 @@ final class SSLService
             throw new InvalidArgumentException('Email tidak valid');
         }
 
-        $result = Executor::run('panel-ssl-issue', [$email], null, 120);
+        $result = Executor::run('panel-ssl-issue', [$email], null, 90);
         if (!$result['ok']) {
             throw new RuntimeException('Penerbitan SSL untuk domain panel gagal (pastikan DNS domain panel sudah mengarah ke server ini): ' . $result['output']);
         }

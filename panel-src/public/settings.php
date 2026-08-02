@@ -115,7 +115,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             Rbac::require('settings.manage');
             $email = trim((string) ($_POST['panel_ssl_email'] ?? ''));
             SSLService::issueForPanelDomain($email, $user['id']);
-            flash('success', 'SSL untuk domain panel berhasil diterbitkan. Panel sekarang bisa diakses lewat HTTPS - buka lagi di tab/browser baru untuk memastikan sebelum menutup sesi ini.');
+            flash('success', 'Sertifikat SSL berhasil diterbitkan. Konfigurasi sedang diterapkan di background (PHP-FPM panel akan restart sebentar) - tunggu sekitar 10-15 detik lalu refresh halaman ini untuk memastikan status berubah jadi Aktif (HTTPS).');
         }
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
