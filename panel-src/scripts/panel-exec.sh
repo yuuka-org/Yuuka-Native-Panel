@@ -501,11 +501,67 @@ op_pm2_deploy() {
     cat > "$tmp"
     [[ -s "$tmp" ]] || { rm -f "$tmp"; fail "Ecosystem config kosong"; }
 
-    mv "$tmp" "${app_dir}/ecosystem.config.js"
+    # .cjs (not .js) is deliberate: the content we write is always
+    # CommonJS (`module.exports = {...}`), but if the app's OWN
+    # package.json declares "type": "module", Node treats any plain .js
+    # file as an ES module and PM2 crashes immediately with "ReferenceError:
+    # module is not defined in ES module scope" before ever reaching the
+    # app's actual script. .cjs is exempt from that package.json-driven
+    # detection no matter the app's own module type, so this always loads
+    # as CommonJS. Remove any stale pre-.cjs-fix file from an older deploy
+    # so it can't linger and confuse a manual `pm2 start`.
+    rm -f "${app_dir}/ecosystem.config.js"
+    mv "$tmp" "${app_dir}/ecosystem.config.cjs"
     chown -R nodeapps:nodeapps "$app_dir"
     chmod 750 "$app_dir"
-    chmod 640 "${app_dir}/ecosystem.config.js"
+    chmod 640 "${app_dir}/ecosystem.config.cjs"
     fm_reapply_terminal_acl "$app_dir"
+
+    # First-ever deploy runs against a directory that's still empty by
+    # design - real project files are meant to be uploaded/git-cloned
+    # AFTER the app is registered (see NodeService::createApp()'s
+    # comment) - so `pm2 start` against a genuinely missing script file
+    # used to hard-fail app creation entirely (RuntimeException thrown,
+    # DB row never inserted, operator stuck before they could even upload
+    # code). Scaffold a tiny placeholder HTTP server at the configured
+    # script path instead, ONLY when nothing is there yet, so the app
+    # comes up successfully and the operator can swap in real code +
+    # redeploy whenever it's ready. Never touches a file that already
+    # exists. Detects ESM vs CommonJS from the app's own package.json (if
+    # any) so the placeholder itself doesn't hit the same "type": "module"
+    # trap that .cjs above just fixed for the ecosystem file.
+    local script_rel script_path
+    script_rel=$(as_nodeapps "node -e 'const c=require(process.argv[1]); process.stdout.write(String(c.apps[0].script))' '${app_dir}/ecosystem.config.cjs'" 2>/dev/null) || script_rel=""
+    if [[ -n "$script_rel" ]]; then
+        script_path=$(require_path_within "${app_dir}/${script_rel}" "$app_dir")
+        if [[ ! -e "$script_path" ]]; then
+            mkdir -p "$(dirname "$script_path")"
+            local is_esm=0
+            if [[ -f "${app_dir}/package.json" ]] && grep -q '"type"[[:space:]]*:[[:space:]]*"module"' "${app_dir}/package.json" 2>/dev/null; then
+                is_esm=1
+            fi
+            if [[ "$is_esm" == "1" ]]; then
+                cat > "$script_path" <<'TEMPLATE_EOF'
+import http from 'node:http';
+const port = process.env.PORT || 3000;
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+  res.end('Yuuka Panel: template default aktif. Ganti file ini dengan kode aplikasi Anda lalu redeploy.\n');
+}).listen(port, () => console.log(`[template] listening on port ${port}`));
+TEMPLATE_EOF
+            else
+                cat > "$script_path" <<'TEMPLATE_EOF'
+const http = require('node:http');
+const port = process.env.PORT || 3000;
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+  res.end('Yuuka Panel: template default aktif. Ganti file ini dengan kode aplikasi Anda lalu redeploy.\n');
+}).listen(port, () => console.log(`[template] listening on port ${port}`));
+TEMPLATE_EOF
+            fi
+            chown -R nodeapps:nodeapps "$app_dir"
+        fi
+    fi
 
     # "nvm use <version>" only changes PATH for THIS shell invocation, but
     # that's enough: PM2 resolves its default 'node' interpreter to an
@@ -555,7 +611,7 @@ op_pm2_deploy() {
     # `|| true`) on a genuinely first-ever deploy, where there's nothing to
     # delete yet.
     as_nodeapps "pm2 delete '${app}' >/dev/null 2>&1 || true"
-    as_nodeapps "PM2_BIN=\$(command -v pm2); ${nvm_use}\"\${PM2_BIN:?pm2 tidak ditemukan di PATH}\" start '${app_dir}/ecosystem.config.js' --update-env"
+    as_nodeapps "PM2_BIN=\$(command -v pm2); ${nvm_use}\"\${PM2_BIN:?pm2 tidak ditemukan di PATH}\" start '${app_dir}/ecosystem.config.cjs' --update-env"
     as_nodeapps "pm2 save"
     echo "OK: ${app} deployed via PM2"
 }

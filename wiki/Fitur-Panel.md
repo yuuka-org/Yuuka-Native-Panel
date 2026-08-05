@@ -218,11 +218,18 @@ metadata (lihat [Arsitektur](Arsitektur.md) pilar #2).
 
 - `createApp(...)` — validasi port bebas (`isPortAvailable`/
   `findFreePort`, range default 3000-3999, dicek juga lewat `port-check`
-  di server), menulis `ecosystem.config.js` PM2 (lewat `pm2-deploy`,
-  dijalankan sebagai user `nodeapps`), lalu `pm2 save` supaya bertahan
+  di server), menulis `ecosystem.config.cjs` PM2 (lewat `pm2-deploy`,
+  dijalankan sebagai user `nodeapps`; ekstensi selalu `.cjs` supaya
+  Node tidak salah mengira file ini ES module walau `package.json` app-nya
+  sendiri punya `"type": "module"`), lalu `pm2 save` supaya bertahan
   setelah reboot. `build_command` **tidak** dijalankan saat create (folder
   proyek masih kosong, baru diisi lewat File Manager/git setelahnya) —
-  baru benar-benar jalan di redeploy berikutnya.
+  baru benar-benar jalan di redeploy berikutnya. Kalau file script yang
+  dikonfigurasi belum ada sama sekali (deploy pertama sebelum kode
+  diupload), `pm2-deploy` men-scaffold placeholder HTTP server minimal
+  (CommonJS atau ESM, dideteksi dari `package.json` app kalau sudah ada)
+  supaya app tetap berhasil start alih-alih create gagal total dengan
+  "Script not found".
 - `updateApp(...)` — edit konfigurasi (Start/Build Command, NODE_ENV,
   Instances, Exec Mode, Autorestart, Watch, Max Memory Restart, versi
   Node.js) lewat tab **Settings > Umum**, langsung redeploy PM2 dengan
@@ -326,7 +333,7 @@ di tabel `app_env_variables` (`var_value_enc`, AES-256-GCM, kunci dari
 disamarkan (`••••••••`) di UI dengan tombol show/hide, mendukung
 import/export format `.env` (`parseDotEnv()`/`toDotEnvExport()`).
 Perubahan baru berlaku setelah menekan **Terapkan & Restart** (menulis
-ulang `ecosystem.config.js` lalu `pm2 start ... --update-env`).
+ulang `ecosystem.config.cjs` lalu `pm2 start ... --update-env`).
 
 ### Health Check (`nodejs_health.php`)
 

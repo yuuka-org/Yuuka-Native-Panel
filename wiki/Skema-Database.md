@@ -68,7 +68,7 @@ dibaca live dari `pm2 jlist`, bukan dari tabel ini (lihat
 | `pm2_name` | UNIQUE, nama proses di PM2 |
 | `domain`, `project_path`, `node_version`, `port` (UNIQUE) | `domain` = domain "primary" (ditampilkan di tabel utama) — app bisa punya domain tambahan lewat tabel `domains`, lihat `NodeService::addDomain()`/`listDomains()` |
 | `start_command`, `build_command` | `build_command` dijalankan (sebagai user `nodeapps`, di folder app) setiap redeploy lewat tab Settings > Umum — **kecuali** saat create pertama kali (folder masih kosong) |
-| `instances`, `exec_mode` (fork/cluster), `autorestart`, `watch`, `max_memory_restart` | Parameter `ecosystem.config.js`. Ecosystem juga selalu set `merge_logs: true` supaya log multi-instance (cluster mode) tidak tercecer ke file terpisah per-worker |
+| `instances`, `exec_mode` (fork/cluster), `autorestart`, `watch`, `max_memory_restart` | Parameter `ecosystem.config.cjs`. Ecosystem juga selalu set `merge_logs: true` supaya log multi-instance (cluster mode) tidak tercecer ke file terpisah per-worker |
 | `node_env` | default `production` |
 | `wildcard_enabled` | Cloudflare for SaaS Custom Hostname — sama seperti `websites.wildcard_enabled`, satu slot untuk seluruh server (lintas tabel `websites`+`nodejs_apps`) |
 | `is_managed` | Membedakan app yang dikelola penuh vs. hasil `importUnmanaged()` |

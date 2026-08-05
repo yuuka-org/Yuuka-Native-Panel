@@ -72,7 +72,7 @@ final class Validator
 
     public static function envVarValue(string $value): bool
     {
-        // Disallow raw newlines/NUL which could break the ecosystem.config.js
+        // Disallow raw newlines/NUL which could break the ecosystem.config.cjs
         // serialization; the value itself is always emitted as a JSON string,
         // never interpolated into a shell command.
         return !str_contains($value, "\0") && strlen($value) <= 8192;

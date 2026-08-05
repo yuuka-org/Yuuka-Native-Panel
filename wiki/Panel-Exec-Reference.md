@@ -22,7 +22,7 @@ Setiap pemanggilan (sukses maupun ditolak) dicatat ke
 | `nginx-disable` | `<site>` | – | Hapus symlink `sites-enabled`, reload |
 | `nginx-delete` | `<site>` | – | Hapus config available+enabled, reload |
 | `nginx-write-ratelimit-zones` | – | isi config `limit_req_zone` gabungan | Tulis `/etc/nginx/conf.d/panel-rate-limits.conf` (full di-generate ulang dari semua situs yang Traffic Control-nya aktif tiap kali berubah), validasi `nginx -t`, reload |
-| `pm2-deploy` | `<app>` `[node_version]` `[build_command]` | isi `ecosystem.config.js` | Tulis ecosystem file di bawah `nodeapps`, `nvm use <node_version>` (kalau diisi) sebelum start supaya versi Node per-app benar-benar dipakai (bukan cuma metadata), jalankan `build_command` (kalau diisi, TIDAK dijalankan saat create pertama kali karena folder masih kosong) di folder app, `pm2 start --update-env`, `pm2 save` |
+| `pm2-deploy` | `<app>` `[node_version]` `[build_command]` | isi `ecosystem.config.cjs` | Tulis ecosystem file (selalu `.cjs`, bukan `.js`, supaya kebal dari `"type": "module"` di `package.json` app itu sendiri) di bawah `nodeapps`, scaffold placeholder HTTP server di path script kalau belum ada file sama sekali (deploy pertama sebelum kode diupload), `nvm use <node_version>` (kalau diisi) sebelum start supaya versi Node per-app benar-benar dipakai (bukan cuma metadata), jalankan `build_command` (kalau diisi, TIDAK dijalankan saat create pertama kali karena folder masih kosong) di folder app, `pm2 start --update-env`, `pm2 save` |
 | `pm2-start` / `pm2-stop` / `pm2-restart` / `pm2-reload` | `<app>` | – | Kontrol proses PM2 (sebagai user `nodeapps`) |
 | `pm2-reset` | `<app>` | – | `pm2 reset` — reset counter Restarts ke 0 |
 | `pm2-delete` | `<app>` | – | `pm2 delete` + `pm2 save` |

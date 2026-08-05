@@ -202,7 +202,7 @@ restore selalu bisa dibatalkan.
 Dikelola per-aplikasi di halaman **Environment** masing-masing app. Nilai
 secret disamarkan (`••••••••`) secara default dengan tombol show/hide,
 mendukung import/export format `.env`. Perubahan baru berlaku setelah
-menekan **Terapkan & Restart** (menulis ulang `ecosystem.config.js` lalu
+menekan **Terapkan & Restart** (menulis ulang `ecosystem.config.cjs` lalu
 `pm2 start ... --update-env`).
 
 ## 7. Simplifikasi yang Disengaja

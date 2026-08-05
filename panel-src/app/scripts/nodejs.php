@@ -3,9 +3,11 @@ declare(strict_types=1);
 
 /**
  * Low-level PM2 wrappers. Every app started through the panel goes through
- * an ecosystem.config.js file (never an ad-hoc `pm2 start server.js`), so
+ * an ecosystem.config.cjs file (never an ad-hoc `pm2 start server.js`), so
  * instances/exec_mode/env/max_memory_restart are always explicit and
- * reproducible.
+ * reproducible. Always .cjs, not .js - panel-exec.sh's op_pm2_deploy()
+ * writes it that way so it stays CommonJS regardless of whether the app's
+ * own package.json declares "type": "module".
  */
 
 /** Mirrors panel-exec.sh's PM2_LOG_DIR constant exactly - keep both in sync. */
