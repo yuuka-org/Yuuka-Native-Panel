@@ -624,6 +624,58 @@ EOF
     state_mark "panel:health_check_cron"
 }
 
+# ---------------------------------------------------------------------------
+# Backup > Cloud Storage (Settings > Backup) - AWS CLI v2 is the client used
+# to talk to any S3-compatible endpoint (real AWS S3, or Backblaze B2's own
+# S3-compatible API via --endpoint-url) - see panel-exec.sh's
+# op_backup_upload_s3. Installed via AWS's own bundled installer (a static
+# binary, no Python dependency) rather than the outdated `awscli` apt
+# package - this is AWS's own officially supported install path and works
+# identically for both providers.
+# ---------------------------------------------------------------------------
+module_panel_install_awscli() {
+    log_step "Memasang AWS CLI v2 (untuk Backup > Cloud Storage)"
+
+    if command_exists aws; then
+        log_ok "AWS CLI sudah terpasang ($(aws --version 2>&1 | head -1))"
+        state_mark "panel:awscli_installed"
+        return 0
+    fi
+
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    if ! curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "${tmp_dir}/awscliv2.zip" >>"$INSTALL_LOG_FILE" 2>&1; then
+        log_warn "Gagal mengunduh AWS CLI - fitur Backup > Cloud Storage tidak akan berfungsi sampai ini dipasang manual"
+        rm -rf "$tmp_dir"
+        return 0
+    fi
+    (cd "$tmp_dir" && unzip -q awscliv2.zip && ./aws/install) >>"$INSTALL_LOG_FILE" 2>&1
+    rm -rf "$tmp_dir"
+
+    if command_exists aws; then
+        log_ok "AWS CLI v2 terpasang ($(aws --version 2>&1 | head -1))"
+        state_mark "panel:awscli_installed"
+    else
+        log_warn "AWS CLI gagal terpasang - fitur Backup > Cloud Storage tidak akan berfungsi sampai ini dipasang manual"
+    fi
+}
+
+# Same "cheap per-minute poll, skip if not due" design as the health check
+# runner above - one fixed cron entry regardless of how many backup
+# schedules exist, rather than a dynamic per-schedule cron file, since
+# due-ness (elapsed time since last_run_at vs. the configured interval) is
+# computed in PHP (BackupScheduleService::isDue()) - see that class for
+# why cron step syntax alone can't express "every N months/years" exactly.
+module_panel_backup_scheduler_cron() {
+    log_step "Menjadwalkan backup scheduler (setiap menit)"
+
+    write_file_if_changed "/etc/cron.d/panel-backup-scheduler" <<EOF
+* * * * * panel /usr/bin/php${PHP_DEFAULT_VERSION:-8.3} ${PANEL_ROOT}/scripts/backup_scheduler_runner.php >/dev/null 2>&1
+EOF
+    log_ok "Backup scheduler terjadwal via /etc/cron.d/panel-backup-scheduler"
+    state_mark "panel:backup_scheduler_cron"
+}
+
 module_panel_run_all() {
     module_panel_setup_installer_copy
     module_panel_deploy_files
@@ -635,5 +687,7 @@ module_panel_run_all() {
     module_panel_nginx_vhost
     module_panel_sync_ssl_env
     module_panel_health_check_cron
+    module_panel_install_awscli
+    module_panel_backup_scheduler_cron
     module_panel_logrotate
 }

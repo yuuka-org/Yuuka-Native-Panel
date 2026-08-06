@@ -410,7 +410,26 @@ aplikasi Node.js (tabel `domains`, kolom `type` ENUM `php`/`nodejs`,
 - SSL per-domain ditangani `SSLService::issueForDomain()` /
   `removeCertificate()` lewat Certbot mode webroot (`certbot-issue`/
   `certbot-remove` di panel-exec.sh) — tidak berlaku di mode deployment
-  `tunnel` murni (lihat [Cloudflare Tunnel](Cloudflare-Tunnel.md)).
+  `tunnel` murni (lihat [Cloudflare Tunnel](Cloudflare-Tunnel.md)). Setelah
+  certbot sukses, `SSLService` memanggil `NginxService::applySslForDomain()`
+  (situs PHP) atau `NodeService::applySslForDomain()` (aplikasi Node.js)
+  untuk benar-benar menulis+mengaktifkan blok `listen 443` domain
+  tersebut — kolom `ssl_enabled` di DB baru diset SETELAH langkah ini
+  berhasil, supaya status "SSL Aktif" di UI tidak pernah menyimpang dari
+  yang benar-benar dilayani Nginx. `removeCertificate()` membalik
+  urutannya (Nginx dikembalikan ke HTTP dulu, baru berkas sertifikat
+  dihapus) dengan alasan yang sama.
+- `SSLService::uploadManualCertificate($domain, $certPem, $keyPem, $userId)`
+  — alternatif Let's Encrypt untuk sertifikat yang sudah dibeli di luar
+  panel, atau domain yang tidak bisa dijangkau langsung oleh challenge
+  HTTP-01 certbot (mis. traffic hanya lewat Cloudflare). Divalidasi ganda
+  (PHP `openssl_x509_check_private_key` dkk sebelum dikirim, bash
+  `openssl x509`/`openssl pkey` + cocokkan modulus sebelum ditulis),
+  disimpan ke path konvensi certbot yang sama
+  (`/etc/letsencrypt/live/<domain>/{fullchain,privkey}.pem`) sehingga
+  Nginx tidak perlu tahu asal sertifikatnya. Tombol upload ada di
+  `domains.php`, tampil di samping "Issue SSL" untuk domain yang belum
+  aktif SSL-nya.
 
 ## Cron Jobs
 
@@ -450,6 +469,46 @@ sehingga restore selalu bisa dibatalkan/diulang. Semua file backup
 tersimpan di `/opt/server-panel/storage/backups/`, path selalu divalidasi
 `require_path_within()` di sisi bash agar tidak bisa keluar dari direktori
 itu.
+
+### Cloud Storage (S3 / Backblaze B2)
+
+`CloudBackupService` — tiap backup lokal yang **berhasil** dibuat (lewat
+tombol manual DI MANA PUN, atau lewat Jadwal Backup di bawah) otomatis
+diunggah ke storage S3-compatible kalau diaktifkan di Settings > Backup.
+Satu choke point: `BackupService::finalize()` memanggil
+`CloudBackupService::uploadIfConfigured()` setelah status backup jadi
+`completed` — jadi tidak ada jalur backup yang "lupa" upload. Kegagalan
+upload cloud TIDAK membatalkan backup lokal yang sudah sukses (dicatat ke
+`storage/logs/backup-cloud-upload.log`, kolom `cloud_uploaded` di tabel
+`backups` tetap 0).
+
+Backblaze B2 dipakai lewat endpoint S3-compatible-nya sendiri
+(`--endpoint-url`) — satu jalur kode (`aws s3 cp` via AWS CLI v2, subcommand
+`backup-upload-s3`) melayani AWS S3 asli maupun B2, tidak ada percabangan
+per-provider. AWS CLI v2 dipasang otomatis oleh installer/`update.sh`
+(`modules/panel.sh::module_panel_install_awscli`). Kredensial (Access
+Key/Secret Key) disimpan di tabel `settings` — Secret Key terenkripsi
+AES-256-GCM lewat `EnvService::encrypt()` (kunci `APP_KEY` yang sama
+dipakai environment variable Node.js), tidak pernah dikirim balik ke
+browser dalam bentuk plain (field password di form selalu kosong,
+mengisinya berarti mengganti, mengosongkannya berarti tetap pakai yang
+lama).
+
+### Jadwal Backup Otomatis
+
+`BackupScheduleService` (tabel `backup_schedules`) — backup berulang per
+target (database/website/aplikasi Node.js), interval bebas dalam
+menit/jam/hari/bulan/tahun. Dieksekusi oleh SATU cron sistem tetap
+(`/etc/cron.d/panel-backup-scheduler`, dipasang
+`modules/panel.sh::module_panel_backup_scheduler_cron`, jalan tiap menit
+sebagai user `panel`) yang memanggil `backup_scheduler_runner.php` — skrip
+ini query semua jadwal yang aktif, jalankan hanya yang "jatuh tempo"
+(`BackupScheduleService::isDue()`: `waktu sekarang - last_run_at >=
+interval`, dihitung di PHP, bukan didekati lewat sintaks step cron —
+standar cron tidak punya kolom tahun sama sekali dan step di
+hari-dalam-bulan tidak rata di setiap bulan). Cron ini tetap jalan tiap
+menit meski tidak ada jadwal aktif (query kosong, no-op murah), bukan
+per-jadwal dinamis, supaya jumlah jadwal tidak menambah jumlah entri cron.
 
 ## Log
 

@@ -34,6 +34,13 @@ final class SettingsService
         'basicauth_username',
         'filemanager_max_upload_mb',
         'default_locale',
+        'backup_cloud_enabled',
+        'backup_cloud_endpoint',
+        'backup_cloud_region',
+        'backup_cloud_bucket',
+        'backup_cloud_access_key',
+        'backup_cloud_secret_key_enc',
+        'backup_cloud_path_prefix',
     ];
 
     public static function get(string $key, string $default = ''): string

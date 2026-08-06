@@ -160,5 +160,16 @@ final class BackupService
             'UPDATE backups SET status = :s, size_bytes = :sz WHERE id = :id'
         );
         $stmt->execute(['s' => $success ? 'completed' : 'failed', 'sz' => $size ?: 0, 'id' => $id]);
+
+        // Single choke point for every backup path (manual button clicks
+        // AND scheduled runs via backup_scheduler_runner.php both call
+        // backupDatabase()/backupWebsite()/backupNodeApp(), which all end
+        // up here) - cloud upload is a no-op when nothing's configured
+        // (CloudBackupService::isConfigured()), and never throws back into
+        // the caller on failure, since the local copy already succeeded
+        // regardless of whether the off-site mirror did.
+        if ($success) {
+            CloudBackupService::uploadIfConfigured($id);
+        }
     }
 }

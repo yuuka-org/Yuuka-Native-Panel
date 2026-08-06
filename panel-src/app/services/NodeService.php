@@ -380,6 +380,40 @@ final class NodeService
         ActivityLog::record($userId, 'nodejs.domain_remove', "Domain dihapus dari {$app['app_name']}: {$domain}");
     }
 
+    /**
+     * Applies (or removes) the 443 server block for ONE Node.js app
+     * domain - called by SSLService AFTER certbot has already issued/
+     * removed the cert files on disk, mirroring
+     * NginxService::applySslForDomain() for PHP sites. Never touches
+     * `domains.ssl_enabled` itself - SSLService only flips that after
+     * this succeeds.
+     */
+    public static function applySslForDomain(string $domain, bool $sslEnabled): void
+    {
+        $stmt = Database::app()->prepare('SELECT * FROM domains WHERE domain = :d AND type = "nodejs"');
+        $stmt->execute(['d' => $domain]);
+        $domainRow = $stmt->fetch();
+        if ($domainRow === null || empty($domainRow['nodejs_app_id'])) {
+            throw new InvalidArgumentException('Domain aplikasi Node.js tidak ditemukan');
+        }
+
+        $app = self::find((int) $domainRow['nodejs_app_id']);
+        if ($app === null) {
+            throw new InvalidArgumentException('Aplikasi tidak ditemukan');
+        }
+
+        $siteName = "node-{$domain}";
+        $config = nginx_build_nodejs_proxy_config($domain, (int) $app['port'], $sslEnabled);
+        $write = nginx_write_config($siteName, $config);
+        if (!$write['ok']) {
+            throw new RuntimeException('Konfigurasi Nginx tidak valid: ' . $write['output']);
+        }
+        $enable = nginx_enable_site($siteName);
+        if (!$enable['ok']) {
+            throw new RuntimeException('Gagal mengaktifkan situs: ' . $enable['output']);
+        }
+    }
+
     public static function controlApp(int $id, string $action, ?int $userId): void
     {
         $app = self::find($id);

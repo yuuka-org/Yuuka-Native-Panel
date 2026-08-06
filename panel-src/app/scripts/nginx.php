@@ -69,17 +69,22 @@ CONF;
  *   redirect_target?:string,
  *   rate_limit?:array{rps:int,burst:int}|null,
  *   hotlink?:array{extensions:string,referrers:string}|null,
- *   reverse_proxies?:array<int,array{path_prefix:string,target_url:string}>
+ *   reverse_proxies?:array<int,array{path_prefix:string,target_url:string}>,
+ *   ssl_enabled?:bool
  * } $options
  */
 function nginx_build_php_site_config(string $domain, string $phpVersion, string $documentRoot, array $options = []): string
 {
     // A full-site Redirect short-circuits everything else below - nothing
     // is actually served from disk for this domain, every request just
-    // bounces onward.
+    // bounces onward. Still needs its own SSL branch though - a redirect
+    // domain (e.g. old.com -> new.com) legitimately wants a valid cert too,
+    // so the browser never sees a TLS warning before the redirect ever
+    // fires.
     if (!empty($options['redirect_target'])) {
         $target = $options['redirect_target'];
-        return <<<CONF
+        if (empty($options['ssl_enabled'])) {
+            return <<<CONF
 server {
     listen 80;
     listen [::]:80;
@@ -88,8 +93,21 @@ server {
     return 301 {$target}\$request_uri;
 }
 CONF;
+        }
+        $sslDirectives = nginx_ssl_cert_directives($domain);
+        $mainBlock = <<<CONF
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name {$domain};
+{$sslDirectives}
+    return 301 {$target}\$request_uri;
+}
+CONF;
+        return $mainBlock . "\n\n" . nginx_http_redirect_block($domain);
     }
 
+    $ssl = !empty($options['ssl_enabled']);
     $sock = "/run/php/php{$phpVersion}-fpm.sock";
     $index = trim((string) ($options['default_index'] ?? '')) !== '' ? trim($options['default_index']) : 'index.php index.html';
 
@@ -119,20 +137,29 @@ CONF;
 LOC;
     }
 
-    return <<<CONF
-server {
-    listen 80;
-    listen [::]:80;
-    server_name {$domain};
+    // SSL sites split into two server{} blocks: this one on 443 serving
+    // the real site, plus a companion 80 block (appended below) that only
+    // keeps ACME renewal alive and redirects everything else to https -
+    // the acme-challenge include has no reason to live in the 443 block
+    // since certbot's webroot method always talks to port 80.
+    $listen = $ssl
+        ? "    listen 443 ssl http2;\n    listen [::]:443 ssl http2;"
+        : "    listen 80;\n    listen [::]:80;";
+    $acmeInclude = $ssl ? '' : "    include snippets/acme-challenge.conf;\n";
+    $sslDirectives = $ssl ? nginx_ssl_cert_directives($domain) . "\n" : '';
+    $logSuffix = $ssl ? '-ssl' : '';
 
-    include snippets/acme-challenge.conf;
-    include snippets/cloudflare-realip.conf;
+    $mainBlock = <<<CONF
+server {
+{$listen}
+    server_name {$domain};
+{$acmeInclude}{$sslDirectives}    include snippets/cloudflare-realip.conf;
 
     root {$documentRoot};
     index {$index};
 
-    access_log /var/log/nginx/{$domain}-access.log;
-    error_log  /var/log/nginx/{$domain}-error.log;
+    access_log /var/log/nginx/{$domain}{$logSuffix}-access.log;
+    error_log  /var/log/nginx/{$domain}{$logSuffix}-error.log;
 {$extra}
     location / {
         try_files \$uri \$uri/ /index.php?\$query_string;
@@ -149,21 +176,27 @@ server {
     include snippets/security-headers.conf;
 }
 CONF;
+
+    return $ssl ? $mainBlock . "\n\n" . nginx_http_redirect_block($domain) : $mainBlock;
 }
 
-function nginx_build_nodejs_proxy_config(string $domain, int $port): string
+function nginx_build_nodejs_proxy_config(string $domain, int $port, bool $sslEnabled = false): string
 {
-    return <<<CONF
+    $listen = $sslEnabled
+        ? "    listen 443 ssl http2;\n    listen [::]:443 ssl http2;"
+        : "    listen 80;\n    listen [::]:80;";
+    $acmeInclude = $sslEnabled ? '' : "    include snippets/acme-challenge.conf;\n";
+    $sslDirectives = $sslEnabled ? nginx_ssl_cert_directives($domain) . "\n" : '';
+    $logSuffix = $sslEnabled ? '-ssl' : '';
+
+    $mainBlock = <<<CONF
 server {
-    listen 80;
-    listen [::]:80;
+{$listen}
     server_name {$domain};
+{$acmeInclude}{$sslDirectives}    include snippets/cloudflare-realip.conf;
 
-    include snippets/acme-challenge.conf;
-    include snippets/cloudflare-realip.conf;
-
-    access_log /var/log/nginx/{$domain}-access.log;
-    error_log  /var/log/nginx/{$domain}-error.log;
+    access_log /var/log/nginx/{$domain}{$logSuffix}-access.log;
+    error_log  /var/log/nginx/{$domain}{$logSuffix}-error.log;
 
     location / {
         proxy_pass http://127.0.0.1:{$port};
@@ -173,6 +206,8 @@ server {
     include snippets/security-headers.conf;
 }
 CONF;
+
+    return $sslEnabled ? $mainBlock . "\n\n" . nginx_http_redirect_block($domain) : $mainBlock;
 }
 
 /**
@@ -284,29 +319,21 @@ server {
 CONF;
 }
 
-function nginx_build_ssl_server_block(string $domain, string $upstreamLocationBlock): string
+/** Shared ssl_certificate/protocol/cipher directives - both PHP site and Node.js proxy configs point at the same Let's Encrypt path convention. */
+function nginx_ssl_cert_directives(string $domain): string
 {
     return <<<CONF
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name {$domain};
-
     ssl_certificate     /etc/letsencrypt/live/{$domain}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/{$domain}/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
-
-    include snippets/cloudflare-realip.conf;
-
-    access_log /var/log/nginx/{$domain}-ssl-access.log;
-    error_log  /var/log/nginx/{$domain}-ssl-error.log;
-
-{$upstreamLocationBlock}
-
-    include snippets/security-headers.conf;
+CONF;
 }
 
+/** Companion 80 block for an SSL-enabled domain - keeps ACME renewal reachable and bounces everything else to https. */
+function nginx_http_redirect_block(string $domain): string
+{
+    return <<<CONF
 server {
     listen 80;
     listen [::]:80;

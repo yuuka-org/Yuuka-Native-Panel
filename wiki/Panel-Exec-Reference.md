@@ -35,9 +35,10 @@ Setiap pemanggilan (sukses maupun ditolak) dicatat ke
 | `pm2-logs-read-archive` | `<app>` `<file>` `[lines]` | – | Baca satu file log arsip tertentu milik app itu |
 | `pm2-flush` | `<app>` | – | Bersihkan log PM2 aplikasi (file log live) |
 | `pm2-save` | – | – | `pm2 save` |
-| `certbot-issue` | `<domain>` `<email>` | – | `certbot certonly --webroot` |
-| `certbot-remove` | `<domain>` | – | `certbot delete --cert-name` |
+| `certbot-issue` | `<domain>` `<email>` | – | `certbot certonly --webroot` - hanya menerbitkan berkas sertifikat, TIDAK menyentuh Nginx. `SSLService::issueForDomain()` yang menerapkan blok 443-nya setelah ini sukses (lihat `applySslForDomain()` di `NginxService`/`NodeService`) |
+| `certbot-remove` | `<domain>` | – | `certbot delete --cert-name`; kalau domain tidak dikenal certbot (mis. sertifikat manual upload), fallback ke `rm -rf` langsung berkas di `/etc/letsencrypt/live/<domain>/` supaya Remove SSL tetap berhasil apa pun asal sertifikatnya |
 | `panel-ssl-issue` | `<email>` | – | SSL untuk domain PANEL sendiri (Settings > SSL Panel) - domain diambil dari vhost panel yang sudah ada di disk, BUKAN dari argumen caller. Setelah certbot sukses, otomatis jalankan `yp repair panel` supaya vhost dapat blok `listen 443` + `.env` ikut sinkron (`SESSION_SECURE_COOKIE`/`APP_URL`) - lihat `wiki/Troubleshooting.md` |
+| `ssl-manual-upload` | `<domain>` | JSON `{"cert":"...","key":"..."}` | Upload sertifikat SSL manual (Domain Management) - divalidasi ganda: PHP (`openssl_x509_check_private_key` dkk, sebelum dikirim) DAN bash (`openssl x509`/`openssl pkey` + cocokkan modulus, sebelum ditulis). Ditulis ke path yang SAMA PERSIS dengan konvensi certbot (`/etc/letsencrypt/live/<domain>/{fullchain,privkey}.pem`) supaya Nginx tidak perlu tahu asal sertifikatnya |
 | `service-status` | `<svc>` | – | `systemctl is-active` — whitelist: `nginx`, `mariadb`, `cloudflared`, `php{7.4-8.4}-fpm` |
 | `service-restart` | `<svc>` | – | `systemctl restart` — whitelist sama dengan `service-status` |
 | `installer-version-info` / `installer-check-update` / `installer-self-update` / `installer-self-update-status` | – | – | Info versi & update mandiri installer/CLI `yp` |
@@ -74,6 +75,7 @@ Setiap pemanggilan (sukses maupun ditolak) dicatat ke
 | `backup-tar-nodeapp` | `<app>` `<outfile>` | – | `tar czf` folder aplikasi Node.js |
 | `restore-tar-website` | `<infile>` `<domain>` | – | Extract tar ke `/var/www`, chown `www-data` |
 | `restore-tar-nodeapp` | `<infile>` `<app>` | – | Extract tar ke `/home/nodeapps/apps`, chown `nodeapps` |
+| `backup-upload-s3` | `<filename>` | JSON `{"endpoint","region","bucket","prefix","access_key","secret_key"}` | Upload satu file backup (sudah ada di `storage/backups`) ke storage S3-compatible (AWS S3 atau Backblaze B2 via `--endpoint-url`) pakai `aws s3 cp`. Kredensial hanya lewat stdin/env var proses `aws`, tidak pernah lewat argv/log |
 | `cron-write` | `<jobid>` (`panel-<id>`) | isi file cron | Tulis `/etc/cron.d/<jobid>` |
 | `cron-delete` | `<jobid>` | – | Hapus file cron |
 | `log-tail` | `<logkey>` `[lines]` | – | Tail log, whitelist logkey, maks 2000 baris |

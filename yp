@@ -583,6 +583,15 @@ cmd_repair_panel() {
         log_warn "Tidak bisa mendeteksi versi PHP pool panel - lewati regenerasi pool"
     fi
 
+    # module_panel_run_all() (dipakai install.sh) sudah memanggil kedua ini
+    # sendiri, tapi jalur 'yp repair panel' ini (dipakai update.sh di server
+    # yang SUDAH terinstall sebelum fitur ini ada) memanggil fungsi satu-satu
+    # secara manual dan sebelumnya tidak menyertakan provisioning ini sama
+    # sekali - persis kelas masalah yang sama dengan module_panel_sync_ssl_env
+    # di bawah, lihat komentarnya.
+    module_panel_install_awscli
+    module_panel_backup_scheduler_cron
+
     local vhost domain
     vhost=$(panel_vhost_file)
     domain=$(grep -h 'server_name' "${vhost:-/dev/null}" 2>/dev/null | head -1 | awk '{print $2}' | tr -d ';')

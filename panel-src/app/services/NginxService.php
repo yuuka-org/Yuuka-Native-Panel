@@ -92,8 +92,8 @@ final class NginxService
         return self::find($id);
     }
 
-    /** Builds the $options array nginx_build_php_site_config() expects from a `websites` row's current settings. */
-    private static function siteOptions(array $site): array
+    /** Builds the $options array nginx_build_php_site_config() expects from a `websites` row's current settings. $sslEnabled is passed explicitly (not read off $site) because it's tracked per-domain-row, not per-website-row, once additional domains are involved - see applySslForDomain(). */
+    private static function siteOptions(array $site, bool $sslEnabled): array
     {
         return [
             'default_index' => (string) ($site['default_index'] ?? ''),
@@ -106,6 +106,7 @@ final class NginxService
                 ? ['extensions' => (string) $site['hotlink_extensions'], 'referrers' => (string) ($site['hotlink_allowed_referrers'] ?? '')]
                 : null,
             'reverse_proxies' => self::listReverseProxies((int) $site['id']),
+            'ssl_enabled' => $sslEnabled,
         ];
     }
 
@@ -121,23 +122,52 @@ final class NginxService
         }
     }
 
-    /** Regenerates ONE domain's Nginx site config from $site's current settings (php_version/document_root/advanced options all shared site-wide). */
-    private static function regenerateDomainConfig(array $site, string $domain, string $siteName): void
+    /** Regenerates ONE domain's Nginx site config from $site's current settings (php_version/document_root/advanced options all shared site-wide) plus that specific domain's own SSL state. */
+    private static function regenerateDomainConfig(array $site, string $domain, string $siteName, bool $sslEnabled): void
     {
-        $config = nginx_build_php_site_config($domain, $site['php_version'], $site['document_root'], self::siteOptions($site));
+        $config = nginx_build_php_site_config($domain, $site['php_version'], $site['document_root'], self::siteOptions($site, $sslEnabled));
         self::writeAndEnable($siteName, $config);
     }
 
-    /** Regenerates the primary domain's config plus every additional domain this site owns (see addDomain()). */
+    /** Regenerates the primary domain's config plus every additional domain this site owns (see addDomain()) - each domain keeps its OWN ssl_enabled, they're issued/revoked independently. */
     private static function regenerateAllConfigs(array $site): void
     {
-        self::regenerateDomainConfig($site, $site['domain'], $site['nginx_conf_name']);
+        self::regenerateDomainConfig($site, $site['domain'], $site['nginx_conf_name'], (bool) $site['ssl_enabled']);
         foreach (self::listDomains((int) $site['id']) as $d) {
             if ($d['domain'] === $site['domain']) {
                 continue;
             }
-            self::regenerateDomainConfig($site, $d['domain'], "site-{$d['domain']}");
+            self::regenerateDomainConfig($site, $d['domain'], "site-{$d['domain']}", (bool) $d['ssl_enabled']);
         }
+    }
+
+    /**
+     * Applies (or removes) the 443 server block for ONE PHP-site domain -
+     * called by SSLService AFTER certbot has already issued/removed the
+     * cert files on disk, so ssl_certificate/ssl_certificate_key always
+     * point at files that genuinely exist by the time nginx -t runs.
+     * Never touches the `domains`/`websites` ssl_enabled columns itself -
+     * SSLService only flips those after this succeeds, so "SSL Issued" in
+     * the UI can never drift from what Nginx is actually serving.
+     */
+    public static function applySslForDomain(string $domain, bool $sslEnabled): void
+    {
+        $pdo = Database::app();
+        $stmt = $pdo->prepare('SELECT * FROM domains WHERE domain = :d AND type = "php"');
+        $stmt->execute(['d' => $domain]);
+        $domainRow = $stmt->fetch();
+        if ($domainRow === null || empty($domainRow['website_id'])) {
+            throw new InvalidArgumentException('Domain website tidak ditemukan');
+        }
+
+        $site = self::find((int) $domainRow['website_id']);
+        if ($site === null) {
+            throw new InvalidArgumentException('Website tidak ditemukan');
+        }
+
+        $isPrimary = $domain === $site['domain'];
+        $siteName = $isPrimary ? $site['nginx_conf_name'] : "site-{$domain}";
+        self::regenerateDomainConfig($site, $domain, $siteName, $sslEnabled);
     }
 
     /**
@@ -196,9 +226,13 @@ final class NginxService
         // Write+validate the NEW config first (nginx -t) before touching
         // anything belonging to the old domain - a rejected config (bad
         // PHP version/root combo, syntax problem) never leaves the site
-        // with nothing serving it.
+        // with nothing serving it. SSL forced off when the domain itself
+        // changes (matches the ssl_enabled=0 DB write below) - the new
+        // domain name has no cert issued for it yet, so a 443 block here
+        // would reference ssl_certificate files that don't exist and fail
+        // nginx -t, blocking even a plain domain rename.
         $updated = array_merge($site, ['domain' => $newDomain, 'php_version' => $phpVersion, 'document_root' => $documentRoot]);
-        self::regenerateDomainConfig($updated, $newDomain, $newSiteName);
+        self::regenerateDomainConfig($updated, $newDomain, $newSiteName, $domainChanged ? false : (bool) $site['ssl_enabled']);
 
         if ($domainChanged) {
             if ($newSiteName !== $site['nginx_conf_name']) {
@@ -226,7 +260,7 @@ final class NginxService
             if ($d['domain'] === $newDomain) {
                 continue;
             }
-            self::regenerateDomainConfig($fresh, $d['domain'], "site-{$d['domain']}");
+            self::regenerateDomainConfig($fresh, $d['domain'], "site-{$d['domain']}", (bool) $d['ssl_enabled']);
         }
 
         ActivityLog::record(
@@ -277,7 +311,7 @@ final class NginxService
             throw new InvalidArgumentException("Domain {$domain} sudah dipakai website/aplikasi lain");
         }
 
-        self::regenerateDomainConfig($site, $domain, "site-{$domain}");
+        self::regenerateDomainConfig($site, $domain, "site-{$domain}", false);
 
         $pdo->prepare('INSERT INTO domains (domain, type, website_id) VALUES (:d, "php", :id)')
             ->execute(['d' => $domain, 'id' => $id]);

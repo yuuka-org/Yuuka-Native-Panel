@@ -25,6 +25,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             Rbac::require('ssl.manage');
             SSLService::removeCertificate((string) $_POST['domain'], $user['id']);
             flash('success', 'Sertifikat SSL dihapus.');
+        } elseif ($action === 'upload_ssl') {
+            Rbac::require('ssl.manage');
+            if (!isset($_FILES['cert']) || $_FILES['cert']['error'] !== UPLOAD_ERR_OK) {
+                throw new InvalidArgumentException('Berkas sertifikat (fullchain/cert) gagal diunggah atau tidak dipilih');
+            }
+            if (!isset($_FILES['key']) || $_FILES['key']['error'] !== UPLOAD_ERR_OK) {
+                throw new InvalidArgumentException('Berkas private key gagal diunggah atau tidak dipilih');
+            }
+            $certPem = (string) file_get_contents($_FILES['cert']['tmp_name']);
+            $keyPem = (string) file_get_contents($_FILES['key']['tmp_name']);
+            SSLService::uploadManualCertificate((string) $_POST['domain'], $certPem, $keyPem, $user['id']);
+            flash('success', 'Sertifikat SSL manual berhasil diterapkan.');
         }
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
@@ -91,10 +103,40 @@ include __DIR__ . '/partials/header.php';
                   <input type="hidden" name="domain" value="<?= e($d['domain']) ?>">
                   <button class="btn btn-sm btn-outline-success"><i class="bi bi-shield-lock"></i> Issue SSL</button>
                 </form>
+                <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#uploadSsl<?= (int) $d['id'] ?>" title="Upload SSL Manual"><i class="bi bi-upload"></i></button>
               <?php endif; ?>
             <?php endif; ?>
           </td>
         </tr>
+        <?php if (Rbac::can($user['role'], 'ssl.manage') && !$d['ssl_enabled']): ?>
+        <div class="modal fade" id="uploadSsl<?= (int) $d['id'] ?>" tabindex="-1">
+          <div class="modal-dialog">
+            <form method="post" enctype="multipart/form-data">
+              <div class="modal-content">
+                <div class="modal-header"><h5 class="modal-title">Upload SSL Manual - <?= e($d['domain']) ?></h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body">
+                  <?= Csrf::field() ?>
+                  <input type="hidden" name="action" value="upload_ssl">
+                  <input type="hidden" name="domain" value="<?= e($d['domain']) ?>">
+                  <p class="text-muted small">Untuk sertifikat yang sudah dibeli/diterbitkan di luar panel (bukan Let's Encrypt), atau domain yang tidak bisa dijangkau langsung oleh challenge HTTP-01 certbot.</p>
+                  <div class="mb-3">
+                    <label class="form-label">Sertifikat (fullchain/cert, .pem/.crt)</label>
+                    <input type="file" name="cert" class="form-control" accept=".pem,.crt,.cer,.txt" required>
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">Private Key (.pem/.key, tanpa passphrase)</label>
+                    <input type="file" name="key" class="form-control" accept=".pem,.key,.txt" required>
+                  </div>
+                </div>
+                <div class="modal-footer">
+                  <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+                  <button type="submit" class="btn btn-primary">Terapkan</button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+        <?php endif; ?>
       <?php endforeach; ?>
       </tbody>
     </table>

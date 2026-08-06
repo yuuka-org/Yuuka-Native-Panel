@@ -777,7 +777,88 @@ op_certbot_issue() {
 op_certbot_remove() {
     local domain="$1"
     require_match "$domain" "$RE_DOMAIN" "domain"
-    certbot delete --cert-name "$domain" --non-interactive
+    if certbot delete --cert-name "$domain" --non-interactive 2>/dev/null; then
+        echo "OK: sertifikat ${domain} dihapus"
+        return 0
+    fi
+    # certbot has no record of this domain - it's not a certbot-tracked
+    # cert to begin with (a manually uploaded one via op_ssl_manual_upload
+    # below never goes through `certbot certonly`, so it has no entry in
+    # /etc/letsencrypt/renewal/). Fall back to removing the cert files
+    # directly so "Remove SSL" still works regardless of how the cert got
+    # there - SSLService::removeCertificate has already reverted Nginx to
+    # plain HTTP by the time this runs, so these files are unused either way.
+    local live_dir
+    live_dir=$(require_path_within "/etc/letsencrypt/live/${domain}" "/etc/letsencrypt/live")
+    if [[ -d "$live_dir" ]]; then
+        rm -rf -- "$live_dir"
+        echo "OK: berkas sertifikat manual untuk ${domain} dihapus"
+        return 0
+    fi
+    fail "Tidak ada sertifikat ditemukan untuk ${domain}"
+}
+
+# Manual SSL cert/key upload (Domain Management > Upload SSL Manual) - an
+# alternative to Let's Encrypt for domains that already have a
+# commercially-issued cert, or that certbot's HTTP-01 challenge can't
+# reach (e.g. traffic only ever arrives through Cloudflare with no direct
+# port 80 access). Content arrives as one JSON object over stdin
+# ({"cert":"...","key":"..."}) rather than two separate Executor calls, so
+# the cert/key pairing can be validated as a unit before anything touches
+# disk. Written to the EXACT SAME path convention certbot itself uses
+# (/etc/letsencrypt/live/<domain>/{fullchain,privkey}.pem) so
+# nginx_ssl_cert_directives() (nginx.php) needs no notion of "cert
+# source" at all - Nginx always reads from one place regardless of how
+# the cert got there.
+op_ssl_manual_upload() {
+    local domain="$1"
+    require_match "$domain" "$RE_DOMAIN" "domain"
+    command -v jq >/dev/null 2>&1 || fail "jq tidak ditemukan di server"
+
+    local tmp
+    tmp=$(mktemp)
+    cat > "$tmp"
+    [[ -s "$tmp" ]] || { rm -f "$tmp"; fail "Konten kosong"; }
+
+    local cert_content key_content
+    cert_content=$(jq -r '.cert // empty' "$tmp")
+    key_content=$(jq -r '.key // empty' "$tmp")
+    rm -f "$tmp"
+
+    [[ -n "$cert_content" ]] || fail "Konten sertifikat kosong"
+    [[ -n "$key_content" ]] || fail "Konten private key kosong"
+
+    # Defense in depth - SSLService already validated cert/key match,
+    # expiry, and domain coverage with PHP's openssl_* functions before
+    # this was ever called, but the ONLY thing this script trusts as a
+    # privilege boundary is its own input, never the caller's say-so.
+    printf '%s\n' "$cert_content" | openssl x509 -noout -in /dev/stdin >/dev/null 2>&1 \
+        || fail "Sertifikat tidak valid (openssl x509 gagal membaca)"
+    printf '%s\n' "$key_content" | openssl pkey -noout -in /dev/stdin >/dev/null 2>&1 \
+        || fail "Private key tidak valid (openssl pkey gagal membaca)"
+
+    local cert_modulus key_modulus
+    cert_modulus=$(printf '%s\n' "$cert_content" | openssl x509 -noout -modulus -in /dev/stdin 2>/dev/null)
+    key_modulus=$(printf '%s\n' "$key_content" | openssl pkey -noout -modulus -in /dev/stdin 2>/dev/null)
+    [[ -n "$cert_modulus" && "$cert_modulus" == "$key_modulus" ]] \
+        || fail "Private key tidak cocok dengan sertifikat (modulus berbeda)"
+
+    local live_dir
+    live_dir=$(require_path_within "/etc/letsencrypt/live/${domain}" "/etc/letsencrypt/live")
+    mkdir -p "$live_dir"
+
+    local tmp_cert tmp_key
+    tmp_cert=$(mktemp)
+    tmp_key=$(mktemp)
+    printf '%s\n' "$cert_content" > "$tmp_cert"
+    printf '%s\n' "$key_content" > "$tmp_key"
+    mv "$tmp_cert" "${live_dir}/fullchain.pem"
+    mv "$tmp_key" "${live_dir}/privkey.pem"
+    chown root:root "${live_dir}/fullchain.pem" "${live_dir}/privkey.pem"
+    chmod 644 "${live_dir}/fullchain.pem"
+    chmod 600 "${live_dir}/privkey.pem"
+
+    echo "OK: sertifikat manual untuk ${domain} disimpan"
 }
 
 # Issues SSL specifically for the PANEL'S OWN domain (Settings > SSL
@@ -1794,6 +1875,50 @@ op_restore_tar_nodeapp() {
     echo "OK: restore ${app} <- ${infile}"
 }
 
+# Mirrors an already-completed local backup to S3-compatible remote
+# storage (AWS S3, or Backblaze B2 via its own --endpoint-url - same API,
+# one code path). $filename is a bare basename re-derived against
+# BACKUP_BASE (never a raw path from the caller, same rule every other op
+# in this file follows) - credentials arrive over stdin as JSON, never
+# argv, so they never show up in `ps` output; they're only ever exported
+# as env vars for the single `aws` subprocess call below, not written to
+# disk or logged anywhere.
+op_backup_upload_s3() {
+    local filename="$1"
+    require_match "$filename" '^[a-zA-Z0-9._-]{1,255}$' "filename"
+    local local_path
+    local_path=$(require_path_within "${BACKUP_BASE}/${filename}" "$BACKUP_BASE")
+    [[ -f "$local_path" ]] || fail "Berkas backup tidak ditemukan: ${filename}"
+
+    command -v aws >/dev/null 2>&1 || fail "AWS CLI tidak ditemukan di server - jalankan ulang 'sudo bash update.sh'"
+    command -v jq >/dev/null 2>&1 || fail "jq tidak ditemukan di server"
+
+    local tmp
+    tmp=$(mktemp)
+    cat > "$tmp"
+    [[ -s "$tmp" ]] || { rm -f "$tmp"; fail "Konfigurasi cloud storage kosong"; }
+
+    local endpoint region bucket prefix access_key secret_key
+    endpoint=$(jq -r '.endpoint // empty' "$tmp")
+    region=$(jq -r '.region // empty' "$tmp")
+    bucket=$(jq -r '.bucket // empty' "$tmp")
+    prefix=$(jq -r '.prefix // empty' "$tmp")
+    access_key=$(jq -r '.access_key // empty' "$tmp")
+    secret_key=$(jq -r '.secret_key // empty' "$tmp")
+    rm -f "$tmp"
+
+    [[ -n "$bucket" ]] || fail "Bucket belum dikonfigurasi"
+    [[ -n "$access_key" && -n "$secret_key" ]] || fail "Access key/secret key belum dikonfigurasi"
+
+    local remote_key="${prefix}${filename}"
+    local -a args=(s3 cp "$local_path" "s3://${bucket}/${remote_key}" --only-show-errors)
+    [[ -n "$region" ]] && args+=(--region "$region")
+    [[ -n "$endpoint" ]] && args+=(--endpoint-url "$endpoint")
+
+    AWS_ACCESS_KEY_ID="$access_key" AWS_SECRET_ACCESS_KEY="$secret_key" aws "${args[@]}"
+    echo "OK: ${filename} diunggah ke s3://${bucket}/${remote_key}"
+}
+
 # ---------------------------------------------------------------------------
 # Cron job files - written as discrete /etc/cron.d/ files (one per job id),
 # never by editing a shared crontab in place.
@@ -2150,6 +2275,7 @@ case "$SUBCOMMAND" in
     certbot-issue)         op_certbot_issue "$@" ;;
     certbot-remove)        op_certbot_remove "$@" ;;
     panel-ssl-issue)       op_panel_ssl_issue "$@" ;;
+    ssl-manual-upload)     op_ssl_manual_upload "$@" ;;
     service-status)        op_service_status "$@" ;;
     service-restart)       op_service_restart "$@" ;;
     installer-version-info)       op_installer_version_info ;;
@@ -2194,6 +2320,7 @@ case "$SUBCOMMAND" in
     files-trash-empty)     op_files_trash_empty "$@" ;;
     backup-tar-website)    op_backup_tar_website "$@" ;;
     backup-tar-nodeapp)    op_backup_tar_nodeapp "$@" ;;
+    backup-upload-s3)      op_backup_upload_s3 "$@" ;;
     restore-tar-website)   op_restore_tar_website "$@" ;;
     restore-tar-nodeapp)   op_restore_tar_nodeapp "$@" ;;
     cron-write)            op_cron_write "$@" ;;

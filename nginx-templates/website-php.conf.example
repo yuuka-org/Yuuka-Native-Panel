@@ -34,6 +34,7 @@ server {
     include snippets/security-headers.conf;
 }
 
-# Setelah SSL diterbitkan (SSLService via certbot), tambahkan blok 443 terpisah
-# (lihat app/scripts/nginx.php::nginx_build_ssl_server_block) dan redirect
-# blok 80 di atas ke https.
+# Setelah SSL diterbitkan (SSLService via certbot), nginx_build_php_site_config()
+# regenerasi jadi blok 443 (listen ssl + ssl_certificate dari
+# nginx_ssl_cert_directives()) plus blok 80 companion yang cuma redirect ke
+# https - lihat app/scripts/nginx.php.
