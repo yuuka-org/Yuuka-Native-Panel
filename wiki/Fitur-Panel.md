@@ -470,29 +470,44 @@ tersimpan di `/opt/server-panel/storage/backups/`, path selalu divalidasi
 `require_path_within()` di sisi bash agar tidak bisa keluar dari direktori
 itu.
 
-### Cloud Storage (S3 / Backblaze B2)
+### Cloud Storage (S3 / Backblaze B2 / Google Drive)
 
 `CloudBackupService` — tiap backup lokal yang **berhasil** dibuat (lewat
 tombol manual DI MANA PUN, atau lewat Jadwal Backup di bawah) otomatis
-diunggah ke storage S3-compatible kalau diaktifkan di Settings > Backup.
-Satu choke point: `BackupService::finalize()` memanggil
+diunggah ke SEMUA target cloud yang aktif di Settings > Backup (S3 dan
+Google Drive independen, boleh diaktifkan salah satu atau keduanya
+sekaligus). Satu choke point: `BackupService::finalize()` memanggil
 `CloudBackupService::uploadIfConfigured()` setelah status backup jadi
 `completed` — jadi tidak ada jalur backup yang "lupa" upload. Kegagalan
 upload cloud TIDAK membatalkan backup lokal yang sudah sukses (dicatat ke
-`storage/logs/backup-cloud-upload.log`, kolom `cloud_uploaded` di tabel
-`backups` tetap 0).
+`storage/logs/backup-cloud-upload.log`, kolom `cloud_uploaded`/
+`cloud_uploaded_gdrive` di tabel `backups` tetap 0 untuk target yang
+gagal).
 
-Backblaze B2 dipakai lewat endpoint S3-compatible-nya sendiri
-(`--endpoint-url`) — satu jalur kode (`aws s3 cp` via AWS CLI v2, subcommand
-`backup-upload-s3`) melayani AWS S3 asli maupun B2, tidak ada percabangan
-per-provider. AWS CLI v2 dipasang otomatis oleh installer/`update.sh`
+**S3-compatible** (AWS S3 / Backblaze B2): B2 dipakai lewat endpoint
+S3-compatible-nya sendiri (`--endpoint-url`) — satu jalur kode (`aws s3
+cp` via AWS CLI v2, subcommand `backup-upload-s3`) melayani AWS S3 asli
+maupun B2, tidak ada percabangan per-provider. AWS CLI v2 dipasang
+otomatis oleh installer/`update.sh`
 (`modules/panel.sh::module_panel_install_awscli`). Kredensial (Access
 Key/Secret Key) disimpan di tabel `settings` — Secret Key terenkripsi
-AES-256-GCM lewat `EnvService::encrypt()` (kunci `APP_KEY` yang sama
-dipakai environment variable Node.js), tidak pernah dikirim balik ke
-browser dalam bentuk plain (field password di form selalu kosong,
-mengisinya berarti mengganti, mengosongkannya berarti tetap pakai yang
-lama).
+AES-256-GCM lewat `EnvService::encrypt()`.
+
+**Google Drive**: berbeda dari S3, Google tidak punya skema API key
+statis — hanya OAuth. Panel TIDAK melakukan alur OAuth-nya sendiri;
+admin menjalankan `rclone authorize "drive"` di komputernya sendiri (yang
+ada browser), menyelesaikan layar consent Google, lalu menempelkan token
+JSON hasilnya ke Settings > Backup. Upload sesungguhnya lewat `rclone
+copyto` (subcommand `backup-upload-gdrive`), dengan `scope = drive.file`
+(rclone/panel hanya bisa akses file yang ia buat sendiri, bukan seluruh
+Drive admin) dan config rclone dibuat ephemeral per-panggilan lalu
+langsung dihapus — tidak ada file konfigurasi rclone permanen di disk.
+`rclone` dipasang otomatis oleh installer/`update.sh`
+(`modules/panel.sh::module_panel_install_rclone`). Token (dan Client
+Secret OAuth kalau diisi) disimpan terenkripsi sama seperti Secret Key
+S3, tidak pernah dikirim balik ke browser dalam bentuk plain (field
+selalu kosong, mengisinya berarti mengganti, mengosongkannya berarti
+tetap pakai yang lama).
 
 ### Jadwal Backup Otomatis
 

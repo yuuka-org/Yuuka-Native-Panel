@@ -590,6 +590,7 @@ cmd_repair_panel() {
     # sekali - persis kelas masalah yang sama dengan module_panel_sync_ssl_env
     # di bawah, lihat komentarnya.
     module_panel_install_awscli
+    module_panel_install_rclone
     module_panel_backup_scheduler_cron
 
     local vhost domain

@@ -76,6 +76,7 @@ Setiap pemanggilan (sukses maupun ditolak) dicatat ke
 | `restore-tar-website` | `<infile>` `<domain>` | – | Extract tar ke `/var/www`, chown `www-data` |
 | `restore-tar-nodeapp` | `<infile>` `<app>` | – | Extract tar ke `/home/nodeapps/apps`, chown `nodeapps` |
 | `backup-upload-s3` | `<filename>` | JSON `{"endpoint","region","bucket","prefix","access_key","secret_key"}` | Upload satu file backup (sudah ada di `storage/backups`) ke storage S3-compatible (AWS S3 atau Backblaze B2 via `--endpoint-url`) pakai `aws s3 cp`. Kredensial hanya lewat stdin/env var proses `aws`, tidak pernah lewat argv/log |
+| `backup-upload-gdrive` | `<filename>` | JSON `{"token","client_id","client_secret","folder_id","prefix"}` | Upload satu file backup ke Google Drive pakai `rclone copyto`. `token` adalah hasil `rclone authorize "drive"` yang dijalankan admin sendiri (panel tidak melakukan alur OAuth). Config rclone dibuat di file sementara per-panggilan lalu langsung dihapus setelah upload |
 | `cron-write` | `<jobid>` (`panel-<id>`) | isi file cron | Tulis `/etc/cron.d/<jobid>` |
 | `cron-delete` | `<jobid>` | – | Hapus file cron |
 | `log-tail` | `<logkey>` `[lines]` | – | Tail log, whitelist logkey, maks 2000 baris |

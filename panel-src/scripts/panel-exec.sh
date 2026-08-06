@@ -1919,6 +1919,69 @@ op_backup_upload_s3() {
     echo "OK: ${filename} diunggah ke s3://${bucket}/${remote_key}"
 }
 
+# Mirrors an already-completed local backup to Google Drive via rclone.
+# Google's OAuth model has no equivalent of a static API key, so the
+# token here was obtained OUTSIDE this panel entirely (admin ran `rclone
+# authorize "drive"` on their own machine, completed Google's consent
+# screen, pasted the resulting JSON token into Settings > Backup) - this
+# op only ever CONSUMES that token, never performs the OAuth dance
+# itself. A fresh, ephemeral rclone config file is built per call from
+# the JSON on stdin and removed immediately after use - nothing
+# rclone-related is left persisted outside the `settings` table (which
+# already encrypts the token at rest, see CloudBackupService).
+op_backup_upload_gdrive() {
+    local filename="$1"
+    require_match "$filename" '^[a-zA-Z0-9._-]{1,255}$' "filename"
+    local local_path
+    local_path=$(require_path_within "${BACKUP_BASE}/${filename}" "$BACKUP_BASE")
+    [[ -f "$local_path" ]] || fail "Berkas backup tidak ditemukan: ${filename}"
+
+    command -v rclone >/dev/null 2>&1 || fail "rclone tidak ditemukan di server - jalankan ulang 'sudo bash update.sh'"
+    command -v jq >/dev/null 2>&1 || fail "jq tidak ditemukan di server"
+
+    local tmp
+    tmp=$(mktemp)
+    cat > "$tmp"
+    [[ -s "$tmp" ]] || { rm -f "$tmp"; fail "Konfigurasi Google Drive kosong"; }
+
+    local token client_id client_secret folder_id prefix
+    token=$(jq -r '.token // empty' "$tmp")
+    client_id=$(jq -r '.client_id // empty' "$tmp")
+    client_secret=$(jq -r '.client_secret // empty' "$tmp")
+    folder_id=$(jq -r '.folder_id // empty' "$tmp")
+    prefix=$(jq -r '.prefix // empty' "$tmp")
+    rm -f "$tmp"
+
+    [[ -n "$token" ]] || fail "Token Google Drive belum dikonfigurasi"
+
+    local rclone_conf
+    rclone_conf=$(mktemp)
+    {
+        echo "[gdrive]"
+        echo "type = drive"
+        echo "token = ${token}"
+        [[ -n "$client_id" ]] && echo "client_id = ${client_id}"
+        [[ -n "$client_secret" ]] && echo "client_secret = ${client_secret}"
+        [[ -n "$folder_id" ]] && echo "root_folder_id = ${folder_id}"
+        # Restricts rclone to files IT creates/opens, never a blanket
+        # read/write grant over the admin's entire Drive - matches the
+        # principle of least privilege certbot/AWS credentials elsewhere
+        # in this file already follow.
+        echo "scope = drive.file"
+    } > "$rclone_conf"
+    chmod 600 "$rclone_conf"
+
+    if rclone --config "$rclone_conf" copyto "$local_path" "gdrive:${prefix}${filename}" 2>/tmp/rclone-err.$$; then
+        rm -f "$rclone_conf" "/tmp/rclone-err.$$"
+        echo "OK: ${filename} diunggah ke Google Drive (${prefix}${filename})"
+    else
+        local err
+        err=$(cat "/tmp/rclone-err.$$" 2>/dev/null || true)
+        rm -f "$rclone_conf" "/tmp/rclone-err.$$"
+        fail "Upload ke Google Drive gagal: ${err}"
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Cron job files - written as discrete /etc/cron.d/ files (one per job id),
 # never by editing a shared crontab in place.
@@ -2321,6 +2384,7 @@ case "$SUBCOMMAND" in
     backup-tar-website)    op_backup_tar_website "$@" ;;
     backup-tar-nodeapp)    op_backup_tar_nodeapp "$@" ;;
     backup-upload-s3)      op_backup_upload_s3 "$@" ;;
+    backup-upload-gdrive)  op_backup_upload_gdrive "$@" ;;
     restore-tar-website)   op_restore_tar_website "$@" ;;
     restore-tar-nodeapp)   op_restore_tar_nodeapp "$@" ;;
     cron-write)            op_cron_write "$@" ;;

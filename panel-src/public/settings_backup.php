@@ -35,7 +35,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash('success', 'Backup dihapus.');
         } elseif ($action === 'cloud_config_save') {
             Rbac::require('backup.manage');
-            CloudBackupService::saveConfig(
+            CloudBackupService::saveS3Config(
                 ($_POST['cloud_enabled'] ?? '') === '1',
                 trim((string) ($_POST['cloud_endpoint'] ?? '')),
                 trim((string) ($_POST['cloud_region'] ?? '')),
@@ -45,7 +45,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 trim((string) ($_POST['cloud_path_prefix'] ?? '')),
                 $user['id']
             );
-            flash('success', 'Konfigurasi Cloud Storage disimpan.');
+            flash('success', 'Konfigurasi Cloud Storage S3 disimpan.');
+        } elseif ($action === 'gdrive_config_save') {
+            Rbac::require('backup.manage');
+            CloudBackupService::saveGdriveConfig(
+                ($_POST['gdrive_enabled'] ?? '') === '1',
+                ($_POST['gdrive_token'] ?? '') !== '' ? (string) $_POST['gdrive_token'] : null,
+                trim((string) ($_POST['gdrive_client_id'] ?? '')),
+                ($_POST['gdrive_client_secret'] ?? '') !== '' ? (string) $_POST['gdrive_client_secret'] : null,
+                trim((string) ($_POST['gdrive_folder_id'] ?? '')),
+                trim((string) ($_POST['gdrive_path_prefix'] ?? '')),
+                $user['id']
+            );
+            flash('success', 'Konfigurasi Google Drive disimpan.');
         } elseif ($action === 'schedule_create') {
             Rbac::require('backup.manage');
             $type = (string) ($_POST['schedule_type'] ?? '');
@@ -74,7 +86,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $backups = BackupService::listBackups();
-$cloudConfig = CloudBackupService::config();
+$cloudConfig = CloudBackupService::s3Config();
+$gdriveConfig = CloudBackupService::gdriveConfig();
 $schedules = BackupScheduleService::listAll();
 $scheduleWebsites = NginxService::listWebsites();
 $scheduleNodeApps = NodeService::listRegisteredApps();
@@ -142,6 +155,59 @@ function settings_backup_format_bytes(int $bytes): string
         <div class="col-md-4">
           <label class="form-label">Path Prefix (folder dalam bucket)</label>
           <input type="text" name="cloud_path_prefix" class="form-control" value="<?= e(rtrim($cloudConfig['path_prefix'], '/')) ?>" placeholder="backups">
+        </div>
+      </div>
+      <?php if (Rbac::can($user['role'], 'backup.manage')): ?>
+      <button type="submit" class="btn btn-primary mt-3">Simpan Konfigurasi</button>
+      <?php endif; ?>
+      </fieldset>
+    </form>
+  </div>
+</div>
+
+<div class="card stat-card mb-4">
+  <div class="card-header bg-white fw-semibold">Cloud Storage (Google Drive)</div>
+  <div class="card-body">
+    <p class="text-muted small">
+      Independen dari S3 di atas - bisa diaktifkan salah satu atau keduanya sekaligus, tiap backup akan diunggah ke semua target yang aktif.
+    </p>
+    <div class="alert alert-info small mb-3">
+      <strong>Cara mendapatkan Token:</strong> Google mengharuskan otorisasi lewat browser, jadi tidak bisa cukup API key seperti S3. Di komputer Anda sendiri (yang ada browser):
+      <ol class="mb-0 mt-1">
+        <li>Pasang <a href="https://rclone.org/downloads/" target="_blank" rel="noopener">rclone</a>, lalu jalankan: <code>rclone authorize "drive"</code></li>
+        <li>Browser akan terbuka, login &amp; izinkan akses ke Google Drive Anda</li>
+        <li>rclone akan menampilkan teks JSON (diawali <code>{"access_token":...</code>) di terminal - salin seluruh teks itu ke kolom Token di bawah</li>
+      </ol>
+    </div>
+    <form method="post">
+      <?= Csrf::field() ?>
+      <input type="hidden" name="action" value="gdrive_config_save">
+      <fieldset <?= Rbac::can($user['role'], 'backup.manage') ? '' : 'disabled' ?>>
+      <div class="form-check form-switch mb-3">
+        <input type="checkbox" class="form-check-input" id="gdriveEnabled" name="gdrive_enabled" value="1" <?= $gdriveConfig['enabled'] ? 'checked' : '' ?>>
+        <label class="form-check-label" for="gdriveEnabled">Aktifkan upload otomatis ke Google Drive</label>
+      </div>
+      <div class="row g-3">
+        <div class="col-md-12">
+          <label class="form-label">Token (hasil "rclone authorize drive")</label>
+          <textarea name="gdrive_token" class="form-control" rows="3" autocomplete="off" placeholder="<?= $gdriveConfig['token'] !== '' ? '•••••••• (kosongkan untuk tidak mengubah)' : '{&quot;access_token&quot;:&quot;...&quot;,&quot;token_type&quot;:&quot;Bearer&quot;,&quot;refresh_token&quot;:&quot;...&quot;,&quot;expiry&quot;:&quot;...&quot;}' ?>"></textarea>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Client ID (opsional)</label>
+          <input type="text" name="gdrive_client_id" class="form-control" value="<?= e($gdriveConfig['client_id']) ?>" autocomplete="off">
+          <div class="form-text">Kosongkan untuk pakai kuota bersama rclone. Isi kalau punya OAuth client sendiri di Google Cloud Console (kuota lebih besar).</div>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Client Secret (opsional)</label>
+          <input type="password" name="gdrive_client_secret" class="form-control" placeholder="<?= $gdriveConfig['client_secret'] !== '' ? '•••••••• (kosongkan untuk tidak mengubah)' : '' ?>" autocomplete="new-password">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Folder ID (opsional)</label>
+          <input type="text" name="gdrive_folder_id" class="form-control" value="<?= e($gdriveConfig['folder_id']) ?>" placeholder="kosongkan untuk root Drive">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Path Prefix (subfolder virtual)</label>
+          <input type="text" name="gdrive_path_prefix" class="form-control" value="<?= e(rtrim($gdriveConfig['path_prefix'], '/')) ?>" placeholder="backups">
         </div>
       </div>
       <?php if (Rbac::can($user['role'], 'backup.manage')): ?>
@@ -282,7 +348,11 @@ function toggleScheduleTargetFields() {
             <?php $badgeClass = $b['status'] === 'completed' ? 'success' : ($b['status'] === 'failed' ? 'danger' : 'warning'); ?>
             <span class="badge text-bg-<?= $badgeClass ?>"><?= e($b['status']) ?></span>
           </td>
-          <td><?= !empty($b['cloud_uploaded']) ? '<span class="badge text-bg-info" title="' . e((string) $b['cloud_uploaded_at']) . '"><i class="bi bi-cloud-check"></i></span>' : '<span class="text-muted">-</span>' ?></td>
+          <td>
+            <?php if (!empty($b['cloud_uploaded'])): ?><span class="badge text-bg-info me-1" title="S3 - <?= e((string) $b['cloud_uploaded_at']) ?>">S3</span><?php endif; ?>
+            <?php if (!empty($b['cloud_uploaded_gdrive'])): ?><span class="badge text-bg-info" title="Google Drive - <?= e((string) $b['cloud_uploaded_gdrive_at']) ?>">GDrive</span><?php endif; ?>
+            <?php if (empty($b['cloud_uploaded']) && empty($b['cloud_uploaded_gdrive'])): ?><span class="text-muted">-</span><?php endif; ?>
+          </td>
           <td class="small text-muted"><?= e($b['created_at']) ?></td>
           <td class="text-end">
             <a href="/settings_backup?download=<?= (int) $b['id'] ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download"></i></a>

@@ -133,7 +133,8 @@ Lihat penjelasan lengkap command template di
 | `type` | ENUM `database`/`website`/`nodejs` |
 | `target_name`, `file_path`, `size_bytes` | |
 | `status` | ENUM `completed`/`failed`/`running` |
-| `cloud_uploaded`, `cloud_uploaded_at`, `cloud_path` | Diisi otomatis oleh `CloudBackupService::uploadIfConfigured()` (dipanggil dari `BackupService::finalize()`) setelah backup lokal sukses DAN Cloud Storage aktif di Settings > Backup - lihat [Fitur Panel § Backup](Fitur-Panel.md) |
+| `cloud_uploaded`, `cloud_uploaded_at`, `cloud_path` | Status upload ke S3-compatible. Diisi otomatis oleh `CloudBackupService::uploadIfConfigured()` (dipanggil dari `BackupService::finalize()`) setelah backup lokal sukses DAN Cloud Storage S3 aktif di Settings > Backup - lihat [Fitur Panel § Backup](Fitur-Panel.md) |
+| `cloud_uploaded_gdrive`, `cloud_uploaded_gdrive_at`, `cloud_path_gdrive` | Sama seperti kolom S3 di atas tapi untuk target Google Drive - independen, satu backup bisa ter-upload ke S3, Google Drive, keduanya, atau tidak sama sekali |
 | `created_by` | FK `panel_users` |
 
 ## `backup_schedules`
@@ -184,7 +185,9 @@ Migrate saat impor, menolak kunci di luar daftar ini).
 | `basicauth_enabled`, `basicauth_username` | Status BasicAuth di depan seluruh panel |
 | `filemanager_max_upload_mb` | Override `.env` (`FILEMANAGER_MAX_UPLOAD_MB`) lewat Pengaturan > Umum, maks 512 (batas `client_max_body_size` vhost panel) |
 | `backup_cloud_enabled`, `backup_cloud_endpoint`, `backup_cloud_region`, `backup_cloud_bucket`, `backup_cloud_access_key`, `backup_cloud_path_prefix` | Konfigurasi Cloud Storage S3-compatible (Settings > Backup) - `backup_cloud_endpoint` kosong berarti AWS S3 asli, diisi untuk provider lain (mis. Backblaze B2) |
-| `backup_cloud_secret_key_enc` | Secret key, terenkripsi AES-256-GCM lewat `EnvService::encrypt()` (kunci `APP_KEY` yang sama dengan environment variable Node.js) - tidak pernah dikirim balik ke browser dalam bentuk plain |
+| `backup_cloud_secret_key_enc` | Secret key S3, terenkripsi AES-256-GCM lewat `EnvService::encrypt()` (kunci `APP_KEY` yang sama dengan environment variable Node.js) - tidak pernah dikirim balik ke browser dalam bentuk plain |
+| `backup_cloud_gdrive_enabled`, `backup_cloud_gdrive_client_id`, `backup_cloud_gdrive_folder_id`, `backup_cloud_gdrive_path_prefix` | Konfigurasi target Google Drive (Settings > Backup) - independen dari S3 di atas, bisa aktif berbarengan |
+| `backup_cloud_gdrive_token_enc`, `backup_cloud_gdrive_client_secret_enc` | Token OAuth (hasil `rclone authorize "drive"` yang dijalankan admin sendiri) dan Client Secret opsional, terenkripsi sama seperti secret key S3 |
 
 ## Diagram Relasi (ringkas)
 

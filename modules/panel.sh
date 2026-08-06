@@ -660,6 +660,29 @@ module_panel_install_awscli() {
     fi
 }
 
+# rclone is the client for the Google Drive backup target (see
+# panel-exec.sh's op_backup_upload_gdrive) - Google's OAuth model has no
+# static-API-key equivalent, so rclone (not this installer) is what the
+# admin authenticates against Google with, once, on their own machine.
+# Installed via rclone's own official install script (single static
+# binary, no package manager dependency).
+module_panel_install_rclone() {
+    log_step "Memasang rclone (untuk Backup > Cloud Storage > Google Drive)"
+
+    if command_exists rclone; then
+        log_ok "rclone sudah terpasang ($(rclone version 2>&1 | head -1))"
+        state_mark "panel:rclone_installed"
+        return 0
+    fi
+
+    if curl -fsSL https://rclone.org/install.sh | bash >>"$INSTALL_LOG_FILE" 2>&1; then
+        log_ok "rclone terpasang ($(rclone version 2>&1 | head -1))"
+        state_mark "panel:rclone_installed"
+    else
+        log_warn "rclone gagal terpasang - fitur Backup > Google Drive tidak akan berfungsi sampai ini dipasang manual"
+    fi
+}
+
 # Same "cheap per-minute poll, skip if not due" design as the health check
 # runner above - one fixed cron entry regardless of how many backup
 # schedules exist, rather than a dynamic per-schedule cron file, since
@@ -688,6 +711,7 @@ module_panel_run_all() {
     module_panel_sync_ssl_env
     module_panel_health_check_cron
     module_panel_install_awscli
+    module_panel_install_rclone
     module_panel_backup_scheduler_cron
     module_panel_logrotate
 }

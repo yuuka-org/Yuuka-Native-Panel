@@ -41,6 +41,12 @@ final class SettingsService
         'backup_cloud_access_key',
         'backup_cloud_secret_key_enc',
         'backup_cloud_path_prefix',
+        'backup_cloud_gdrive_enabled',
+        'backup_cloud_gdrive_token_enc',
+        'backup_cloud_gdrive_client_id',
+        'backup_cloud_gdrive_client_secret_enc',
+        'backup_cloud_gdrive_folder_id',
+        'backup_cloud_gdrive_path_prefix',
     ];
 
     public static function get(string $key, string $default = ''): string

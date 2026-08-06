@@ -38,7 +38,7 @@ final class Executor
         'files-copy', 'files-move', 'files-chmod', 'files-search',
         'files-trash-list', 'files-trash-restore', 'files-trash-delete', 'files-trash-empty',
         'backup-tar-website', 'backup-tar-nodeapp', 'restore-tar-website', 'restore-tar-nodeapp',
-        'backup-upload-s3',
+        'backup-upload-s3', 'backup-upload-gdrive',
         'cron-write', 'cron-delete',
         'log-tail', 'log-clear', 'log-traffic-daily',
         'panel-basicauth-set', 'panel-security-entrance-set',
