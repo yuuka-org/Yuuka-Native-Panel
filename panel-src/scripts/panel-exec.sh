@@ -1505,12 +1505,19 @@ op_files_compress() {
         [[ -e "$item_target" ]] || fail "Item tidak ditemukan: $item"
     done
 
-    # `--` BEFORE dest_name too, not just before the items - dest_name is
-    # a bare filename (no path prefix, since we `cd` into target_dir
-    # first), so a crafted name starting with '-' (e.g. "-T", "-@") would
-    # otherwise be parsed by `zip` as an option flag instead of the output
-    # filename argument it actually is.
-    ( cd "$target_dir" && zip -r -q -- "$dest_name" "$@" )
+    # dest_name is a bare filename (no path prefix, since we `cd` into
+    # target_dir first), so a crafted name starting with '-' (e.g. "-T",
+    # "-@") would otherwise be parsed by `zip` as an option flag instead
+    # of the output filename argument it actually is. Info-ZIP's `--`
+    # marker can't be used to guard against that here - it explicitly
+    # refuses `--` placed before the archive name ("Invalid command
+    # arguments (can't use -- before archive name)"), it's only accepted
+    # AFTER the archive name (which is where it's used below, to guard
+    # the item list instead). A leading `./` sidesteps the problem the
+    # same way `--` would: it can't start with '-' so it's never
+    # ambiguous with an option, and resolves to the same file since we're
+    # already `cd`'d into target_dir.
+    ( cd "$target_dir" && zip -r -q "./${dest_name}" -- "$@" )
     [[ -f "$dest_zip" ]] || fail "Gagal membuat ZIP"
 
     local owner
