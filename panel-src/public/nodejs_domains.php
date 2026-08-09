@@ -65,10 +65,10 @@ include __DIR__ . ($embed ? '/partials/embed_header.php' : '/partials/header.php
 <div class="card stat-card mb-4">
   <div class="card-body p-0">
     <table class="table mb-0 align-middle">
-      <thead class="table-light"><tr><th>Domain</th><th class="text-end">Aksi</th></tr></thead>
+      <thead class="table-light"><tr><th>Domain</th><th>SSL</th><th class="text-end">Aksi</th></tr></thead>
       <tbody>
         <?php if (empty($domains)): ?>
-          <tr><td colspan="2" class="text-center text-muted py-4">Belum ada domain terpasang</td></tr>
+          <tr><td colspan="3" class="text-center text-muted py-4">Belum ada domain terpasang</td></tr>
         <?php endif; ?>
         <?php foreach ($domains as $d): ?>
         <tr>
@@ -76,7 +76,9 @@ include __DIR__ . ($embed ? '/partials/embed_header.php' : '/partials/header.php
             <a href="http://<?= e($d['domain']) ?>" target="_blank"><?= e($d['domain']) ?></a>
             <?php if ($d['domain'] === $app['domain']): ?><span class="badge text-bg-light border ms-1">Primary</span><?php endif; ?>
           </td>
+          <td><?= $d['ssl_enabled'] ? '<span class="badge text-bg-success">Aktif</span>' : '<span class="badge text-bg-secondary">Tidak aktif</span>' ?></td>
           <td class="text-end">
+            <a href="/nodejs_ssl?id=<?= $id . $embedSuffix ?>" class="btn btn-sm btn-outline-primary" title="Lihat Sertifikat"><i class="bi bi-shield-lock"></i> Lihat Sertifikat</a>
             <?php if (Rbac::can($user['role'], 'nodejs.control')): ?>
             <form method="post" class="d-inline" data-confirm="Hapus domain <?= e($d['domain']) ?>? Situs Nginx-nya akan ikut dihapus.">
               <?= Csrf::field() ?>

@@ -16,31 +16,20 @@ if ($site === null) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     Csrf::validateRequest();
+    Rbac::require('website.create');
     $action = $_POST['action'] ?? '';
 
     try {
         if ($action === 'add_domain') {
-            Rbac::require('website.create');
             NginxService::addDomain($id, trim((string) ($_POST['domain'] ?? '')), $user['id']);
             flash('success', 'Domain ditambahkan.');
         } elseif ($action === 'remove_domain') {
-            Rbac::require('website.create');
             NginxService::removeDomain($id, (string) ($_POST['domain'] ?? ''), $user['id']);
             flash('success', 'Domain dihapus.');
-        } elseif ($action === 'issue_ssl') {
-            Rbac::require('ssl.manage');
-            SSLService::issueForDomain((string) $_POST['domain'], $user['email'], $user['id']);
-            flash('success', 'Sertifikat SSL berhasil diterbitkan.');
-        } elseif ($action === 'remove_ssl') {
-            Rbac::require('ssl.manage');
-            SSLService::removeCertificate((string) $_POST['domain'], $user['id']);
-            flash('success', 'Sertifikat SSL dihapus.');
         } elseif ($action === 'wildcard_enable') {
-            Rbac::require('website.create');
             NginxService::enableWildcard($id, $user['id']);
             flash('success', 'Wildcard hostname diaktifkan.');
         } elseif ($action === 'wildcard_disable') {
-            Rbac::require('website.create');
             NginxService::disableWildcard($id, $user['id']);
             flash('success', 'Wildcard hostname dinonaktifkan.');
         }
@@ -63,14 +52,14 @@ include __DIR__ . ($embed ? '/partials/embed_header.php' : '/partials/header.php
 <?php if (!$embed): ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
-    <h4 class="fw-bold mb-0">Domain &amp; SSL: <?= e($site['domain']) ?></h4>
-    <p class="text-muted mb-0">Semua domain di bawah melayani Document Root &amp; versi PHP yang sama.</p>
+    <h4 class="fw-bold mb-0">Domain: <?= e($site['domain']) ?></h4>
+    <p class="text-muted mb-0">Semua domain di bawah melayani Document Root &amp; versi PHP yang sama. Sertifikat SSL diatur di tab tersendiri.</p>
   </div>
   <a href="/websites" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Kembali</a>
 </div>
 <?php else: ?>
 <?php include __DIR__ . '/partials/flash.php'; ?>
-<p class="text-muted small">Semua domain di bawah melayani Document Root &amp; versi PHP yang sama.</p>
+<p class="text-muted small">Semua domain di bawah melayani Document Root &amp; versi PHP yang sama. Sertifikat SSL diatur di tab tersendiri.</p>
 <?php endif; ?>
 
 <div class="card stat-card mb-4">
@@ -86,23 +75,7 @@ include __DIR__ . ($embed ? '/partials/embed_header.php' : '/partials/header.php
           </td>
           <td><?= $d['ssl_enabled'] ? '<span class="badge text-bg-success">Aktif</span>' : '<span class="badge text-bg-secondary">Tidak aktif</span>' ?></td>
           <td class="text-end text-nowrap">
-            <?php if (Rbac::can($user['role'], 'ssl.manage')): ?>
-              <?php if ($d['ssl_enabled']): ?>
-                <form method="post" class="d-inline" data-confirm="Hapus sertifikat SSL untuk <?= e($d['domain']) ?>?">
-                  <?= Csrf::field() ?>
-                  <input type="hidden" name="action" value="remove_ssl">
-                  <input type="hidden" name="domain" value="<?= e($d['domain']) ?>">
-                  <button class="btn btn-sm btn-outline-danger" title="Hapus SSL"><i class="bi bi-shield-x"></i></button>
-                </form>
-              <?php else: ?>
-                <form method="post" class="d-inline">
-                  <?= Csrf::field() ?>
-                  <input type="hidden" name="action" value="issue_ssl">
-                  <input type="hidden" name="domain" value="<?= e($d['domain']) ?>">
-                  <button class="btn btn-sm btn-outline-success" title="Terbitkan SSL"><i class="bi bi-shield-lock"></i></button>
-                </form>
-              <?php endif; ?>
-            <?php endif; ?>
+            <a href="/website_ssl?id=<?= $id . $embedSuffix ?>" class="btn btn-sm btn-outline-primary" title="Lihat Sertifikat"><i class="bi bi-shield-lock"></i> Lihat Sertifikat</a>
             <?php if ($d['domain'] !== $site['domain'] && Rbac::can($user['role'], 'website.create')): ?>
             <form method="post" class="d-inline" data-confirm="Hapus domain <?= e($d['domain']) ?>? Situs Nginx-nya akan ikut dihapus.">
               <?= Csrf::field() ?>

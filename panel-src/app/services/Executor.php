@@ -42,6 +42,7 @@ final class Executor
         'cron-write', 'cron-delete',
         'log-tail', 'log-clear', 'log-traffic-daily',
         'panel-basicauth-set', 'panel-security-entrance-set',
+        'nginx-write-htpasswd', 'nginx-delete-htpasswd',
     ];
 
     /**

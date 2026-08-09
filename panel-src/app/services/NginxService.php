@@ -92,20 +92,47 @@ final class NginxService
         return self::find($id);
     }
 
-    /** Builds the $options array nginx_build_php_site_config() expects from a `websites` row's current settings. $sslEnabled is passed explicitly (not read off $site) because it's tracked per-domain-row, not per-website-row, once additional domains are involved - see applySslForDomain(). */
-    private static function siteOptions(array $site, bool $sslEnabled): array
+    /**
+     * Builds the $options array nginx_build_php_site_config() expects from
+     * a `websites` row's current settings. $sslEnabled AND $redirect are
+     * passed explicitly (not read off $site) because both are tracked
+     * per-domain-row, not per-website-row, once additional domains are
+     * involved - see applySslForDomain() / findRedirectForDomain().
+     */
+    private static function siteOptions(array $site, bool $sslEnabled, ?array $redirect = null): array
     {
         return [
             'default_index' => (string) ($site['default_index'] ?? ''),
             'custom_rewrite_rules' => (string) ($site['custom_rewrite_rules'] ?? ''),
-            'redirect_target' => ((bool) ($site['redirect_enabled'] ?? false)) ? $site['redirect_target'] : null,
+            'redirect_target' => $redirect['target_url'] ?? null,
+            'redirect_status_code' => (int) ($redirect['status_code'] ?? 301),
+            'redirect_include_uri_params' => (bool) ($redirect['include_uri_params'] ?? true),
             'rate_limit' => ((bool) ($site['rate_limit_enabled'] ?? false))
                 ? ['rps' => (int) $site['rate_limit_rps'], 'burst' => (int) $site['rate_limit_burst']]
                 : null,
+            'max_conn_total' => (int) ($site['max_conn_total'] ?? 0),
+            'max_conn_per_ip' => (int) ($site['max_conn_per_ip'] ?? 0),
+            'max_bandwidth_kbps' => (int) ($site['max_bandwidth_kbps'] ?? 0),
             'hotlink' => ((bool) ($site['hotlink_protection_enabled'] ?? false))
-                ? ['extensions' => (string) $site['hotlink_extensions'], 'referrers' => (string) ($site['hotlink_allowed_referrers'] ?? '')]
+                ? [
+                    'extensions' => (string) $site['hotlink_extensions'],
+                    'referrers' => (string) ($site['hotlink_allowed_referrers'] ?? ''),
+                    'response_code' => (int) ($site['hotlink_response_code'] ?? 403),
+                    'allow_empty_referer' => (bool) ($site['hotlink_allow_empty_referer'] ?? true),
+                ]
                 : null,
             'reverse_proxies' => self::listReverseProxies((int) $site['id']),
+            // Path mirrors HTPASSWD_DIR/RE_SITENAME-derived "la-<id>.htpasswd"
+            // naming from panel-exec.sh's op_nginx_write_htpasswd() - kept in
+            // sync by convention (same "la-{id}" identifier both sides use).
+            'limit_access' => array_map(static fn(array $r): array => [
+                'path_prefix' => $r['path_prefix'],
+                'htpasswd_path' => '/etc/nginx/htpasswd/la-' . $r['id'] . '.htpasswd',
+            ], self::listLimitAccessRules((int) $site['id'])),
+            'deny_rules' => array_map(static fn(array $r): array => [
+                'path_prefix' => $r['path_prefix'],
+                'suffixes' => $r['suffixes'],
+            ], self::listDenyRules((int) $site['id'])),
             'ssl_enabled' => $sslEnabled,
         ];
     }
@@ -122,11 +149,19 @@ final class NginxService
         }
     }
 
-    /** Regenerates ONE domain's Nginx site config from $site's current settings (php_version/document_root/advanced options all shared site-wide) plus that specific domain's own SSL state. */
+    /** Regenerates ONE domain's Nginx site config from $site's current settings (php_version/document_root/advanced options all shared site-wide) plus that specific domain's own SSL state and its own Redirect rule (if any). */
     private static function regenerateDomainConfig(array $site, string $domain, string $siteName, bool $sslEnabled): void
     {
-        $config = nginx_build_php_site_config($domain, $site['php_version'], $site['document_root'], self::siteOptions($site, $sslEnabled));
+        $redirect = self::findRedirectForDomain((int) $site['id'], $domain);
+        $config = nginx_build_php_site_config($domain, $site['php_version'], $site['document_root'], self::siteOptions($site, $sslEnabled, $redirect));
         self::writeAndEnable($siteName, $config);
+    }
+
+    private static function findRedirectForDomain(int $websiteId, string $domain): ?array
+    {
+        $stmt = Database::app()->prepare('SELECT * FROM website_redirects WHERE website_id = :id AND source_domain = :d');
+        $stmt->execute(['id' => $websiteId, 'd' => $domain]);
+        return $stmt->fetch() ?: null;
     }
 
     /** Regenerates the primary domain's config plus every additional domain this site owns (see addDomain()) - each domain keeps its OWN ssl_enabled, they're issued/revoked independently. */
@@ -171,15 +206,19 @@ final class NginxService
     }
 
     /**
-     * `limit_req_zone` only lives in ONE shared conf.d file (nginx.php's
-     * nginx_build_rate_limit_zones_config) - fully regenerated from every
-     * website's CURRENT setting every time any one of them changes, so a
-     * site that just turned Traffic Control off also has its now-unused
-     * zone line dropped instead of left behind as cruft.
+     * `limit_req_zone`/`limit_conn_zone` only live in ONE shared conf.d
+     * file (nginx.php's nginx_build_rate_limit_zones_config) - fully
+     * regenerated from every website's CURRENT setting every time any one
+     * of them changes, so a site that just turned Traffic Control off
+     * also has its now-unused zone line dropped instead of left behind as
+     * cruft.
      */
     private static function regenerateRateLimitZones(): void
     {
-        $rows = Database::app()->query('SELECT domain, rate_limit_rps FROM websites WHERE rate_limit_enabled = 1')->fetchAll();
+        $rows = Database::app()->query(
+            'SELECT domain, rate_limit_enabled, rate_limit_rps, max_conn_total, max_conn_per_ip FROM websites
+             WHERE rate_limit_enabled = 1 OR max_conn_total > 0 OR max_conn_per_ip > 0'
+        )->fetchAll();
         $config = nginx_build_rate_limit_zones_config($rows);
         $result = Executor::run('nginx-write-ratelimit-zones', [], $config, 20);
         if (!$result['ok']) {
@@ -250,6 +289,11 @@ final class NginxService
 
         if ($domainChanged) {
             $pdo->prepare('UPDATE domains SET domain = :d WHERE domain = :old AND website_id = :id')
+                ->execute(['d' => $newDomain, 'old' => $site['domain'], 'id' => $id]);
+            // Keeps any Redirect rule attached to the (renamed) domain
+            // instead of silently orphaning it - website_redirects is
+            // keyed on the domain string, same as `domains` above.
+            $pdo->prepare('UPDATE website_redirects SET source_domain = :d WHERE source_domain = :old AND website_id = :id')
                 ->execute(['d' => $newDomain, 'old' => $site['domain'], 'id' => $id]);
         }
 
@@ -350,8 +394,17 @@ final class NginxService
         return $stmt->fetchAll();
     }
 
-    public static function addReverseProxy(int $id, string $pathPrefix, string $targetUrl, ?int $userId): void
-    {
+    public static function addReverseProxy(
+        int $id,
+        string $name,
+        string $pathPrefix,
+        string $targetUrl,
+        bool $websocketEnabled,
+        bool $cacheEnabled,
+        string $sendDomain,
+        bool $showProxyPath,
+        ?int $userId
+    ): void {
         $site = self::find($id);
         if ($site === null) {
             throw new InvalidArgumentException('Website tidak ditemukan');
@@ -362,6 +415,10 @@ final class NginxService
         if (!Validator::targetUrl($targetUrl)) {
             throw new InvalidArgumentException('URL tujuan tidak valid');
         }
+        $sendDomain = trim($sendDomain) !== '' ? trim($sendDomain) : '$host';
+        if ($sendDomain !== '$host' && !Validator::domain($sendDomain)) {
+            throw new InvalidArgumentException('Send Domain tidak valid (harus "$host" atau nama domain)');
+        }
 
         $pdo = Database::app();
         $dup = $pdo->prepare('SELECT COUNT(*) FROM website_reverse_proxies WHERE website_id = :id AND path_prefix = :p');
@@ -370,8 +427,14 @@ final class NginxService
             throw new InvalidArgumentException('Path ini sudah punya aturan Reverse Proxy');
         }
 
-        $pdo->prepare('INSERT INTO website_reverse_proxies (website_id, path_prefix, target_url) VALUES (:id, :p, :t)')
-            ->execute(['id' => $id, 'p' => $pathPrefix, 't' => $targetUrl]);
+        $pdo->prepare(
+            'INSERT INTO website_reverse_proxies (website_id, name, path_prefix, target_url, websocket_enabled, cache_enabled, send_domain, show_proxy_path)
+             VALUES (:id, :n, :p, :t, :ws, :ca, :sd, :spp)'
+        )->execute([
+            'id' => $id, 'n' => trim($name) ?: null, 'p' => $pathPrefix, 't' => $targetUrl,
+            'ws' => $websocketEnabled ? 1 : 0, 'ca' => $cacheEnabled ? 1 : 0,
+            'sd' => $sendDomain, 'spp' => $showProxyPath ? 1 : 0,
+        ]);
 
         self::regenerateAllConfigs(self::find($id));
         ActivityLog::record($userId, 'website.reverse_proxy_add', "Reverse Proxy ditambahkan ke {$site['domain']}: {$pathPrefix} -> {$targetUrl}");
@@ -394,24 +457,229 @@ final class NginxService
         ActivityLog::record($userId, 'website.reverse_proxy_remove', "Reverse Proxy dihapus dari {$site['domain']}");
     }
 
+    /** @return array<int,array<string,mixed>> */
+    public static function listLimitAccessRules(int $websiteId): array
+    {
+        $stmt = Database::app()->prepare('SELECT * FROM website_limit_access WHERE website_id = :id ORDER BY path_prefix');
+        $stmt->execute(['id' => $websiteId]);
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * HTTP Basic Auth scoped to one path prefix - password is hashed
+     * PASSWORD_BCRYPT (same scheme as panel_users) both for the DB row
+     * AND the htpasswd file nginx actually reads, so op_nginx_write_htpasswd
+     * never sees (or needs to see) the plaintext.
+     */
+    public static function addLimitAccessRule(int $id, string $name, string $pathPrefix, string $username, string $password, ?int $userId): void
+    {
+        $site = self::find($id);
+        if ($site === null) {
+            throw new InvalidArgumentException('Website tidak ditemukan');
+        }
+        $name = trim($name);
+        if ($name === '' || strlen($name) > 100) {
+            throw new InvalidArgumentException('Nama rule tidak valid');
+        }
+        if (!Validator::urlPathPrefix($pathPrefix)) {
+            throw new InvalidArgumentException('Path tidak valid (harus diawali "/")');
+        }
+        if (!preg_match('/^[a-zA-Z0-9_.-]{3,64}$/', $username)) {
+            throw new InvalidArgumentException('Username tidak valid');
+        }
+        if (strlen($password) < 4 || strlen($password) > 255) {
+            throw new InvalidArgumentException('Password minimal 4 karakter');
+        }
+
+        $pdo = Database::app();
+        $dup = $pdo->prepare('SELECT COUNT(*) FROM website_limit_access WHERE website_id = :id AND path_prefix = :p');
+        $dup->execute(['id' => $id, 'p' => $pathPrefix]);
+        if ((int) $dup->fetchColumn() > 0) {
+            throw new InvalidArgumentException('Sudah ada aturan Limit Access untuk path ini');
+        }
+
+        $hash = password_hash($password, PASSWORD_BCRYPT);
+        $pdo->prepare('INSERT INTO website_limit_access (website_id, name, path_prefix, username, password_hash) VALUES (:id, :n, :p, :u, :h)')
+            ->execute(['id' => $id, 'n' => $name, 'p' => $pathPrefix, 'u' => $username, 'h' => $hash]);
+        $ruleId = (int) $pdo->lastInsertId();
+
+        // Written BEFORE regenerateAllConfigs() below - the generated
+        // config's auth_basic_user_file line points at this exact path,
+        // and nginx -t (run as part of write+enable) needs the file to
+        // already exist to pass, same file-then-config ordering the SSL
+        // cert flow already relies on elsewhere in this codebase.
+        $result = nginx_write_htpasswd("la-{$ruleId}", "{$username}:{$hash}\n");
+        if (!$result['ok']) {
+            throw new RuntimeException('Gagal menulis htpasswd: ' . $result['output']);
+        }
+
+        self::regenerateAllConfigs(self::find($id));
+        ActivityLog::record($userId, 'website.limit_access_add', "Limit Access ditambahkan ke {$site['domain']}: {$pathPrefix}");
+    }
+
+    public static function removeLimitAccessRule(int $id, int $ruleId, ?int $userId): void
+    {
+        $site = self::find($id);
+        if ($site === null) {
+            throw new InvalidArgumentException('Website tidak ditemukan');
+        }
+
+        $stmt = Database::app()->prepare('DELETE FROM website_limit_access WHERE id = :rid AND website_id = :id');
+        $stmt->execute(['rid' => $ruleId, 'id' => $id]);
+        if ($stmt->rowCount() === 0) {
+            throw new InvalidArgumentException('Aturan tidak ditemukan');
+        }
+
+        nginx_delete_htpasswd("la-{$ruleId}");
+        self::regenerateAllConfigs(self::find($id));
+        ActivityLog::record($userId, 'website.limit_access_remove', "Limit Access dihapus dari {$site['domain']}");
+    }
+
+    /** @return array<int,array<string,mixed>> */
+    public static function listDenyRules(int $websiteId): array
+    {
+        $stmt = Database::app()->prepare('SELECT * FROM website_deny_rules WHERE website_id = :id ORDER BY path_prefix');
+        $stmt->execute(['id' => $websiteId]);
+        return $stmt->fetchAll();
+    }
+
+    public static function addDenyRule(int $id, string $name, string $pathPrefix, string $suffixes, ?int $userId): void
+    {
+        $site = self::find($id);
+        if ($site === null) {
+            throw new InvalidArgumentException('Website tidak ditemukan');
+        }
+        $name = trim($name);
+        if ($name === '' || strlen($name) > 100) {
+            throw new InvalidArgumentException('Nama rule tidak valid');
+        }
+        if (!Validator::urlPathPrefix($pathPrefix)) {
+            throw new InvalidArgumentException('Path tidak valid (harus diawali "/")');
+        }
+        if (!Validator::extensionCsvList($suffixes)) {
+            throw new InvalidArgumentException('Daftar ekstensi tidak valid (huruf/angka, dipisah koma, tanpa titik)');
+        }
+
+        $pdo = Database::app();
+        $dup = $pdo->prepare('SELECT COUNT(*) FROM website_deny_rules WHERE website_id = :id AND path_prefix = :p');
+        $dup->execute(['id' => $id, 'p' => $pathPrefix]);
+        if ((int) $dup->fetchColumn() > 0) {
+            throw new InvalidArgumentException('Sudah ada aturan Deny Access untuk path ini');
+        }
+
+        $pdo->prepare('INSERT INTO website_deny_rules (website_id, name, path_prefix, suffixes) VALUES (:id, :n, :p, :s)')
+            ->execute(['id' => $id, 'n' => $name, 'p' => $pathPrefix, 's' => $suffixes]);
+
+        self::regenerateAllConfigs(self::find($id));
+        ActivityLog::record($userId, 'website.deny_rule_add', "Deny Access ditambahkan ke {$site['domain']}: {$pathPrefix}");
+    }
+
+    public static function removeDenyRule(int $id, int $ruleId, ?int $userId): void
+    {
+        $site = self::find($id);
+        if ($site === null) {
+            throw new InvalidArgumentException('Website tidak ditemukan');
+        }
+
+        $stmt = Database::app()->prepare('DELETE FROM website_deny_rules WHERE id = :rid AND website_id = :id');
+        $stmt->execute(['rid' => $ruleId, 'id' => $id]);
+        if ($stmt->rowCount() === 0) {
+            throw new InvalidArgumentException('Aturan tidak ditemukan');
+        }
+
+        self::regenerateAllConfigs(self::find($id));
+        ActivityLog::record($userId, 'website.deny_rule_remove', "Deny Access dihapus dari {$site['domain']}");
+    }
+
+    /** @return array<int,array<string,mixed>> */
+    public static function listRedirects(int $websiteId): array
+    {
+        $stmt = Database::app()->prepare('SELECT * FROM website_redirects WHERE website_id = :id ORDER BY source_domain');
+        $stmt->execute(['id' => $websiteId]);
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * One redirect rule per domain (not per-site) - a domain either
+     * redirects entirely or serves real content, mirroring how SSL is
+     * already tracked per-domain rather than per-website. $sourceDomain
+     * must be one of THIS site's own registered domains (primary or
+     * additional via addDomain()).
+     */
+    public static function addRedirect(int $id, string $sourceDomain, string $targetUrl, int $statusCode, bool $includeUriParams, ?int $userId): void
+    {
+        $site = self::find($id);
+        if ($site === null) {
+            throw new InvalidArgumentException('Website tidak ditemukan');
+        }
+        $ownDomains = array_column(self::listDomains($id), 'domain');
+        $ownDomains[] = $site['domain'];
+        if (!in_array($sourceDomain, $ownDomains, true)) {
+            throw new InvalidArgumentException('Domain sumber bukan milik website ini');
+        }
+        if (!Validator::targetUrl($targetUrl)) {
+            throw new InvalidArgumentException('URL tujuan tidak valid (harus http:// atau https://)');
+        }
+        if (!in_array($statusCode, [301, 302, 307, 308], true)) {
+            throw new InvalidArgumentException('Status code tidak didukung');
+        }
+
+        $pdo = Database::app();
+        $dup = $pdo->prepare('SELECT COUNT(*) FROM website_redirects WHERE website_id = :id AND source_domain = :d');
+        $dup->execute(['id' => $id, 'd' => $sourceDomain]);
+        if ((int) $dup->fetchColumn() > 0) {
+            throw new InvalidArgumentException("Domain {$sourceDomain} sudah punya aturan Redirect - hapus dulu untuk menggantinya");
+        }
+
+        $pdo->prepare('INSERT INTO website_redirects (website_id, source_domain, target_url, status_code, include_uri_params) VALUES (:id, :sd, :t, :sc, :iup)')
+            ->execute(['id' => $id, 'sd' => $sourceDomain, 't' => $targetUrl, 'sc' => $statusCode, 'iup' => $includeUriParams ? 1 : 0]);
+
+        self::regenerateAllConfigs(self::find($id));
+        ActivityLog::record($userId, 'website.redirect_add', "Redirect ditambahkan: {$sourceDomain} -> {$targetUrl} ({$statusCode})");
+    }
+
+    public static function removeRedirect(int $id, int $redirectId, ?int $userId): void
+    {
+        $site = self::find($id);
+        if ($site === null) {
+            throw new InvalidArgumentException('Website tidak ditemukan');
+        }
+
+        $stmt = Database::app()->prepare('DELETE FROM website_redirects WHERE id = :rid AND website_id = :id');
+        $stmt->execute(['rid' => $redirectId, 'id' => $id]);
+        if ($stmt->rowCount() === 0) {
+            throw new InvalidArgumentException('Aturan Redirect tidak ditemukan');
+        }
+
+        self::regenerateAllConfigs(self::find($id));
+        ActivityLog::record($userId, 'website.redirect_remove', "Redirect dihapus dari {$site['domain']}");
+    }
+
     /**
      * Traffic Control (rate limit) / URL Rewrite / Default Index /
-     * Redirect / Hotlink Protection - one form, since they all just edit
-     * columns on the same `websites` row and all require the exact same
-     * "validate, save, regenerate every domain's Nginx config" flow.
+     * Hotlink Protection - one form, since they all just edit columns on
+     * the same `websites` row and all require the exact same "validate,
+     * save, regenerate every domain's Nginx config" flow. Redirect is
+     * NOT here - it moved to its own per-domain rule table
+     * (website_redirects, see addRedirect()/removeRedirect()) since a
+     * redirect target only ever makes sense for ONE specific domain, not
+     * shared site-wide like these others.
      */
     public static function updateAdvanced(
         int $id,
         string $defaultIndex,
         string $customRewriteRules,
-        bool $redirectEnabled,
-        string $redirectTarget,
         bool $rateLimitEnabled,
         int $rateLimitRps,
         int $rateLimitBurst,
+        int $maxConnTotal,
+        int $maxConnPerIp,
+        int $maxBandwidthKbps,
         bool $hotlinkEnabled,
         string $hotlinkExtensions,
         string $hotlinkReferrers,
+        int $hotlinkResponseCode,
+        bool $hotlinkAllowEmptyReferer,
         ?int $userId
     ): array {
         $site = self::find($id);
@@ -421,36 +689,42 @@ final class NginxService
         if ($defaultIndex !== '' && !Validator::indexFileList($defaultIndex)) {
             throw new InvalidArgumentException('Default Index tidak valid (contoh: "index.php index.html")');
         }
-        if ($redirectEnabled && !Validator::targetUrl($redirectTarget)) {
-            throw new InvalidArgumentException('URL tujuan Redirect tidak valid (harus http:// atau https://)');
-        }
         if ($rateLimitEnabled && ($rateLimitRps < 1 || $rateLimitRps > 10000 || $rateLimitBurst < 0 || $rateLimitBurst > 10000)) {
             throw new InvalidArgumentException('Nilai Traffic Control di luar batas wajar');
         }
+        if ($maxConnTotal < 0 || $maxConnTotal > 100000 || $maxConnPerIp < 0 || $maxConnPerIp > 100000 || $maxBandwidthKbps < 0 || $maxBandwidthKbps > 1000000) {
+            throw new InvalidArgumentException('Nilai Traffic Control di luar batas wajar');
+        }
         if ($hotlinkEnabled) {
-            if (!Validator::extensionList($hotlinkExtensions)) {
+            if (!Validator::extensionCsvList($hotlinkExtensions)) {
                 throw new InvalidArgumentException('Daftar ekstensi Hotlink Protection tidak valid');
             }
             if (!Validator::referrerList($hotlinkReferrers)) {
                 throw new InvalidArgumentException('Daftar allowed referrer tidak valid');
             }
         }
+        if ($hotlinkResponseCode < 100 || $hotlinkResponseCode > 599) {
+            throw new InvalidArgumentException('Response code Hotlink Protection tidak valid');
+        }
 
         $pdo = Database::app();
         $stmt = $pdo->prepare(
             'UPDATE websites SET default_index = :di, custom_rewrite_rules = :rw,
-             redirect_enabled = :re, redirect_target = :rt,
              rate_limit_enabled = :rle, rate_limit_rps = :rps, rate_limit_burst = :burst,
-             hotlink_protection_enabled = :he, hotlink_extensions = :hext, hotlink_allowed_referrers = :href
+             max_conn_total = :mct, max_conn_per_ip = :mcpi, max_bandwidth_kbps = :mbk,
+             hotlink_protection_enabled = :he, hotlink_extensions = :hext, hotlink_allowed_referrers = :href,
+             hotlink_response_code = :hrc, hotlink_allow_empty_referer = :haer
              WHERE id = :id'
         );
         $stmt->execute([
             'di' => $defaultIndex ?: null, 'rw' => $customRewriteRules ?: null,
-            're' => $redirectEnabled ? 1 : 0, 'rt' => $redirectTarget ?: null,
             'rle' => $rateLimitEnabled ? 1 : 0, 'rps' => $rateLimitRps, 'burst' => $rateLimitBurst,
+            'mct' => $maxConnTotal, 'mcpi' => $maxConnPerIp, 'mbk' => $maxBandwidthKbps,
             'he' => $hotlinkEnabled ? 1 : 0,
-            'hext' => $hotlinkExtensions ?: 'jpg|jpeg|png|gif|webp|svg|mp4|mp3|css|js',
+            'hext' => $hotlinkExtensions ?: 'jpg,jpeg,png,gif,webp,svg,mp4,mp3,css,js',
             'href' => $hotlinkReferrers ?: null,
+            'hrc' => $hotlinkResponseCode,
+            'haer' => $hotlinkAllowEmptyReferer ? 1 : 0,
             'id' => $id,
         ]);
 

@@ -55,7 +55,67 @@ Website PHP native/multi-versi.
 | `git_repo_url`, `git_branch` | NULL kalau bukan deployment Git — diisi kalau website dibuat dari `git clone` (lihat `NginxService::createWebsite()`/`gitPull()`/`gitStatus()`) |
 | `wildcard_enabled` | Cloudflare for SaaS Custom Hostname — situs ini jadi `default_server` Nginx, menerima domain apa pun. Cuma satu situs (website ATAU aplikasi Node.js) yang boleh bernilai 1 di seluruh server (`NginxService::wildcardHolder()`) |
 | `is_enabled`, `ssl_enabled` | |
+| `default_index`, `custom_rewrite_rules` | Settings > Default Index / URL Rewrite |
+| `rate_limit_enabled`, `rate_limit_rps`, `rate_limit_burst` | Settings > Traffic Control - request/detik per IP |
+| `max_conn_total`, `max_conn_per_ip`, `max_bandwidth_kbps` | Settings > Traffic Control - 0 berarti tanpa batas untuk ketiganya. `max_conn_total`/`max_conn_per_ip` butuh `limit_conn_zone` bersama (lihat `website_reverse_proxies`/rate-limit-zones di [Fitur Panel](Fitur-Panel.md)), `max_bandwidth_kbps` murni `limit_rate` per-lokasi |
+| `hotlink_protection_enabled`, `hotlink_extensions`, `hotlink_allowed_referrers` | Settings > Hotlink Protection - `hotlink_extensions` comma-separated (bukan pipe lagi, lihat migrasi `2026080902`) |
+| `hotlink_response_code`, `hotlink_allow_empty_referer` | Settings > Hotlink Protection - kode HTTP saat hotlink terdeteksi (default 403) dan apakah request tanpa header Referer sama sekali diizinkan (default ya) |
 | `created_by` | FK `panel_users`, `ON DELETE SET NULL` |
+
+**Catatan**: `redirect_enabled`/`redirect_target` (sitewide, satu redirect
+per situs) sudah **dihapus** (migrasi `2026080903`) — Redirect sekarang
+per-domain, lihat tabel `website_redirects` di bawah.
+
+## `website_redirects`
+
+Redirect per-domain (Settings > Website > Redirect) - **satu rule per
+domain**, bukan sitewide seperti sebelumnya, supaya satu situs bisa
+redirect satu domain alias sementara domain lain di situs yang sama tetap
+melayani konten asli.
+
+| Kolom | Keterangan |
+|---|---|
+| `website_id` | FK `websites`, `ON DELETE CASCADE` |
+| `source_domain` | Harus salah satu domain milik website ini (primary atau tambahan). UNIQUE per `website_id` |
+| `target_url`, `status_code` (301/302/307/308) | |
+| `include_uri_params` | Aktif: path+query asli ditempel di belakang `target_url` (`$request_uri`). Nonaktif: selalu redirect persis ke `target_url` |
+
+## `website_reverse_proxies`
+
+Reverse Proxy per-website (Settings > Website > Reverse Proxy), repeatable
+(banyak rule per situs).
+
+| Kolom | Keterangan |
+|---|---|
+| `website_id` | FK `websites`, `ON DELETE CASCADE` |
+| `name` | Label bebas, boleh NULL |
+| `path_prefix`, `target_url` | UNIQUE `path_prefix` per `website_id` |
+| `websocket_enabled` | Default aktif - pilih snippet Nginx `proxy-params.conf` (header Upgrade/Connection) vs `proxy-params-basic.conf` (tanpanya) |
+| `cache_enabled` | `proxy_cache panel_proxy_cache;` - satu cache pool BERSAMA lintas situs (`/etc/nginx/conf.d/panel-proxy-cache.conf`, dideklarasikan sekali oleh installer), bukan per-rule |
+| `send_domain` | Header `Host` custom ke upstream, default literal `$host` (nginx resolve sendiri saat runtime) |
+| `show_proxy_path` | Aktif (default): path diteruskan apa adanya. Nonaktif: prefix path dipangkas (dikendalikan lewat ada/tidaknya trailing slash pada `proxy_pass`) |
+
+## `website_limit_access`
+
+Basic Auth per path (Settings > Website > Limit Access, tab "Limit
+Access").
+
+| Kolom | Keterangan |
+|---|---|
+| `website_id` | FK `websites`, `ON DELETE CASCADE` |
+| `name`, `path_prefix` | UNIQUE `path_prefix` per `website_id` |
+| `username`, `password_hash` | `password_hash` bcrypt (`PASSWORD_BCRYPT`, sama skema `panel_users`) - juga ditulis ke berkas htpasswd sesungguhnya yang dibaca Nginx (`/etc/nginx/htpasswd/la-<id>.htpasswd`, satu berkas per rule) |
+
+## `website_deny_rules`
+
+Blokir ekstensi file per path (Settings > Website > Limit Access, tab
+"Deny Access").
+
+| Kolom | Keterangan |
+|---|---|
+| `website_id` | FK `websites`, `ON DELETE CASCADE` |
+| `name`, `path_prefix` | UNIQUE `path_prefix` per `website_id` |
+| `suffixes` | Comma-separated tanpa titik (mis. `php,jsp,sh`), input tag-chip di UI |
 
 ## `nodejs_apps`
 
@@ -196,6 +256,11 @@ panel_users ──< activity_log
      │              │
      ├──< websites ──┼──< domains (type=php)
      │      │        │
+     │      ├──< website_redirects
+     │      ├──< website_reverse_proxies
+     │      ├──< website_limit_access
+     │      └──< website_deny_rules
+     │
      ├──< nodejs_apps─┼──< domains (type=nodejs)
      │      │  │      │
      │      │  ├──< app_env_variables
@@ -203,5 +268,6 @@ panel_users ──< activity_log
      │      │
      ├──< databases_registry
      ├──< cron_jobs >── websites / nodejs_apps
+     ├──< backup_schedules
      └──< backups
 ```

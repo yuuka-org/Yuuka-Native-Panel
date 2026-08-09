@@ -15,7 +15,19 @@ final class SSLService
         return (string) $type;
     }
 
-    public static function issueForDomain(string $domain, string $email, ?int $userId): void
+    /**
+     * $keyType picks which Let's Encrypt certificate chain certbot
+     * requests - 'rsa' (default, widest compatibility) or 'ecdsa' (modern,
+     * smaller/faster handshake). Matters specifically for domains sitting
+     * behind a third-party proxy (e.g. Cloudflare): a proxy's trust store
+     * can lag behind Let's Encrypt's newer ECDSA intermediate chain,
+     * which surfaces as the ORIGIN's TLS handshake failing from the
+     * proxy's side even though the cert itself is perfectly valid to a
+     * direct client with an up-to-date trust store - RSA's chain is far
+     * more universally trusted, at the cost of a slightly larger
+     * handshake.
+     */
+    public static function issueForDomain(string $domain, string $email, ?int $userId, string $keyType = 'rsa'): void
     {
         if (!Validator::domain($domain)) {
             throw new InvalidArgumentException('Domain tidak valid');
@@ -23,9 +35,12 @@ final class SSLService
         if (!Validator::email($email)) {
             throw new InvalidArgumentException('Email tidak valid');
         }
+        if (!in_array($keyType, ['rsa', 'ecdsa'], true)) {
+            throw new InvalidArgumentException('Tipe sertifikat tidak dikenal');
+        }
         $type = self::domainType($domain);
 
-        $result = Executor::run('certbot-issue', [$domain, $email], null, 90);
+        $result = Executor::run('certbot-issue', [$domain, $email, $keyType], null, 90);
         if (!$result['ok']) {
             throw new RuntimeException('Penerbitan SSL gagal (pastikan DNS domain sudah mengarah ke server ini): ' . $result['output']);
         }
@@ -49,7 +64,7 @@ final class SSLService
         Database::app()->prepare('UPDATE domains SET ssl_enabled = 1 WHERE domain = :d')->execute(['d' => $domain]);
         Database::app()->prepare('UPDATE websites SET ssl_enabled = 1 WHERE domain = :d')->execute(['d' => $domain]);
 
-        ActivityLog::record($userId, 'ssl.issue', "SSL diterbitkan untuk {$domain}");
+        ActivityLog::record($userId, 'ssl.issue', "SSL diterbitkan untuk {$domain} (tipe: " . strtoupper($keyType) . ')');
     }
 
     /**

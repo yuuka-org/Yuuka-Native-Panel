@@ -1,7 +1,7 @@
 <?php
 /**
- * Shared sub-tab nav for the per-app Node.js settings pages (Umum/Domain/
- * Environment/Logs/Health Check/Backup). Two render modes:
+ * Shared sub-tab nav for the per-app Node.js settings pages. Two render
+ * modes:
  * - Normal (full page navigation): a horizontal btn-group, same
  *   "separate physical pages + toggle" convention as partials/settings_nav.php.
  * - Embedded ($embed true, see nodejs.php's Settings popup + partials/
@@ -13,8 +13,10 @@
 $nodejsTabs = [
     'general' => ['/nodejs_settings', 'Umum', 'bi-sliders'],
     'domains' => ['/nodejs_domains', 'Domain', 'bi-globe2'],
+    'ssl' => ['/nodejs_ssl', 'SSL', 'bi-shield-lock'],
     'env' => ['/nodejs_env', 'Environment', 'bi-key'],
     'logs' => ['/nodejs_logs', 'Logs', 'bi-file-text'],
+    'response_log' => ['/nodejs_response_log', 'Response Log', 'bi-file-earmark-text'],
     'health' => ['/nodejs_health', 'Health Check', 'bi-heart-pulse'],
     'backup' => ['/nodejs_backup', 'Backup', 'bi-cloud-arrow-down'],
 ];

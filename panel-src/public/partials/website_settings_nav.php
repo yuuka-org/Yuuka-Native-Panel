@@ -1,15 +1,27 @@
 <?php
 /**
- * Shared sub-tab nav for per-site Website PHP/Static settings pages
- * (Umum/Domain/Traffic & Rewrite/Traffic Analysis/Backup) - exact same
- * two-render-mode pattern as partials/nodejs_settings_nav.php (full-page
- * btn-group vs embedded vertical sidebar inside the Settings popup).
- * Expects $site (websites row) and $activeWebsiteTab; $embed optional.
+ * Shared sub-tab nav for per-site Website PHP/Static settings pages.
+ * Each concern (Default Index, URL Rewrite, Redirect, Traffic Control,
+ * Hotlink Protection, Reverse Proxy, SSL, Response Log) is its own
+ * physical page/tab - deliberately NOT bundled into one combined
+ * "Advanced" form, so a change to one setting can never accidentally
+ * touch another's fields and each has its own focused save action.
+ * Exact same two-render-mode pattern as partials/nodejs_settings_nav.php
+ * (full-page btn-group vs embedded vertical sidebar inside the Settings
+ * popup). Expects $site (websites row) and $activeWebsiteTab; $embed optional.
  */
 $websiteTabs = [
     'general' => ['/website_settings', 'Umum', 'bi-sliders'],
-    'domains' => ['/website_domains', 'Domain & SSL', 'bi-globe2'],
-    'advanced' => ['/website_advanced', 'Traffic & Rewrite', 'bi-signpost-split'],
+    'domains' => ['/website_domains', 'Domain', 'bi-globe2'],
+    'ssl' => ['/website_ssl', 'SSL', 'bi-shield-lock'],
+    'limit_access' => ['/website_limit_access', 'Limit Access', 'bi-lock'],
+    'default_index' => ['/website_default_index', 'Default Index', 'bi-file-earmark-text'],
+    'rewrite' => ['/website_rewrite', 'URL Rewrite', 'bi-signpost-split'],
+    'redirect' => ['/website_redirect', 'Redirect', 'bi-arrow-return-right'],
+    'traffic_control' => ['/website_traffic_control', 'Traffic Control', 'bi-speedometer2'],
+    'hotlink' => ['/website_hotlink', 'Hotlink Protection', 'bi-link-45deg'],
+    'reverse_proxy' => ['/website_reverse_proxy', 'Reverse Proxy', 'bi-arrow-left-right'],
+    'response_log' => ['/website_response_log', 'Response Log', 'bi-file-text'],
     'traffic' => ['/website_traffic', 'Traffic Analysis', 'bi-graph-up'],
     'backup' => ['/website_backup', 'Backup', 'bi-cloud-arrow-down'],
 ];

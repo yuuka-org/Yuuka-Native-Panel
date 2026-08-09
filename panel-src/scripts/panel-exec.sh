@@ -27,6 +27,10 @@ AUDIT_LOG="/opt/server-panel/storage/logs/panel-exec-audit.log"
 NGINX_AVAILABLE="/etc/nginx/sites-available"
 NGINX_ENABLED="/etc/nginx/sites-enabled"
 NGINX_SNIPPETS="/etc/nginx/snippets"
+# Per-rule htpasswd files for Website Settings > Limit Access - one file
+# per rule (never shared across rules/sites), so a credential added for
+# one path can never accidentally also work on another rule's path.
+HTPASSWD_DIR="/etc/nginx/htpasswd"
 WWW_BASE="/var/www"
 NODEAPPS_BASE="/home/nodeapps/apps"
 NODEAPPS_HOME="/home/nodeapps"
@@ -342,6 +346,43 @@ EOF
     rm -f "/tmp/nginx-test-err.$$" "$prev_snippet" "$prev_htpasswd" "$prev_vhost" 2>/dev/null || true
     systemctl reload nginx
     echo "OK: basicauth ${mode}"
+}
+
+# ---------------------------------------------------------------------------
+# Per-rule htpasswd files - Website Settings > Limit Access. Content
+# (username:bcrypt-hash) is generated PHP-side (same PASSWORD_BCRYPT
+# scheme as panel_users) and passed already-hashed, same pattern
+# op_panel_basicauth_set above uses - this script never sees a plaintext
+# password. $id is caller-chosen but always re-derived from validated
+# identifiers (nginx site name + rule id), never a raw path.
+# ---------------------------------------------------------------------------
+op_nginx_write_htpasswd() {
+    local id="$1"
+    require_match "$id" "$RE_SITENAME" "htpasswd id"
+    mkdir -p "$HTPASSWD_DIR"
+    local target
+    target=$(require_path_within "${HTPASSWD_DIR}/${id}.htpasswd" "$HTPASSWD_DIR")
+
+    local tmp
+    tmp=$(mktemp)
+    cat > "$tmp"
+    [[ -s "$tmp" ]] || { rm -f "$tmp"; fail "Konten htpasswd kosong"; }
+    mv "$tmp" "$target"
+    # ngx_http_auth_basic_module's WORKER process (www-data, not root)
+    # needs read access, not just the master - same reasoning as
+    # BASICAUTH_HTPASSWD above.
+    chown root:www-data "$target"
+    chmod 640 "$target"
+    echo "OK: htpasswd ${id} ditulis"
+}
+
+op_nginx_delete_htpasswd() {
+    local id="$1"
+    require_match "$id" "$RE_SITENAME" "htpasswd id"
+    local target
+    target=$(require_path_within "${HTPASSWD_DIR}/${id}.htpasswd" "$HTPASSWD_DIR")
+    rm -f "$target"
+    echo "OK: htpasswd ${id} dihapus"
 }
 
 # ---------------------------------------------------------------------------
@@ -767,11 +808,22 @@ op_pm2_save() {
 # Certbot / SSL
 # ---------------------------------------------------------------------------
 op_certbot_issue() {
-    local domain="$1" email="$2"
+    local domain="$1" email="$2" key_type="${3:-rsa}"
     require_match "$domain" "$RE_DOMAIN" "domain"
     require_match "$email" "$RE_EMAIL" "email"
+    require_match "$key_type" '^(rsa|ecdsa)$' "key_type"
+    # RSA is the default (not ECDSA) - some CDN/proxy trust stores lag
+    # behind Let's Encrypt's newer ECDSA intermediate chain, causing the
+    # origin's TLS handshake to fail from the proxy's side specifically
+    # even though the cert is perfectly valid to any client with an
+    # up-to-date trust store. RSA's intermediate chain is far more widely
+    # trusted, at the cost of a slightly larger handshake - the safer
+    # default for a domain that's typically going through a
+    # third-party proxy (see Settings > Domain > SSL for the ECDSA option
+    # once compatibility is confirmed).
     certbot certonly --webroot -w "$ACME_WEBROOT" -d "$domain" \
-        --non-interactive --agree-tos -m "$email" --no-eff-email
+        --non-interactive --agree-tos -m "$email" --no-eff-email \
+        --key-type "$key_type"
 }
 
 op_certbot_remove() {
@@ -2317,6 +2369,8 @@ case "$SUBCOMMAND" in
     nginx-disable)         op_nginx_disable "$@" ;;
     nginx-delete)          op_nginx_delete "$@" ;;
     panel-basicauth-set)          op_panel_basicauth_set "$@" ;;
+    nginx-write-htpasswd)         op_nginx_write_htpasswd "$@" ;;
+    nginx-delete-htpasswd)        op_nginx_delete_htpasswd "$@" ;;
     panel-security-entrance-set)  op_panel_security_entrance_set "$@" ;;
     pm2-deploy)            op_pm2_deploy "$@" ;;
     pm2-start)             op_pm2_start "$@" ;;

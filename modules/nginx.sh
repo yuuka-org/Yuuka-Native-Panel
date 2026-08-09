@@ -74,6 +74,35 @@ proxy_send_timeout 60s;
 EOF
     log_ok "snippets/proxy-params.conf"
 
+    # Non-WebSocket variant - Website Settings > Reverse Proxy lets an
+    # admin turn WebSocket support OFF per-rule (some backends reject
+    # unexpected Upgrade/Connection headers outright rather than ignoring
+    # them) - everything else identical to proxy-params.conf above.
+    write_file_if_changed "${NGINX_SNIPPETS}/proxy-params-basic.conf" <<'EOF'
+# Same as proxy-params.conf but without WebSocket Upgrade/Connection
+# headers - used when a Reverse Proxy rule has WebSocket Support off.
+proxy_set_header Host $host;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+proxy_read_timeout 60s;
+proxy_send_timeout 60s;
+EOF
+    log_ok "snippets/proxy-params-basic.conf"
+
+    # Shared cache pool for Website Settings > Reverse Proxy's "Enable
+    # Caching" toggle - ONE pool for every proxy rule across every site
+    # that opts in (not per-rule), since proxy_cache_path can only be
+    # declared at http{} context. Rules that don't enable caching are
+    # completely unaffected - this only takes effect where a generated
+    # location block explicitly adds `proxy_cache panel_proxy_cache;`.
+    mkdir -p /var/cache/nginx/panel-proxy
+    chown -R www-data:www-data /var/cache/nginx/panel-proxy
+    write_file_if_changed "/etc/nginx/conf.d/panel-proxy-cache.conf" <<'EOF'
+proxy_cache_path /var/cache/nginx/panel-proxy levels=1:2 keys_zone=panel_proxy_cache:10m max_size=1g inactive=60m use_temp_path=off;
+EOF
+    log_ok "conf.d/panel-proxy-cache.conf"
+
     # Cloudflare real-IP restoration (only meaningful if traffic comes via Cloudflare)
     write_file_if_changed "${NGINX_SNIPPETS}/cloudflare-realip.conf" <<'EOF'
 # Trust Cloudflare edge IPs to restore real visitor IP from CF-Connecting-IP.

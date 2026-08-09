@@ -22,41 +22,75 @@ function nginx_rate_limit_zone_name(string $domain): string
     return 'zone_' . substr(md5(strtolower($domain)), 0, 12);
 }
 
-/**
- * `limit_req_zone` is only valid at http{} context, never inside a single
- * server{} block - every rate-limited site's zone is declared together in
- * ONE shared file (conf.d, auto-included at http level by Debian/Ubuntu's
- * stock nginx.conf), fully regenerated from the current DB state whenever
- * any site's Traffic Control setting changes.
- * @param array<int,array{domain:string,rate_limit_rps:int}> $rateLimitedSites
- */
-function nginx_build_rate_limit_zones_config(array $rateLimitedSites): string
+/** Same collision-safe hashing as nginx_rate_limit_zone_name() - sitewide (not per-IP) total connection cap. */
+function nginx_conn_zone_name_total(string $domain): string
 {
-    if (empty($rateLimitedSites)) {
-        return "# Tidak ada situs dengan Traffic Control aktif saat ini\n";
-    }
+    return 'connt_' . substr(md5(strtolower($domain)), 0, 12);
+}
+
+/** Same collision-safe hashing as nginx_rate_limit_zone_name() - per-client-IP connection cap. */
+function nginx_conn_zone_name_perip(string $domain): string
+{
+    return 'connip_' . substr(md5(strtolower($domain)), 0, 12);
+}
+
+/**
+ * `limit_req_zone`/`limit_conn_zone` are only valid at http{} context,
+ * never inside a single server{} block - every site's zones are declared
+ * together in ONE shared file (conf.d, auto-included at http level by
+ * Debian/Ubuntu's stock nginx.conf), fully regenerated from the current
+ * DB state whenever any site's Traffic Control setting changes.
+ * @param array<int,array{domain:string,rate_limit_enabled?:bool,rate_limit_rps?:int,max_conn_total?:int,max_conn_per_ip?:int}> $sites
+ */
+function nginx_build_rate_limit_zones_config(array $sites): string
+{
     $lines = ["# Auto-generated - jangan edit manual, akan ditimpa dari Settings tiap situs"];
-    foreach ($rateLimitedSites as $s) {
-        $zone = nginx_rate_limit_zone_name($s['domain']);
-        $rps = max(1, (int) $s['rate_limit_rps']);
-        $lines[] = "limit_req_zone \$binary_remote_addr zone={$zone}:10m rate={$rps}r/s;";
+    $hasAny = false;
+    foreach ($sites as $s) {
+        if (!empty($s['rate_limit_enabled'])) {
+            $zone = nginx_rate_limit_zone_name($s['domain']);
+            $rps = max(1, (int) ($s['rate_limit_rps'] ?? 1));
+            $lines[] = "limit_req_zone \$binary_remote_addr zone={$zone}:10m rate={$rps}r/s;";
+            $hasAny = true;
+        }
+        if ((int) ($s['max_conn_total'] ?? 0) > 0) {
+            $zone = nginx_conn_zone_name_total($s['domain']);
+            $lines[] = "limit_conn_zone \$server_name zone={$zone}:10m;";
+            $hasAny = true;
+        }
+        if ((int) ($s['max_conn_per_ip'] ?? 0) > 0) {
+            $zone = nginx_conn_zone_name_perip($s['domain']);
+            $lines[] = "limit_conn_zone \$binary_remote_addr zone={$zone}:10m;";
+            $hasAny = true;
+        }
+    }
+    if (!$hasAny) {
+        return "# Tidak ada situs dengan Traffic Control aktif saat ini\n";
     }
     return implode("\n", $lines) . "\n";
 }
 
-/** @param array{extensions:string,referrers:string} $hotlink */
+/** @param array{extensions:string,referrers:string,response_code?:int,allow_empty_referer?:bool} $hotlink */
 function nginx_build_hotlink_block(string $domain, array $hotlink): string
 {
-    $extensions = trim($hotlink['extensions']) !== '' ? $hotlink['extensions'] : 'jpg|jpeg|png|gif|webp|svg|mp4|mp3|css|js';
+    // extensions is comma-separated (tag-chip UI, same convention Deny
+    // Access uses) but nginx's regex alternation needs pipes.
+    $extensionsCsv = trim($hotlink['extensions']) !== '' ? $hotlink['extensions'] : 'jpg,jpeg,png,gif,webp,svg,mp4,mp3,css,js';
+    $extensions = str_replace(',', '|', $extensionsCsv);
     $referrers = array_values(array_filter(array_map('trim', explode("\n", (string) $hotlink['referrers']))));
     $allowList = implode(' ', array_merge([$domain, "*.{$domain}"], $referrers));
+    $responseCode = (int) ($hotlink['response_code'] ?? 403);
+    // "none" in valid_referers is what lets a request with NO Referer
+    // header at all (direct access/curl) through - omitting it makes
+    // hotlink protection strict enough to also reject those.
+    $allowEmpty = ($hotlink['allow_empty_referer'] ?? true) ? 'none ' : '';
 
     return <<<CONF
 
     location ~* \.({$extensions})\$ {
-        valid_referers none blocked {$allowList};
+        valid_referers {$allowEmpty}blocked {$allowList};
         if (\$invalid_referer) {
-            return 403;
+            return {$responseCode};
         }
         try_files \$uri =404;
     }
@@ -66,10 +100,13 @@ CONF;
 /**
  * @param array{
  *   default_index?:string, custom_rewrite_rules?:string,
- *   redirect_target?:string,
+ *   redirect_target?:string, redirect_status_code?:int, redirect_include_uri_params?:bool,
  *   rate_limit?:array{rps:int,burst:int}|null,
+ *   max_conn_total?:int, max_conn_per_ip?:int, max_bandwidth_kbps?:int,
  *   hotlink?:array{extensions:string,referrers:string}|null,
- *   reverse_proxies?:array<int,array{path_prefix:string,target_url:string}>,
+ *   reverse_proxies?:array<int,array{path_prefix:string,target_url:string,websocket_enabled?:bool,cache_enabled?:bool,send_domain?:string,show_proxy_path?:bool}>,
+ *   limit_access?:array<int,array{path_prefix:string,htpasswd_path:string}>,
+ *   deny_rules?:array<int,array{path_prefix:string,suffixes:string}>,
  *   ssl_enabled?:bool
  * } $options
  */
@@ -83,6 +120,8 @@ function nginx_build_php_site_config(string $domain, string $phpVersion, string 
     // fires.
     if (!empty($options['redirect_target'])) {
         $target = $options['redirect_target'];
+        $statusCode = (int) ($options['redirect_status_code'] ?? 301);
+        $uriSuffix = ($options['redirect_include_uri_params'] ?? true) ? '$request_uri' : '';
         if (empty($options['ssl_enabled'])) {
             return <<<CONF
 server {
@@ -90,7 +129,7 @@ server {
     listen [::]:80;
     server_name {$domain};
     include snippets/acme-challenge.conf;
-    return 301 {$target}\$request_uri;
+    return {$statusCode} {$target}{$uriSuffix};
 }
 CONF;
         }
@@ -101,7 +140,7 @@ server {
     listen [::]:443 ssl http2;
     server_name {$domain};
 {$sslDirectives}
-    return 301 {$target}\$request_uri;
+    return {$statusCode} {$target}{$uriSuffix};
 }
 CONF;
         return $mainBlock . "\n\n" . nginx_http_redirect_block($domain);
@@ -117,6 +156,17 @@ CONF;
         $burst = max(0, (int) $options['rate_limit']['burst']);
         $extra .= "    limit_req zone={$zone} burst={$burst} nodelay;\n";
     }
+    if ((int) ($options['max_conn_total'] ?? 0) > 0) {
+        $zone = nginx_conn_zone_name_total($domain);
+        $extra .= "    limit_conn {$zone} " . (int) $options['max_conn_total'] . ";\n";
+    }
+    if ((int) ($options['max_conn_per_ip'] ?? 0) > 0) {
+        $zone = nginx_conn_zone_name_perip($domain);
+        $extra .= "    limit_conn {$zone} " . (int) $options['max_conn_per_ip'] . ";\n";
+    }
+    if ((int) ($options['max_bandwidth_kbps'] ?? 0) > 0) {
+        $extra .= "    limit_rate " . (int) $options['max_bandwidth_kbps'] . "k;\n";
+    }
     if (!empty($options['hotlink'])) {
         $extra .= nginx_build_hotlink_block($domain, $options['hotlink']);
     }
@@ -128,11 +178,58 @@ CONF;
 
     $reverseProxyLocations = '';
     foreach ($options['reverse_proxies'] ?? [] as $rp) {
+        // Show Proxy Path: ON (default) preserves the matched prefix in
+        // the upstream request (proxy_pass with NO trailing slash/URI -
+        // nginx passes the original URI through unchanged); OFF strips it
+        // (trailing slash on proxy_pass makes nginx replace the matched
+        // location prefix with that slash instead).
+        $proxyTarget = !empty($rp['show_proxy_path']) ? $rp['target_url'] : rtrim($rp['target_url'], '/') . '/';
+        $paramsSnippet = !empty($rp['websocket_enabled']) ? 'proxy-params.conf' : 'proxy-params-basic.conf';
+        $sendDomain = ($rp['send_domain'] ?? '') !== '' ? $rp['send_domain'] : '$host';
+        $cacheDirectives = !empty($rp['cache_enabled'])
+            ? "        proxy_cache panel_proxy_cache;\n        proxy_cache_valid 200 302 10m;\n        proxy_cache_valid 404 1m;\n"
+            : '';
+
         $reverseProxyLocations .= <<<LOC
 
     location {$rp['path_prefix']} {
-        proxy_pass {$rp['target_url']};
-        include snippets/proxy-params.conf;
+        proxy_pass {$proxyTarget};
+        include snippets/{$paramsSnippet};
+        proxy_set_header Host {$sendDomain};
+{$cacheDirectives}    }
+LOC;
+    }
+
+    // Plain prefix location (not regex) - same convention as reverse
+    // proxy locations above, so a path both proxied AND access-limited
+    // isn't ambiguous about which "wins" (longest literal prefix, same
+    // as nginx's own rule for non-regex locations).
+    $limitAccessLocations = '';
+    foreach ($options['limit_access'] ?? [] as $la) {
+        $limitAccessLocations .= <<<LOC
+
+    location {$la['path_prefix']} {
+        auth_basic "Restricted Access";
+        auth_basic_user_file {$la['htpasswd_path']};
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+LOC;
+    }
+
+    // Regex location (path prefix escaped so a literal "." in it can
+    // never behave as a wildcard) - placed BEFORE the hotlink block below
+    // so an extension deny rule always wins over hotlink protection's own
+    // regex location when both would otherwise match the same request
+    // (nginx picks the first matching regex location in file order).
+    $denyLocations = '';
+    foreach ($options['deny_rules'] ?? [] as $dr) {
+        $escapedPath = preg_quote($dr['path_prefix'], '~');
+        $suffixPattern = str_replace(',', '|', $dr['suffixes']);
+        $denyLocations .= <<<LOC
+
+    location ~* ^{$escapedPath}.*\.({$suffixPattern})\$ {
+        deny all;
+        return 403;
     }
 LOC;
     }
@@ -172,7 +269,7 @@ server {
     }
 
     location ~ /\.(?!well-known) { deny all; }
-{$reverseProxyLocations}
+{$denyLocations}{$limitAccessLocations}{$reverseProxyLocations}
     include snippets/security-headers.conf;
 }
 CONF;
@@ -369,4 +466,15 @@ function nginx_delete_site(string $siteName): array
 function nginx_reload(): array
 {
     return Executor::run('nginx-reload', [], null, 20);
+}
+
+/** $content is "username:bcrypt-hash" - already hashed PHP-side (PASSWORD_BCRYPT), never a plaintext password. */
+function nginx_write_htpasswd(string $id, string $content): array
+{
+    return Executor::run('nginx-write-htpasswd', [$id], $content, 20);
+}
+
+function nginx_delete_htpasswd(string $id): array
+{
+    return Executor::run('nginx-delete-htpasswd', [$id], null, 20);
 }

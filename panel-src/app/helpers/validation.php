@@ -294,10 +294,10 @@ final class Validator
         return (bool) preg_match('#^/[a-zA-Z0-9_./-]{0,254}$#', $value);
     }
 
-    /** Pipe-separated file extensions for Hotlink Protection's regex location. */
-    public static function extensionList(string $value): bool
+    /** Comma-separated file extensions - Hotlink Protection's URL Suffix and Deny Access's Suffix, both backed by the same tag-chip UI. */
+    public static function extensionCsvList(string $value): bool
     {
-        return (bool) preg_match('/^[a-zA-Z0-9]{1,10}(\|[a-zA-Z0-9]{1,10}){0,29}$/', $value);
+        return (bool) preg_match('/^[a-zA-Z0-9]{1,10}(,[a-zA-Z0-9]{1,10}){0,29}$/', $value);
     }
 
     /** One allowed referrer per line - domains, optionally with a leading "*." wildcard. */

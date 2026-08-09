@@ -30,11 +30,28 @@ final class DomainService
         return $stmt->fetch() ?: null;
     }
 
-    public static function setCloudflareProxied(int $id, bool $proxied, ?int $userId): void
+    /**
+     * Auto-detects whether $domain is currently proxied through Cloudflare
+     * (its public DNS resolves to one of Cloudflare's published edge
+     * ranges - see CloudflareService::isDomainProxied()) and persists the
+     * result. Replaces the old fully-manual admin toggle: this is
+     * directly observable from DNS, so there's no reason to make the
+     * admin assert it by hand and risk it drifting from reality (which is
+     * exactly what caused the "SSL Issued but Cloudflare still shows
+     * handshake failed"-style confusion this was built to help diagnose).
+     * Returns null (leaving the stored value untouched) if the domain
+     * doesn't currently resolve at all, rather than overwriting a
+     * previously-known value with a guess.
+     */
+    public static function syncCloudflareProxied(int $id, string $domain): ?bool
     {
+        $detected = CloudflareService::isDomainProxied($domain);
+        if ($detected === null) {
+            return null;
+        }
         Database::app()->prepare('UPDATE domains SET cloudflare_proxied = :p WHERE id = :id')
-            ->execute(['p' => $proxied ? 1 : 0, 'id' => $id]);
-        ActivityLog::record($userId, 'domain.cloudflare_toggle', "Domain #{$id} cloudflare_proxied=" . ($proxied ? '1' : '0'));
+            ->execute(['p' => $detected ? 1 : 0, 'id' => $id]);
+        return $detected;
     }
 
     public static function toggle(int $id, bool $enable, ?int $userId): void

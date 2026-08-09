@@ -147,51 +147,102 @@ instalasi ([Instalasi](Instalasi.md) tahap 6).
 Klik ikon gear di baris website membuka modal berisi iframe, pola identik
 dengan Settings Node.js Apps (`partials/embed_header.php`/`embed_footer.php`,
 `partials/website_settings_nav.php` jadi sidebar vertikal di dalam modal /
-btn-group horizontal di mode halaman penuh). Lima sub-tab:
+btn-group horizontal di mode halaman penuh). Setiap kepentingan adalah
+**halaman/tab tersendiri** (bukan digabung dalam satu form besar seperti
+`website_advanced.php` sebelumnya) — masing-masing punya aksi simpan
+sendiri:
 
-- **Umum** (`website_settings.php`) — edit Domain/Versi PHP/Document Root,
-  sebelumnya sama sekali tidak bisa (satu-satunya cara ganti domain dulu
-  cuma hapus lalu buat ulang website). `NginxService::updateWebsite()`
-  menulis config situs BARU dulu (tervalidasi `nginx -t`) sebelum config
-  lama dihapus, jadi config yang ditolak tidak pernah meninggalkan situs
-  tanpa apa pun yang melayaninya. Mengganti Domain **tidak** memindahkan
-  file di server (Document Root diedit terpisah, sengaja tidak diikat ke
-  folder domain tertentu — bisa arahkan ke folder situs lain) dan otomatis
-  menonaktifkan SSL (sertifikat lama tidak valid untuk domain baru,
-  terbitkan ulang lewat tab Domain & SSL).
-- **Domain & SSL** (`website_domains.php`) — `NginxService::addDomain()`/
-  `removeDomain()`/`listDomains()`, pola sama persis dengan multi-domain
-  Node.js Apps: tiap domain tambahan dapat situs Nginx sendiri, semuanya
-  melayani Document Root & versi PHP yang sama dengan domain primary.
-  Domain primary tidak bisa dihapus dari sini (harus lewat ganti Domain di
-  tab Umum, atau hapus seluruh website). SSL per-domain (`SSLService`) dan
-  Wildcard Hostname juga pindah ke sini (sebelumnya masing-masing modal
-  terpisah/halaman `/domains?website_id=`).
-- **Traffic & Rewrite** (`website_advanced.php`) — Default Index, Custom
-  URL Rewrite (baris `rewrite` Nginx mentah, disisipkan langsung ke
-  config — validasinya murni `nginx -t`, bukan whitelist syntax, karena
-  ini fitur admin-trusted), Redirect (alihkan seluruh situs), Traffic
-  Control (rate limit per-IP, lihat di bawah), Reverse Proxy (path prefix
-  → target URL, repeatable, tabel `website_reverse_proxies`), dan Hotlink
-  Protection (lihat di bawah). Semua berlaku untuk SELURUH domain website
-  ini sekaligus — `NginxService::regenerateAllConfigs()` menulis ulang
-  config setiap domain terdaftar tiap kali salah satu pengaturan ini
-  berubah.
+- **Umum** (`website_settings.php`) — edit Domain/Versi PHP/Document Root.
+  `NginxService::updateWebsite()` menulis config situs BARU dulu
+  (tervalidasi `nginx -t`) sebelum config lama dihapus, jadi config yang
+  ditolak tidak pernah meninggalkan situs tanpa apa pun yang melayaninya.
+  Mengganti Domain **tidak** memindahkan file di server (Document Root
+  diedit terpisah) dan otomatis menonaktifkan SSL untuk domain baru
+  (sertifikat lama tidak valid untuknya) — aturan Redirect yang menempel
+  ke domain lama ikut dipindahkan ke nama domain baru.
+- **Domain** (`website_domains.php`) — `NginxService::addDomain()`/
+  `removeDomain()`/`listDomains()`: tiap domain tambahan dapat situs
+  Nginx sendiri, semuanya melayani Document Root & versi PHP yang sama
+  dengan domain primary. Domain primary tidak bisa dihapus dari sini.
+  Wildcard Hostname (Cloudflare for SaaS) juga di sini. Kolom SSL cuma
+  status ringkas — kelola sertifikatnya di tab **SSL**.
+- **SSL** (`website_ssl.php`) — Issue SSL (Let's Encrypt, pilih tipe
+  sertifikat **RSA** default atau **ECDSA**, lihat bagian [Domain](#domain)
+  di bawah untuk alasannya), Remove SSL, dan Upload SSL Manual, untuk tiap
+  domain website ini. Node.js Apps punya halaman sejenis di
+  `nodejs_ssl.php`.
+- **Limit Access** (`website_limit_access.php`) — dua jenis rule
+  independen per website:
+  - *Limit Access*: HTTP Basic Auth (`auth_basic`) di-scope ke satu path
+    prefix (`location <path> { auth_basic ...; auth_basic_user_file ...; }`).
+    Password di-hash `PASSWORD_BCRYPT` (sama seperti `panel_users`) baik
+    untuk baris DB maupun berkas htpasswd yang benar-benar dibaca Nginx
+    (`/etc/nginx/htpasswd/la-<rule_id>.htpasswd`, ditulis lewat
+    subcommand `nginx-write-htpasswd` — lihat
+    [Referensi panel-exec.sh](Panel-Exec-Reference.md)) — satu berkas per
+    rule, kredensial satu path tidak pernah otomatis berlaku di path lain.
+  - *Deny Access*: blokir ekstensi file tertentu di path tertentu, lewat
+    `location` regex (`^<path-escaped>.*\.(ext1|ext2)$ { deny all; }`).
+    Path di-escape (`preg_quote`) sebelum disisipkan ke regex Nginx supaya
+    karakter seperti `.` di path tidak berlaku sebagai wildcard.
+- **Default Index**, **URL Rewrite**, **Redirect**, **Traffic Control**,
+  **Hotlink Protection**, **Reverse Proxy** — lihat penjelasan masing-
+  masing di bawah. Kecuali Redirect dan Reverse Proxy, semuanya kolom
+  langsung di tabel `websites`, disimpan lewat satu method bersama
+  `NginxService::updateAdvanced()` (tiap tab hanya mengubah kolom yang
+  jadi tanggung jawabnya sendiri, kolom lain dikirim ulang apa adanya dari
+  state saat ini) yang lalu memanggil `regenerateAllConfigs()` — menulis
+  ulang config SETIAP domain terdaftar situs ini.
 
-  **Traffic Control**: `limit_req_zone` Nginx cuma valid di context
-  `http{}`, tidak bisa per-`server{}` — tiap situs yang mengaktifkan ini
-  dapat satu file bersama `/etc/nginx/conf.d/panel-rate-limits.conf`
-  (auto-include bawaan nginx.conf stok Debian/Ubuntu), full di-generate
-  ulang dari SEMUA situs yang rate-limit-nya aktif tiap kali ada
-  perubahan (`nginx_build_rate_limit_zones_config()`). Nama zone di-hash
-  dari domain (`nginx_rate_limit_zone_name()`, MD5 12 karakter) — sengaja
-  bukan sekadar ganti karakter non-alnum jadi underscore, karena dua
-  domain berbeda seperti `a.b.com` dan `a-b.com` bisa collide jadi nama
-  zone yang sama dengan skema sederhana itu.
+  **Redirect** (`website_redirect.php`, tabel `website_redirects`) — beda
+  dari lima lainnya: **satu rule per domain**, bukan satu setting
+  sitewide. Sebuah domain milik situs ini boleh redirect ke URL lain
+  sementara domain lain di situs yang sama tetap melayani konten asli —
+  cocok untuk skenario "domain alias lama redirect ke domain utama".
+  Tiap rule punya Status Code (301/302/307/308) dan toggle *Include URI
+  Parameters* (aktif: path+query yang diakses ditempel otomatis di
+  belakang Target URL; nonaktif: selalu redirect persis ke Target URL).
+  Mengganti nama domain primary (tab Umum) otomatis memindahkan rule-nya
+  ke nama baru.
+
+  **Traffic Control**: `limit_req_zone`/`limit_conn_zone` Nginx cuma
+  valid di context `http{}`, tidak bisa per-`server{}` — tiap situs yang
+  mengaktifkan salah satu dari Rate Limit/Maximum Connections
+  (total)/Maximum Connections per IP dapat baris di satu file bersama
+  `/etc/nginx/conf.d/panel-rate-limits.conf` (auto-include bawaan
+  nginx.conf stok Debian/Ubuntu), full di-generate ulang dari SEMUA situs
+  yang salah satu dari ketiganya aktif tiap kali ada perubahan
+  (`nginx_build_rate_limit_zones_config()`). Nama zone di-hash dari
+  domain (MD5 12 karakter, prefix beda per jenis zone: `zone_`/`connt_`/
+  `connip_`) — sengaja bukan sekadar ganti karakter non-alnum jadi
+  underscore, karena dua domain berbeda seperti `a.b.com` dan `a-b.com`
+  bisa collide jadi nama zone yang sama dengan skema sederhana itu.
+  **Maximum Bandwidth per Request** murni `limit_rate` per-lokasi, tidak
+  butuh zone bersama.
 
   **Hotlink Protection**: `valid_referers` Nginx pada `location` khusus
-  ekstensi file yang dilindungi — akses tanpa header Referer (curl/akses
-  langsung) selalu diizinkan, cuma embed dari domain lain yang diblokir.
+  ekstensi file yang dilindungi (URL Suffix, input tag-chip pisah koma —
+  lihat `assets/js/tag-chip-input.js`, widget vanilla JS tanpa dependency
+  yang cuma menampilkan preview pill di atas input teks biasa, tidak
+  mengubah format data yang dikirim). *Allow Empty HTTP_REFERER* (default
+  aktif) mengontrol apakah akses tanpa header Referer sama sekali
+  (curl/akses langsung) diizinkan — nonaktifkan untuk proteksi lebih
+  ketat. *Response* menentukan kode HTTP yang dikembalikan saat hotlink
+  terdeteksi (default 403, bisa diganti mis. 404).
+
+  **Reverse Proxy** (tabel `website_reverse_proxies`) — path prefix →
+  target URL, repeatable, ditambah: **WebSocket Support** (default aktif,
+  pilih antara snippet `proxy-params.conf` dengan header Upgrade/
+  Connection atau `proxy-params-basic.conf` tanpanya — WAJIB Nginx-nya
+  sudah `sudo bash update.sh` sebelum snippet keduanya ada di server),
+  **Enable Caching** (`proxy_cache panel_proxy_cache;` — satu cache pool
+  BERSAMA lintas situs, dideklarasikan sekali oleh installer di
+  `/etc/nginx/conf.d/panel-proxy-cache.conf`, bukan per-rule), **Send
+  Domain** (header `Host` custom ke upstream, default `$host` meneruskan
+  domain asli pengunjung), dan **Show Proxy Path** (aktif: path diteruskan
+  apa adanya ke upstream; nonaktif: prefix path dipangkas sebelum
+  diteruskan — dikendalikan murni lewat ada/tidaknya trailing slash pada
+  `proxy_pass`, perilaku baku Nginx).
 
   **Keamanan validasi**: Document Root dan target URL (Redirect/Reverse
   Proxy) dibatasi charset ketat (`Validator::documentRoot()`/`targetUrl()`)
@@ -199,12 +250,21 @@ btn-group horizontal di mode halaman penuh). Lima sub-tab:
   `proxy_pass .../`) — tanpa ini, sebuah nilai yang mengandung `;`/newline
   bisa menyuntik directive Nginx tambahan di luar yang dimaksud (beda dari
   `custom_rewrite_rules` yang MEMANG sengaja raw passthrough).
+- **Response Log** (`website_response_log.php`) — Access Log & Error Log
+  Nginx per domain (pilih domainnya lewat dropdown kalau situs ini punya
+  lebih dari satu), pakai `LogService::nginxAccess()`/`nginxError()` yang
+  sama dengan halaman Log global (`/logs`), cuma di-scope otomatis ke
+  domain situs ini. Node.js Apps punya versi sejenis di
+  `nodejs_response_log.php` — terpisah dari tab **Logs**-nya yang berisi
+  output PM2 (stdout/stderr aplikasi), karena Access/Error Log adalah log
+  Nginx sebagai reverse proxy-nya, bukan log aplikasinya sendiri.
 - **Traffic Analysis** (`website_traffic.php`) — request/hari dari access
   log Nginx domain primary, termasuk log yang sudah dirotasi (`.1` +
   `.gz`, lewat operasi `log-traffic-daily`/`op_log_traffic_daily` yang
   parsing `awk` atas format `combined` bawaan Nginx). Bukan real-time/SSE
-  (data harian, push tiap detik tidak ada gunanya) — grafik batang CSS
-  polos, tanpa library chart.
+  (data harian, push tiap detik tidak ada gunanya) — grafik area SVG
+  polos (garis + gradient, gridline, maksimal 8 label sumbu-X biar tidak
+  padat), tanpa library chart eksternal.
 - **Backup** (`website_backup.php`) — trigger `BackupService::backupWebsite()`
   + riwayat backup terfilter untuk domain ini saja (sebelumnya tombol
   "Backup Sekarang" langsung di tabel utama, riwayatnya cuma bisa dilihat
@@ -403,14 +463,36 @@ kedalaman berapa pun.
 aplikasi Node.js (tabel `domains`, kolom `type` ENUM `php`/`nodejs`,
 `website_id` XOR `nodejs_app_id`):
 
-- `setCloudflareProxied($id, $proxied, $userId)` — menandai domain
-  di-proxy lewat Cloudflare (kolom `cloudflare_proxied`) — status
-  penanda saja, tidak mengubah konfigurasi Cloudflare dari sisi panel.
+- `syncCloudflareProxied($id, $domain)` — status Cloudflare Proxy
+  **auto-detect**, bukan toggle manual lagi. `CloudflareService::isDomainProxied()`
+  resolve A/AAAA record domain lewat `dns_get_record()` PHP native (tidak
+  butuh shell/`allow_url_fopen`, keduanya memang dikunci di pool PHP-FPM
+  panel — lihat modules/panel.sh) lalu cocokkan tiap IP hasil resolve ke
+  daftar hardcoded rentang IP resmi Cloudflare (ipv4+ipv6, `CF_IPV4_RANGES`/
+  `CF_IPV6_RANGES`, matching CIDR manual pakai `inet_pton()`, bukan fetch
+  live — pool PHP-FPM panel tidak punya `allow_url_fopen`). Dipanggil tiap
+  domains.php dimuat, hasilnya dipersist ke kolom `cloudflare_proxied`
+  supaya kode lain yang baca kolom itu tetap sinkron. `null` (domain tidak
+  resolve sama sekali saat itu) tidak menimpa nilai tersimpan sebelumnya,
+  ditampilkan "Tidak diketahui" di UI.
 - `toggle($id, $enable, $userId)` — enable/disable domain.
+- Tombol **"Lihat Sertifikat"** di setiap baris domains.php redirect ke
+  tab SSL situs/app pemiliknya (`/website_ssl?id=` atau `/nodejs_ssl?id=`,
+  ditentukan dari `domains.type`+`website_id`/`nodejs_app_id`) — SSL
+  issue/remove/upload manual tidak lagi ada tombolnya langsung di
+  domains.php, semua dikelola dari satu tempat per-situs supaya tidak ada
+  dua UI berbeda yang bisa saling tidak sinkron.
 - SSL per-domain ditangani `SSLService::issueForDomain()` /
   `removeCertificate()` lewat Certbot mode webroot (`certbot-issue`/
   `certbot-remove` di panel-exec.sh) — tidak berlaku di mode deployment
-  `tunnel` murni (lihat [Cloudflare Tunnel](Cloudflare-Tunnel.md)). Setelah
+  `tunnel` murni (lihat [Cloudflare Tunnel](Cloudflare-Tunnel.md)).
+  `issueForDomain()` menerima parameter tipe sertifikat (`rsa` default
+  atau `ecdsa`, dikirim ke `certbot --key-type`) — RSA dipilih sebagai
+  default karena trust store beberapa CDN/proxy (termasuk kadang
+  Cloudflare) bisa lebih lambat mengenali intermediate chain ECDSA
+  terbaru Let's Encrypt, yang bisa bermanifestasi sebagai TLS handshake
+  origin gagal DARI SISI proxy saja — walau sertifikatnya sendiri valid
+  untuk klien langsung dengan trust store yang sudah update. Setelah
   certbot sukses, `SSLService` memanggil `NginxService::applySslForDomain()`
   (situs PHP) atau `NodeService::applySslForDomain()` (aplikasi Node.js)
   untuk benar-benar menulis+mengaktifkan blok `listen 443` domain
