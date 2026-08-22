@@ -94,7 +94,7 @@ Pemakaian: yp <aksi> <target> [args...]
   yp repair panel [--reset-env]
   yp update
   yp version
-  yp custom-build <nginx|php|nodejs|mariadb|phpmyadmin|ssl|cloudflare|panel|terminal>
+  yp custom-build <nginx|php|nodejs|mariadb|phpmyadmin|ssl|cloudflare|panel|terminal|openssl>
   yp help
 USAGE
 }
@@ -674,12 +674,18 @@ cmd_version() {
 # ---------------------------------------------------------------------------
 cmd_custom_build() {
     local module="${1:-}"
-    [[ -n "$module" ]] || die "Sebutkan modul: nginx|php|nodejs|mariadb|phpmyadmin|ssl|cloudflare|panel|terminal"
+    [[ -n "$module" ]] || die "Sebutkan modul: nginx|php|nodejs|mariadb|phpmyadmin|ssl|cloudflare|panel|terminal|openssl"
 
     log_step "Custom Build: ${module}"
     case "$module" in
         nginx)
             module_nginx_run_all
+            ;;
+        openssl)
+            # shellcheck source=/dev/null
+            source "${INSTALLER_DIR}/modules/openssl.sh"
+            module_openssl_run_all
+            log_info "Jalankan ini lagi kapan pun ada rilis 3.5.x baru yang mau dipasang (mis. patch keamanan darurat) - paket distro sudah di-hold, jadi 'apt upgrade' tidak lagi menanganinya otomatis."
             ;;
         php)
             # shellcheck source=/dev/null

@@ -23,6 +23,8 @@ export NONINTERACTIVE
 source "${SCRIPT_DIR}/modules/lib.sh"
 # shellcheck source=modules/system.sh
 source "${SCRIPT_DIR}/modules/system.sh"
+# shellcheck source=modules/openssl.sh
+source "${SCRIPT_DIR}/modules/openssl.sh"
 # shellcheck source=modules/mariadb.sh
 source "${SCRIPT_DIR}/modules/mariadb.sh"
 # shellcheck source=modules/nginx.sh
@@ -88,6 +90,7 @@ main() {
     module_system_timezone
     module_system_firewall
     module_system_create_users
+    module_openssl_run_all
 
     print_section "4. Database - MariaDB"
     step_progress

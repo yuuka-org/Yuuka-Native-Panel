@@ -52,6 +52,8 @@ fi
 
 # shellcheck source=modules/lib.sh
 source "${SCRIPT_DIR}/modules/lib.sh"
+# shellcheck source=modules/openssl.sh
+source "${SCRIPT_DIR}/modules/openssl.sh"
 # shellcheck source=modules/nginx.sh
 source "${SCRIPT_DIR}/modules/nginx.sh"
 # shellcheck source=modules/php.sh
@@ -86,7 +88,9 @@ PANEL_VHOST_FILE=$(find "$NGINX_SITES_AVAILABLE" -maxdepth 1 -name 'panel-*.conf
 PANEL_DOMAIN=$(grep -h 'server_name' "${PANEL_VHOST_FILE:-/dev/null}" 2>/dev/null | head -1 | awk '{print $2}' | tr -d ';')
 export PANEL_DOMAIN
 
-log_step "Rebuild konfigurasi sistem (Nginx, PHP-FPM, phpMyAdmin, Terminal, SSL)"
+log_step "Rebuild konfigurasi sistem (OpenSSL, Nginx, PHP-FPM, phpMyAdmin, Terminal, SSL)"
+
+module_openssl_run_all || log_warn "Upgrade OpenSSL sistem gagal/dilewati, cek log di atas. Bisa dicoba lagi: sudo yp custom-build openssl"
 
 module_nginx_run_all
 module_php_run_all
@@ -125,5 +129,5 @@ else
     log_warn "Perintah 'yp' belum tersedia di PATH - lewati repair otomatis. Jalankan 'sudo bash update.sh' sekali lagi, atau 'sudo yp repair panel' manual."
 fi
 
-log_ok "Update selesai - Nginx, PHP-FPM, phpMyAdmin, Terminal, SSL, dan Panel sudah direbuild otomatis."
+log_ok "Update selesai - OpenSSL, Nginx, PHP-FPM, phpMyAdmin, Terminal, SSL, dan Panel sudah direbuild otomatis."
 command_exists yp && yp version

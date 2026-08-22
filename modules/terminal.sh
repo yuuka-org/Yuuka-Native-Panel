@@ -250,6 +250,15 @@ module_terminal_apply_acls() {
 # NPM_CONFIG_CACHE points at the already-provisioned --tmpfs /tmp instead
 # of npm's default $HOME/.npm, so a stray cache dir doesn't get created
 # under /var/www (this sandbox's $HOME) on every use.
+#
+# /run/systemd/resolve is bind-mounted READ-ONLY because /etc/resolv.conf
+# on stock Ubuntu (systemd-resolved) is a SYMLINK into that directory
+# (usually /run/systemd/resolve/stub-resolv.conf) - --ro-bind /etc /etc
+# above only carries the symlink itself, not its target. Without this the
+# symlink dangles inside the sandbox, DNS resolution breaks for anything
+# run in the Terminal, and something like `npm install` (many registry
+# lookups, each retried with backoff) can look like it "runs forever"
+# rather than failing fast.
 module_terminal_systemd_unit() {
     log_step "Konfigurasi service ttyd (Terminal di Panel)"
 
@@ -270,6 +279,7 @@ Group=${TERMINAL_USER}
 ExecStart=${ttyd_bin} -i 127.0.0.1 -p ${TERMINAL_PORT} -b /terminal -W -O -a ${bwrap_bin} \\
     --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib \\
     --ro-bind-try /lib64 /lib64 --ro-bind /etc /etc \\
+    --ro-bind-try /run/systemd/resolve /run/systemd/resolve \\
     --ro-bind-try ${TERMINAL_NODEAPPS_HOME}/.nvm ${TERMINAL_NODEAPPS_HOME}/.nvm \\
     --bind ${TERMINAL_WWW_BASE} ${TERMINAL_WWW_BASE} --bind ${TERMINAL_NODEAPPS_BASE} ${TERMINAL_NODEAPPS_BASE} \\
     --proc /proc --dev /dev --tmpfs /tmp --chdir ${TERMINAL_WWW_BASE} \\
