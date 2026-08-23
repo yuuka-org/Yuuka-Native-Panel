@@ -854,9 +854,21 @@ $extraBodyHtml = <<<HTML
   var fmCtxRow = null;
 
   document.addEventListener('contextmenu', function (e) {
+    // Only inside the file manager's own area (#fmBrowseRoot) - right-click
+    // elsewhere on the page (sidebar, topbar) is left alone. Within that
+    // area, ALWAYS suppress the browser's native menu (Back/Reload/Save
+    // as/Ask Gemini etc, entirely out of place in an admin panel) even
+    // when the click lands outside a row - on empty list space, the
+    // toolbar, or the path bar - where there's no custom menu to show
+    // instead, so it's a silent no-op rather than falling through to the
+    // browser default.
+    if (!e.target.closest('#fmBrowseRoot')) { return; }
     var row = e.target.closest('.fm-row');
     var menu = document.getElementById('fmContextMenu');
-    if (!row || !menu) { return; }
+    if (!row || !menu) {
+      e.preventDefault();
+      return;
+    }
     e.preventDefault();
     fmCtxRow = {
       relPath: row.getAttribute('data-fm-relpath'),
