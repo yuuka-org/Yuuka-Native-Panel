@@ -407,15 +407,38 @@ module_panel_nginx_vhost() {
     # say https - i.e. genuine direct HTTP access, or Cloudflare in
     # Full/Strict mode (which talks to port 443 directly, so this rarely
     # even fires there). Left empty for the no-cert branch below, which
-    # has nothing to redirect to yet anyway. nginx has no nested 'if',
-    # hence three sequential ones (via an intermediate variable) instead
-    # of one combined condition.
+    # has nothing to redirect to yet anyway.
+    #
+    # The condition itself is computed via TWO 'map' blocks (below,
+    # emitted before the server{} block, http{} context only) rather than
+    # chained 'if's directly inside location / - a first version of this
+    # fix used three sequential 'if's there and it broke the /terminal
+    # clean-URL rewrite on a real deployment: requests to /terminal
+    # started 301-redirecting to /terminal/ (nginx's OWN
+    # add-a-trailing-slash redirect, not this guard - confirmed by the
+    # Location header keeping scheme=http, and by /terminal.php requested
+    # directly working fine), which then round-tripped forever against
+    # location ^~ /terminal/'s own Sec-Fetch-Dest redirect back to
+    # /terminal. Root cause: nginx's rewrite-module 'if' is documented to
+    # interact unpredictably with try_files/named-location fallbacks
+    # (later directives in the same location) once more than one is
+    # stacked up - the notorious "IfIsEvil" nginx wiki gotcha. map{} runs
+    # in an entirely separate phase before location matching even starts,
+    # so it can't touch try_files/rewrite state at all - location / ends
+    # up with exactly one 'if' again, same as before this feature existed.
     local https_redirect_guard=""
+    local panel_https_redirect_maps=""
     if [[ -f "$cert_file" ]]; then
-        https_redirect_guard="        set \$panel_needs_https_redirect 0;
-        if (\$scheme = http) { set \$panel_needs_https_redirect 1; }
-        if (\$http_cf_visitor ~ '\"scheme\":\"https\"') { set \$panel_needs_https_redirect 0; }
-        if (\$panel_needs_https_redirect) { return 301 https://\$host\$request_uri; }
+        https_redirect_guard="        if (\$panel_needs_https_redirect) { return 301 https://\$host\$request_uri; }
+"
+        panel_https_redirect_maps="map \$http_cf_visitor \$panel_cf_visitor_is_https {
+    default 0;
+    '~\"scheme\":\"https\"' 1;
+}
+map \"\$scheme:\$panel_cf_visitor_is_https\" \$panel_needs_https_redirect {
+    default 0;
+    http:0 1;
+}
 "
     fi
 
@@ -517,6 +540,7 @@ EOF
         # ssl_certificate/ssl_protocols directives below are simply
         # inert for the plain port 80 listener - completely standard.
         write_file_if_changed "$conf_file" <<EOF
+${panel_https_redirect_maps}
 server {
     listen 80;
     listen [::]:80;
