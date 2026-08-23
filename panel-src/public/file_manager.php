@@ -858,16 +858,21 @@ $extraBodyHtml = <<<HTML
     // layout wrapper from partials/header.php - filled to viewport height,
     // so this also covers the empty space below a short file list, not
     // just #fmBrowseRoot's own tightly-fitted bounding box) - right-click
-    // in the sidebar/topbar is left alone. Within that area, ALWAYS
-    // suppress the browser's native menu (Back/Reload/Save as/Ask Gemini
-    // etc, entirely out of place in an admin panel) even when the click
-    // lands outside a row - on empty list space, the toolbar, or the path
-    // bar - where there's no custom menu to show instead, so it's a
-    // silent no-op rather than falling through to the browser default.
+    // in the sidebar/topbar is left alone.
     if (!e.target.closest('.app-content')) { return; }
     var row = e.target.closest('.fm-row');
     var menu = document.getElementById('fmContextMenu');
     if (!row || !menu) {
+      // Not on a file/folder row - only redirect genuinely empty space
+      // (list background, toolbar/path-bar padding) to a silent no-op
+      // instead of the browser's native menu (out of place in an admin
+      // panel). Real interactive elements outside a row - the breadcrumb
+      // links, toolbar buttons, the search box - keep the browser's
+      // normal menu (open link in new tab, cut/copy/paste in the search
+      // input, etc.), since there's no custom replacement for any of
+      // that and blanket-suppressing it there was a regression, not a
+      // fix (reported live).
+      if (e.target.closest('a[href], button, input, textarea, select')) { return; }
       e.preventDefault();
       return;
     }
