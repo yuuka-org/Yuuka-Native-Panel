@@ -353,19 +353,38 @@ location ^~ /terminal/ {
     # WebSocket upgrade from an ALREADY-loaded terminal page is never
     # tagged 'document' either, so this only redirects the exact case
     # being worked around here, never breaks the terminal once it's
-    # actually embedded. Deliberately a plain Nginx-level redirect, not a
-    # script injected into ttyd's own response (sub_filter rewriting
-    # ttyd's page + patching window.onbeforeunload via
-    # Object.defineProperty was tried here first - it sent the terminal
-    # into an unrecoverable auto-refresh loop on a real deployment,
-    # apparently confusing ttyd's own reconnect logic, which reads/writes
-    # that same property. Reverted - this redirect never touches ttyd's
-    # page content or JS at all, so it can't interfere with it).
+    # actually embedded. Deliberately a plain Nginx-level redirect (this
+    # part), separate from the sub_filter injection below - keeping them
+    # independent means a problem with one never masks/compounds with a
+    # problem in the other.
     if (\$http_sec_fetch_dest = document) {
         return 302 /terminal;
     }
     auth_request /internal/terminal_auth.php;
     include ${NGINX_SNIPPETS}/proxy-params.conf;
+
+    # Patches ttyd's OWN bundled frontend to stop it ever arming a
+    # 'beforeunload' warning in the first place, by intercepting
+    # addEventListener('beforeunload', ...) calls before ttyd's own
+    # script runs. NOT the same technique as an earlier, reverted attempt
+    # (see git history) that used Object.defineProperty to permanently
+    # lock the window.onbeforeunload PROPERTY, hardcoding its getter to
+    # always return null - that broke ttyd's reconnect logic, which
+    # apparently reads/writes that exact property for its own
+    # bookkeeping, sending the terminal into an unrecoverable
+    # auto-refresh loop. This patch deliberately never touches
+    # .onbeforeunload's read/write behavior at all - it only intercepts
+    # NEW listener registrations for the 'beforeunload' event type via
+    # the OTHER mechanism (addEventListener), which is a fully separate
+    # code path from the property ttyd's reconnect logic depends on.
+    # Accept-Encoding "" forces ttyd to answer uncompressed - sub_filter
+    # operates on the raw response body and can't match text inside a
+    # gzip-compressed stream. sub_filter_once on: only the very first
+    # "<head>" (ttyd's own page shell) should ever match here.
+    proxy_set_header Accept-Encoding "";
+    sub_filter '<head>' '<head><script>(function(){var o=EventTarget.prototype.addEventListener;EventTarget.prototype.addEventListener=function(t,l,p){if(t==="beforeunload"){return;}return o.call(this,t,l,p);};window.onbeforeunload=null;})();</script>';
+    sub_filter_once on;
+
     # No URI part after the host:port (deliberately no trailing slash) -
     # this makes nginx forward the ORIGINAL request URI unchanged
     # (including the /terminal/ prefix). ttyd is started with -b /terminal
