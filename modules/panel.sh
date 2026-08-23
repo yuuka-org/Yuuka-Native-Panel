@@ -385,13 +385,48 @@ module_panel_nginx_vhost() {
         security_entrance_include="    include ${NGINX_SNIPPETS}/includes/security-entrance.conf;"
     fi
 
-    # Shared between the plain-HTTP-only vhost and the HTTPS vhost below -
-    # captured once via command substitution so a literal '$' written here
-    # (backslash-escaped, e.g. \$request_uri) survives as a literal '$' in
-    # the variable's value. Interpolating ${panel_body} into the OUTER
-    # heredoc further down does NOT re-expand it (bash never rescans an
-    # already-substituted variable's contents for more '$...'), so nginx's
-    # own variables stay untouched either way this function branches.
+    # Self-healing SSL detection: this decides both whether the vhost gets
+    # an HTTPS listener at all AND (right below) whether location / needs
+    # the Cloudflare-safe redirect guard - no caller-passed flag to keep in
+    # sync with reality. Mirrors module_panel_sync_ssl_env()'s own check,
+    # so both always agree regardless of call order/timing relative to SSL
+    # issuance (which may succeed on this very run, on a later run, or
+    # never, e.g. tunnel mode where TLS terminates at Cloudflare's edge).
+    local cert_file="/etc/letsencrypt/live/${PANEL_DOMAIN}/fullchain.pem"
+
+    # Cloudflare's "Flexible" SSL mode always connects to the ORIGIN over
+    # plain HTTP, even for a visitor whose own browser reached Cloudflare's
+    # edge over HTTPS - so in that mode, every real request lands on this
+    # vhost's port 80, never 443. A location / that blindly 301'd straight
+    # to https:// (the old behaviour) would bounce that already-secure
+    # visitor right back here as ANOTHER plain-HTTP request: an infinite
+    # loop (ERR_TOO_MANY_REDIRECTS - this is what broke /terminal).
+    # Cloudflare's CF-Visitor header carries the visitor's REAL original
+    # scheme regardless of proxy mode, so only redirect when we're BOTH
+    # (a) on the plain-HTTP listener AND (b) CF-Visitor doesn't already
+    # say https - i.e. genuine direct HTTP access, or Cloudflare in
+    # Full/Strict mode (which talks to port 443 directly, so this rarely
+    # even fires there). Left empty for the no-cert branch below, which
+    # has nothing to redirect to yet anyway. nginx has no nested 'if',
+    # hence three sequential ones (via an intermediate variable) instead
+    # of one combined condition.
+    local https_redirect_guard=""
+    if [[ -f "$cert_file" ]]; then
+        https_redirect_guard="        set \$panel_needs_https_redirect 0;
+        if (\$scheme = http) { set \$panel_needs_https_redirect 1; }
+        if (\$http_cf_visitor ~ '\"scheme\":\"https\"') { set \$panel_needs_https_redirect 0; }
+        if (\$panel_needs_https_redirect) { return 301 https://\$host\$request_uri; }
+"
+    fi
+
+    # Shared between the plain-HTTP-only vhost and the merged HTTP+HTTPS
+    # vhost below - captured once via command substitution so a literal
+    # '$' written here (backslash-escaped, e.g. \$request_uri) survives as
+    # a literal '$' in the variable's value. Interpolating ${panel_body}
+    # into the OUTER heredoc further down does NOT re-expand it (bash
+    # never rescans an already-substituted variable's contents for more
+    # '$...'), so nginx's own variables stay untouched either way this
+    # function branches.
     local panel_body
     panel_body=$(cat <<EOF
     include ${NGINX_SNIPPETS}/cloudflare-realip.conf;
@@ -406,7 +441,7 @@ ${basicauth_include}
     client_max_body_size 512m;
 
     location / {
-        # Extension-less URLs: /nodejs serves nodejs.php directly (no
+${https_redirect_guard}        # Extension-less URLs: /nodejs serves nodejs.php directly (no
         # visible redirect), and any remaining hardcoded ".php" link (old
         # bookmark, an external reference) gets a visible 301 to the clean
         # form instead. \$request_uri (unlike \$uri) reflects what the
@@ -473,18 +508,18 @@ ${security_entrance_include}
 EOF
 )
 
-    # Self-healing SSL detection: this function alone decides whether the
-    # vhost gets an HTTPS server block, purely from whether a cert already
-    # exists on disk for PANEL_DOMAIN - no caller-passed flag to keep in
-    # sync with reality. Mirrors module_panel_sync_ssl_env()'s own check,
-    # so both always agree regardless of call order/timing relative to SSL
-    # issuance (which may succeed on this very run, on a later run, or
-    # never, e.g. tunnel mode where TLS terminates at Cloudflare's edge).
-    local cert_file="/etc/letsencrypt/live/${PANEL_DOMAIN}/fullchain.pem"
-
     if [[ -f "$cert_file" ]]; then
+        # ONE server block for both ports (not a separate 80-only
+        # redirect block like before) - required so this vhost has real
+        # content to serve on port 80 too, for when the guard above
+        # decides NOT to redirect (Cloudflare Flexible mode). nginx only
+        # performs the TLS handshake on listeners flagged 'ssl', so the
+        # ssl_certificate/ssl_protocols directives below are simply
+        # inert for the plain port 80 listener - completely standard.
         write_file_if_changed "$conf_file" <<EOF
 server {
+    listen 80;
+    listen [::]:80;
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
     server_name ${PANEL_DOMAIN};
@@ -494,17 +529,8 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
 
-${panel_body}
-}
-
-server {
-    listen 80;
-    listen [::]:80;
-    server_name ${PANEL_DOMAIN};
     include ${NGINX_SNIPPETS}/acme-challenge.conf;
-    location / {
-        return 301 https://\$host\$request_uri;
-    }
+${panel_body}
 }
 EOF
     else
