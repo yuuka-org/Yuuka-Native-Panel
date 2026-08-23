@@ -35,11 +35,31 @@ include __DIR__ . '/partials/header.php';
 // the terminal into an unrecoverable auto-refresh loop on a real
 // deployment. Just keep re-nulling it with a plain assignment on an
 // interval instead - gentler, never stops ttyd from reading/writing it
-// normally between resets, and in practice still wins the race against
-// the one moment (an actual tab-close/navigation attempt) that matters.
+// normally between resets.
+//
+// The interval alone still loses a real race: clicking a sidebar link
+// navigates immediately, and if that click lands in the gap between two
+// interval ticks, ttyd's handler is still armed and the browser's native
+// "Leave site?" prompt fires anyway (reported live - happening on
+// ordinary in-panel navigation, not just tab-close). A capturing click
+// listener on the whole document closes that gap for the dominant case
+// (any in-panel link/button click) by nulling the handler SYNCHRONOUSLY
+// before the browser even starts processing the navigation - zero race
+// window, and exactly the same safe (non-locking) null-out the interval
+// already does, so it can't reintroduce the reconnect-breaking bug
+// above. The interval stays as a fallback for navigations a click
+// listener can't see (typed URL, browser back/forward, tab close, page
+// refresh).
 (function () {
   var frame = document.getElementById('terminalFrame');
   if (!frame) { return; }
+
+  function clearBeforeUnload() {
+    try { frame.contentWindow.onbeforeunload = null; } catch (e) {}
+  }
+
+  document.addEventListener('click', clearBeforeUnload, true);
+
   frame.addEventListener('load', function () {
     // No cutoff - ttyd re-attaches onbeforeunload on its own (WebSocket
     // (re)connects, etc), and a real terminal session is routinely open
@@ -49,9 +69,8 @@ include __DIR__ . '/partials/header.php';
     // rest of it. Keep re-nulling for as long as this panel page/iframe
     // is open - a plain property assignment every 250ms is cheap enough
     // to just never stop.
-    setInterval(function () {
-      try { frame.contentWindow.onbeforeunload = null; } catch (e) {}
-    }, 250);
+    clearBeforeUnload();
+    setInterval(clearBeforeUnload, 250);
   });
 })();
 </script>
