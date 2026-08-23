@@ -863,17 +863,24 @@ $extraBodyHtml = <<<HTML
     var row = e.target.closest('.fm-row');
     var menu = document.getElementById('fmContextMenu');
     if (!row || !menu) {
-      // Not on a file/folder row - only redirect genuinely empty space
-      // (list background, toolbar/path-bar padding) to a silent no-op
-      // instead of the browser's native menu (out of place in an admin
-      // panel). Real interactive elements outside a row - the breadcrumb
-      // links, toolbar buttons, the search box - keep the browser's
-      // normal menu (open link in new tab, cut/copy/paste in the search
-      // input, etc.), since there's no custom replacement for any of
-      // that and blanket-suppressing it there was a regression, not a
-      // fix (reported live).
+      // Not on a file/folder row - real interactive elements outside a
+      // row (breadcrumb links, toolbar buttons, the search box) keep the
+      // browser's normal menu (open link in new tab, cut/copy/paste in
+      // the search input, etc.), since there's no custom replacement for
+      // any of that. Genuinely empty space (list background, toolbar/
+      // path-bar padding) gets a menu of its own instead - Upload/Folder
+      // Baru/File Baru/Tempel/Refresh, the same actions already
+      // available from the toolbar buttons just above, so this is a
+      // shortcut to them rather than new functionality.
       if (e.target.closest('a[href], button, input, textarea, select')) { return; }
+      var emptyMenu = document.getElementById('fmEmptyContextMenu');
+      if (!emptyMenu) { e.preventDefault(); return; }
       e.preventDefault();
+      var emptyMenuWidth = 220;
+      var ex = Math.min(e.clientX, window.innerWidth - emptyMenuWidth - 8);
+      emptyMenu.style.display = 'block';
+      emptyMenu.style.left = Math.max(ex, 8) + 'px';
+      emptyMenu.style.top = e.clientY + 'px';
       return;
     }
     e.preventDefault();
@@ -898,11 +905,40 @@ $extraBodyHtml = <<<HTML
     if (menu && menu.style.display !== 'none' && !e.target.closest('#fmContextMenu')) {
       menu.style.display = 'none';
     }
+    var emptyMenu = document.getElementById('fmEmptyContextMenu');
+    if (emptyMenu && emptyMenu.style.display !== 'none' && !e.target.closest('#fmEmptyContextMenu')) {
+      emptyMenu.style.display = 'none';
+    }
   });
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') { return; }
     var menu = document.getElementById('fmContextMenu');
     if (menu) { menu.style.display = 'none'; }
+    var emptyMenu = document.getElementById('fmEmptyContextMenu');
+    if (emptyMenu) { emptyMenu.style.display = 'none'; }
+  });
+
+  document.addEventListener('click', function (e) {
+    var item = e.target.closest('[data-fm-empty-ctx]');
+    if (!item) { return; }
+    var action = item.getAttribute('data-fm-empty-ctx');
+    var emptyMenu = document.getElementById('fmEmptyContextMenu');
+    if (emptyMenu) { emptyMenu.style.display = 'none'; }
+
+    if (action === 'upload') {
+      var uploadEl = document.getElementById('uploadModal');
+      if (uploadEl && typeof bootstrap !== 'undefined') { bootstrap.Modal.getOrCreateInstance(uploadEl).show(); }
+    } else if (action === 'mkdir') {
+      var mkdirEl = document.getElementById('mkdirModal');
+      if (mkdirEl && typeof bootstrap !== 'undefined') { bootstrap.Modal.getOrCreateInstance(mkdirEl).show(); }
+    } else if (action === 'newfile') {
+      var newFileEl = document.getElementById('newFileModal');
+      if (newFileEl && typeof bootstrap !== 'undefined') { bootstrap.Modal.getOrCreateInstance(newFileEl).show(); }
+    } else if (action === 'paste') {
+      window.fmSetBulkAction('paste_clipboard');
+    } else if (action === 'refresh') {
+      window.fmNavigateBrowse(window.location.pathname + '?scope={$scope}&name={$name}&path=' + encodeURIComponent(fmCurrentPath()));
+    }
   });
 
   document.addEventListener('click', function (e) {

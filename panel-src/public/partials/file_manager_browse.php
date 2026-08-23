@@ -348,3 +348,16 @@ declare(strict_types=1);
   <button type="button" class="dropdown-item text-danger" data-fm-ctx="delete"><i class="bi bi-trash me-2"></i>Hapus</button>
   <?php endif; ?>
 </div>
+
+<div class="dropdown-menu" id="fmEmptyContextMenu" style="display:none; position:fixed;">
+  <?php if ($canManage): ?>
+  <button type="button" class="dropdown-item" data-fm-empty-ctx="upload"><i class="bi bi-upload me-2"></i>Upload File</button>
+  <button type="button" class="dropdown-item" data-fm-empty-ctx="mkdir"><i class="bi bi-folder-plus me-2"></i>Folder Baru</button>
+  <button type="button" class="dropdown-item" data-fm-empty-ctx="newfile"><i class="bi bi-file-earmark-plus me-2"></i>File Baru</button>
+  <?php if (is_array($clipboard) && $clipboardFamilyMatches): ?>
+  <button type="button" class="dropdown-item" data-fm-empty-ctx="paste"><i class="bi bi-clipboard me-2"></i>Tempel di Sini</button>
+  <?php endif; ?>
+  <div class="dropdown-divider"></div>
+  <?php endif; ?>
+  <button type="button" class="dropdown-item" data-fm-empty-ctx="refresh"><i class="bi bi-arrow-clockwise me-2"></i>Refresh</button>
+</div>
