@@ -320,6 +320,28 @@ location = /internal/terminal_auth.php {
     fastcgi_param SCRIPT_FILENAME ${PANEL_ROOT}/public/internal/terminal_auth.php;
 }
 
+location = /terminal {
+    # Exact-match location ('location =', nginx's HIGHEST-priority match -
+    # beats even '^~' below) for the PHP page's own clean URL. Required
+    # to exist explicitly - without it, a bare request for exactly
+    # "/terminal" (no trailing slash) never reaches location / at all:
+    # nginx's core module auto-redirects ANY request that exactly equals
+    # a declared prefix location's name minus its trailing slash (here,
+    # "/terminal/" two lines down) straight to that slash-appended form -
+    # purely at the location-matching phase, with zero filesystem access
+    # and zero involvement of location /'s own try_files/rewrite logic
+    # (confirmed via strace on a real deployment: no stat()/openat() at
+    # all for this exact request). That 301 then lands on
+    # "/terminal/" below, whose own Sec-Fetch-Dest check 302s a real
+    # top-level navigation straight back to "/terminal" - an infinite
+    # loop (ERR_TOO_MANY_REDIRECTS) entirely independent of HTTPS/
+    # Cloudflare, caused purely by these two locations sharing the same
+    # name up to a trailing slash. rewrite ... last hands off to the
+    # exact same terminal.php the panel's own clean-URL routing
+    # (modules/panel.sh's @clean_url) would have reached anyway.
+    rewrite ^ /terminal.php last;
+}
+
 location ^~ /terminal/ {
     # A direct top-level browser navigation to this raw ttyd endpoint
     # (bookmarked, typed manually, opened via right-click "open frame in
