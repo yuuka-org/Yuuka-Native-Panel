@@ -277,7 +277,20 @@ CONF;
     return $ssl ? $mainBlock . "\n\n" . nginx_http_redirect_block($domain) : $mainBlock;
 }
 
-function nginx_build_nodejs_proxy_config(string $domain, int $port, bool $sslEnabled = false): string
+/**
+ * $proxyProfile (nodejs_apps.proxy_profile, see migration 2026101900):
+ *   'default'   - snippets/proxy-params.conf apa adanya (perilaku lama).
+ *   'streaming' - untuk AI gateway (9Router, App Installer): respons
+ *                 di-stream token demi token selama bermenit-menit dan
+ *                 request membawa konteks percakapan besar (sering >1 MB,
+ *                 batas default Nginx). proxy_buffering off supaya tiap
+ *                 chunk langsung diteruskan ke klien, timeout 15 menit,
+ *                 body 100 MB. Header proxy ditulis inline (BUKAN include
+ *                 proxy-params.conf + override) karena proxy_read_timeout/
+ *                 proxy_send_timeout tidak boleh muncul dua kali di satu
+ *                 context - nginx -t akan menolak "directive is duplicate".
+ */
+function nginx_build_nodejs_proxy_config(string $domain, int $port, bool $sslEnabled = false, string $proxyProfile = 'default'): string
 {
     $listen = $sslEnabled
         ? "    listen 443 ssl http2;\n    listen [::]:443 ssl http2;"
@@ -286,18 +299,39 @@ function nginx_build_nodejs_proxy_config(string $domain, int $port, bool $sslEna
     $sslDirectives = $sslEnabled ? nginx_ssl_cert_directives($domain) . "\n" : '';
     $logSuffix = $sslEnabled ? '-ssl' : '';
 
+    if ($proxyProfile === 'streaming') {
+        $bodyLimit = "    client_max_body_size 100m;\n";
+        $proxyDirectives = <<<CONF
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 900s;
+        proxy_send_timeout 900s;
+CONF;
+    } else {
+        $bodyLimit = '';
+        $proxyDirectives = '        include snippets/proxy-params.conf;';
+    }
+
     $mainBlock = <<<CONF
 server {
 {$listen}
     server_name {$domain};
 {$acmeInclude}{$sslDirectives}    include snippets/cloudflare-realip.conf;
-
+{$bodyLimit}
     access_log /var/log/nginx/{$domain}{$logSuffix}-access.log;
     error_log  /var/log/nginx/{$domain}{$logSuffix}-error.log;
 
     location / {
         proxy_pass http://127.0.0.1:{$port};
-        include snippets/proxy-params.conf;
+{$proxyDirectives}
     }
 
     include snippets/security-headers.conf;

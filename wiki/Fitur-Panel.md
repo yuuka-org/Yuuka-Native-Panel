@@ -11,6 +11,7 @@ akses):
 | Dashboard | `dashboard.php` | `monitoring.view` | `SystemService` |
 | Website PHP | `websites.php` | `website.view` | `NginxService` |
 | Node.js Apps | `nodejs.php` | `nodejs.view` | `NodeService`, `EnvService`, `HealthCheckService` |
+| App Installer | `app_installer.php` | `apps.view` (instal/update: `apps.install`) | `AppInstallerService`, `NineRouterInstallerService`, `AppCatalog` |
 | File Manager | `file_manager.php` | `files.view` (tulis: `files.manage`) | `FileManagerService` |
 | Database | `databases.php` | `database.view` | `DatabaseService` |
 | Domain | `domains.php` | `domain.manage` | `DomainService`, `SSLService` |
@@ -405,6 +406,82 @@ command line). Status: `healthy` / `unhealthy` / `timeout` /
 (`runDueChecks()` — hanya menjalankan yang sudah lewat interval-nya).
 Murni informasional; **PM2 tetap satu-satunya sumber kebenaran** untuk
 apakah proses benar-benar hidup.
+
+## App Installer
+
+Katalog aplikasi siap pakai (`AppCatalog`, data saja) - satu form
+membuat domain baru + memasang aplikasinya. Dua jenis runtime:
+
+- **PHP** (WordPress, Joomla, Drupal, phpBB, Custom ZIP) -
+  `AppInstallerService::installApp()`: website PHP baru + database
+  (opsional) + ekstrak source ke `public/`.
+- **Node.js** (`'runtime' => 'nodejs'` di katalog, saat ini: **9Router**) -
+  `NineRouterInstallerService`: hasilnya app Node.js biasa di menu
+  Node.js Apps, jadi Start/Stop/Logs/Env/Domain & SSL/Backup langsung
+  tersedia tanpa kode khusus.
+
+Semua instalasi dicatat di tabel `installed_apps` (lihat
+[Skema Database](Skema-Database.md)) dan memakai pola saga: kalau satu
+langkah gagal, langkah yang sudah jalan di-undo terbalik sehingga tidak
+ada website/app/folder yatim.
+
+### 9Router (AI gateway)
+
+[9Router](https://github.com/decolua/9router) (npm `9router`, Next.js)
+menyediakan satu endpoint OpenAI-compatible (`/v1`) untuk Claude Code,
+Codex, Cursor, Cline dkk dengan fallback otomatis antar provider/akun.
+
+Alur instal (`NineRouterInstallerService::install()`):
+
+1. `panel-exec.sh ninerouter-install <app> 22 <versi|latest> fresh` -
+   `npm install 9router@<versi>` sebagai dependency **lokal** di
+   `/home/nodeapps/apps/<app>` (user `nodeapps`, Node.js 22 via nvm,
+   `--ignore-scripts`), lalu memasang runtime SQLite (better-sqlite3) ke
+   `<app>/data/runtime` dengan `DATA_DIR` yang benar. Postinstall paket
+   sengaja dilewati: ia memasang runtime ke `~/.9router` (salah tempat)
+   dan systray2 (ikon tray desktop, tidak berguna di server). Kalau
+   better-sqlite3 gagal terpasang, 9Router otomatis fallback ke
+   `node:sqlite`/sql.js.
+2. `NodeService::createApp()` - script PM2
+   `node_modules/9router/app/custom-server.js` (port lokal otomatis
+   3000-3999, `max_memory_restart` 1G) dan env:
+   `HOSTNAME=127.0.0.1` (port tidak terbuka ke publik, satu-satunya
+   jalan masuk lewat Nginx), `DATA_DIR=<app>/data`, `NODE_PATH`,
+   `BASE_URL`, serta `INITIAL_PASSWORD`/`JWT_SECRET`/`API_KEY_SECRET`/
+   `MACHINE_ID_SALT` acak (tersimpan terenkripsi di tab Env).
+3. Vhost dengan `proxy_profile = 'streaming'`: `proxy_buffering off`,
+   `proxy_request_buffering off`, timeout 900 detik,
+   `client_max_body_size 100m` - respons AI di-stream token demi token
+   selama bermenit-menit dan request membawa konteks percakapan besar
+   (batas default Nginx 1 MB). Profil ini tersimpan di
+   `nodejs_apps.proxy_profile` sehingga tetap dipakai saat SSL diaktifkan
+   atau domain ditambah belakangan.
+
+**CLI bawaan paket (`9router`) sengaja tidak dipakai**: CLI itu menu TUI
+interaktif dan sebelum start membunuh (`kill -9`) semua proses di server
+yang command line-nya mengandung `next-server` - termasuk app Next.js
+pelanggan lain yang berjalan di bawah user `nodeapps` yang sama.
+
+Setelah instal, flash menampilkan **password dashboard awal sekali**
+(tetap bisa dilihat lagi di Node.js Apps > Env sebagai `INITIAL_PASSWORD`
+sampai admin menggantinya dari dashboard 9Router). Langkah lanjutan yang
+disarankan: aktifkan SSL untuk domainnya, lalu di dashboard 9Router
+aktifkan **Require API key** dan buat API key - tanpa itu endpoint `/v1`
+bisa dipakai siapa saja yang tahu domainnya. Cookie login otomatis
+`Secure` begitu diakses via HTTPS (9Router membaca `X-Forwarded-Proto`
+dari Nginx), jadi tidak perlu mengubah env apa pun setelah SSL aktif.
+
+Tombol **Update** di tabel Aplikasi Terinstall: stop -> `npm install
+9router@latest` (mode `update`, folder `data/` tidak disentuh) -> start.
+App selalu dijalankan lagi walau update gagal. Hapus 9Router lewat
+Node.js Apps > Hapus (catatan `installed_apps` ikut terhapus via FK
+`ON DELETE CASCADE`).
+
+Instalasi berjalan sinkron di dalam request (sama seperti build command
+Node.js biasa) - normalnya 30-90 detik. Di VPS yang sangat lambat bisa
+melewati `fastcgi_read_timeout` panel (120 detik): browser menampilkan
+504, tapi proses di server tetap selesai - muat ulang App Installer
+setelah 1-2 menit untuk melihat hasilnya.
 
 ## File Manager
 

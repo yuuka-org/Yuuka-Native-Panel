@@ -35,6 +35,7 @@ Setiap pemanggilan (sukses maupun ditolak) dicatat ke
 | `pm2-logs-read-archive` | `<app>` `<file>` `[lines]` | – | Baca satu file log arsip tertentu milik app itu |
 | `pm2-flush` | `<app>` | – | Bersihkan log PM2 aplikasi (file log live) |
 | `pm2-save` | – | – | `pm2 save` |
+| `ninerouter-install` | `<app>` `<node_version>` `<versi\|latest>` `<fresh\|update>` | – | App Installer 9Router: `npm install --save-exact --omit=dev --ignore-scripts 9router@<versi>` sebagai `nodeapps` (`nvm use <node_version>`, gagal keras kalau versi itu tidak ada) di `/home/nodeapps/apps/<app>`, lalu runtime SQLite ke `<app>/data/runtime` (best-effort). `fresh` menolak folder yang sudah ada & tidak kosong, dan menghapus folder yang baru dibuatnya sendiri kalau npm gagal; `update` menolak folder tanpa `node_modules/9router` dan tidak pernah menghapus apa pun. Output diakhiri baris `SQLITE_RUNTIME=...` dan `VERSION=<x.y.z>` |
 | `certbot-issue` | `<domain>` `<email>` `<key_type: rsa\|ecdsa>` | – | `certbot certonly --webroot --key-type ...` - hanya menerbitkan berkas sertifikat, TIDAK menyentuh Nginx. `key_type` default `rsa` di `SSLService::issueForDomain()` (kompatibilitas lebih luas - trust store beberapa CDN/proxy kadang belum mengenali chain ECDSA terbaru Let's Encrypt). `SSLService::issueForDomain()` yang menerapkan blok 443-nya setelah ini sukses (lihat `applySslForDomain()` di `NginxService`/`NodeService`) |
 | `certbot-remove` | `<domain>` | – | `certbot delete --cert-name`; kalau domain tidak dikenal certbot (mis. sertifikat manual upload), fallback ke `rm -rf` langsung berkas di `/etc/letsencrypt/live/<domain>/` supaya Remove SSL tetap berhasil apa pun asal sertifikatnya |
 | `panel-ssl-issue` | `<email>` | – | SSL untuk domain PANEL sendiri (Settings > SSL Panel) - domain diambil dari vhost panel yang sudah ada di disk, BUKAN dari argumen caller. Setelah certbot sukses, otomatis jalankan `yp repair panel` supaya vhost dapat blok `listen 443` + `.env` ikut sinkron (`SESSION_SECURE_COOKIE`/`APP_URL`) - lihat `wiki/Troubleshooting.md` |
@@ -113,7 +114,8 @@ Semua argumen dicocokkan ke salah satu regex tetap sebelum dipakai
 | `RE_CRONID` | `^panel-[0-9]+$` | ID file cron |
 | `RE_CHMOD_MODE` | `^[0-7][0-7][0-7]$` | Mode chmod File Manager — digit terakhir (other) tidak boleh 2/3/6/7 (bit tulis) |
 | `RE_FM_SCOPE` | `^(website\|nodeapp\|www\|nodeapps)$` | Scope File Manager |
-| `RE_NODE_VERSION` | `^[0-9]{1,3}$` | Versi Node.js untuk `nvm use` di `pm2-deploy` |
+| `RE_NODE_VERSION` | `^[0-9]{1,3}$` | Versi Node.js untuk `nvm use` di `pm2-deploy` & `ninerouter-install` |
+| `RE_NINEROUTER_VERSION` | `^(latest\|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,4})$` | Versi paket npm `9router` (`ninerouter-install`) - diinterpolasi ke `npm install '9router@<versi>'`, charset-nya tidak bisa keluar dari kutip tunggal |
 | `RE_BUILD_COMMAND` | `^[a-zA-Z0-9_./ -]{1,255}$` | Build command Node.js app — charset sengaja tidak mengizinkan karakter shell sama sekali (titik koma, pipe, ampersand, backtick, `$()`, kurung kurawal, `<>`), walau tetap diinterpolasi ke dalam string `bash -lc "..."` di `as_nodeapps()` |
 | `RE_GIT_URL` | `^https://[a-zA-Z0-9._~:/?#@!$&*+,;=%-]{1,200}$` | URL repo Git (HTTPS saja — tidak ada dukungan `git@host:path` SSH) |
 | `RE_GIT_BRANCH` | `^[a-zA-Z0-9._/-]{1,200}$` | Nama branch Git |

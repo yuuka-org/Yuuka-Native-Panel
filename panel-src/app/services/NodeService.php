@@ -5,6 +5,8 @@ final class NodeService
 {
     private const ALLOWED_NODE_VERSIONS = ['18', '20', '22'];
     private const ALLOWED_EXEC_MODES = ['fork', 'cluster'];
+    /** See nginx_build_nodejs_proxy_config() - 'streaming' is what App Installer's 9Router uses. */
+    private const ALLOWED_PROXY_PROFILES = ['default', 'streaming'];
 
     public static function allowedNodeVersions(): array
     {
@@ -115,7 +117,8 @@ final class NodeService
         string $maxMemoryRestart,
         string $nodeEnv,
         array $env,
-        ?int $userId
+        ?int $userId,
+        string $proxyProfile = 'default'
     ): array {
         if (!Validator::appName($appName)) {
             throw new InvalidArgumentException('Nama aplikasi tidak valid (huruf, angka, - dan _ saja)');
@@ -143,6 +146,9 @@ final class NodeService
         }
         if ($instances < 1 || $instances > 32) {
             throw new InvalidArgumentException('Instances harus 1-32');
+        }
+        if (!in_array($proxyProfile, self::ALLOWED_PROXY_PROFILES, true)) {
+            throw new InvalidArgumentException('Profil proxy tidak valid');
         }
         if (!self::isPortAvailable($port)) {
             throw new InvalidArgumentException("Port {$port} sudah digunakan aplikasi lain");
@@ -181,17 +187,18 @@ final class NodeService
         $stmt = $pdo->prepare(
             'INSERT INTO nodejs_apps
                 (app_name, pm2_name, domain, project_path, node_version, port, start_command, build_command,
-                 instances, exec_mode, autorestart, watch, max_memory_restart, node_env, is_managed, created_by)
+                 instances, exec_mode, autorestart, watch, max_memory_restart, node_env, proxy_profile, is_managed, created_by)
              VALUES
                 (:app_name, :pm2_name, :domain, :project_path, :node_version, :port, :start_command, :build_command,
-                 :instances, :exec_mode, :autorestart, :watch, :max_mem, :node_env, 1, :uid)'
+                 :instances, :exec_mode, :autorestart, :watch, :max_mem, :node_env, :proxy_profile, 1, :uid)'
         );
         $stmt->execute([
             'app_name' => $appName, 'pm2_name' => $pm2Name, 'domain' => $domain ?: null,
             'project_path' => $cwd, 'node_version' => $nodeVersion, 'port' => $port,
             'start_command' => $startCommand, 'build_command' => $buildCommand ?: null,
             'instances' => $instances, 'exec_mode' => $execMode, 'autorestart' => $autorestart ? 1 : 0,
-            'watch' => $watch ? 1 : 0, 'max_mem' => $maxMemoryRestart, 'node_env' => $nodeEnv, 'uid' => $userId,
+            'watch' => $watch ? 1 : 0, 'max_mem' => $maxMemoryRestart, 'node_env' => $nodeEnv,
+            'proxy_profile' => $proxyProfile, 'uid' => $userId,
         ]);
         $id = (int) $pdo->lastInsertId();
 
@@ -204,7 +211,7 @@ final class NodeService
 
         if ($domain !== '') {
             $siteName = "node-{$domain}";
-            $config = nginx_build_nodejs_proxy_config($domain, $port);
+            $config = nginx_build_nodejs_proxy_config($domain, $port, false, $proxyProfile);
             $write = nginx_write_config($siteName, $config);
             if ($write['ok']) {
                 nginx_enable_site($siteName);
@@ -332,7 +339,7 @@ final class NodeService
         }
 
         $siteName = "node-{$domain}";
-        $config = nginx_build_nodejs_proxy_config($domain, (int) $app['port']);
+        $config = nginx_build_nodejs_proxy_config($domain, (int) $app['port'], false, self::proxyProfileOf($app));
         $write = nginx_write_config($siteName, $config);
         if (!$write['ok']) {
             throw new RuntimeException('Gagal menulis konfigurasi Nginx: ' . $write['output']);
@@ -403,7 +410,7 @@ final class NodeService
         }
 
         $siteName = "node-{$domain}";
-        $config = nginx_build_nodejs_proxy_config($domain, (int) $app['port'], $sslEnabled);
+        $config = nginx_build_nodejs_proxy_config($domain, (int) $app['port'], $sslEnabled, self::proxyProfileOf($app));
         $write = nginx_write_config($siteName, $config);
         if (!$write['ok']) {
             throw new RuntimeException('Konfigurasi Nginx tidak valid: ' . $write['output']);
@@ -412,6 +419,19 @@ final class NodeService
         if (!$enable['ok']) {
             throw new RuntimeException('Gagal mengaktifkan situs: ' . $enable['output']);
         }
+    }
+
+    /**
+     * Falls back to 'default' for a row read before migration 2026101900
+     * added the column (or any unexpected value) - never lets an unknown
+     * string reach the Nginx config builder.
+     *
+     * @param array<string,mixed> $app
+     */
+    private static function proxyProfileOf(array $app): string
+    {
+        $profile = (string) ($app['proxy_profile'] ?? 'default');
+        return in_array($profile, self::ALLOWED_PROXY_PROFILES, true) ? $profile : 'default';
     }
 
     public static function controlApp(int $id, string $action, ?int $userId): void

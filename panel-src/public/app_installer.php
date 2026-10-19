@@ -11,7 +11,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = (string) ($_POST['action'] ?? '');
 
     try {
-        if ($action === 'install') {
+        if ($action === 'install' && AppCatalog::exists((string) ($_POST['app_slug'] ?? ''))
+            && AppCatalog::runtime((string) $_POST['app_slug']) === 'nodejs') {
+            Rbac::require('apps.install');
+
+            $result = NineRouterInstallerService::install(
+                (string) ($_POST['node_app_name'] ?? ''),
+                (string) ($_POST['domain'] ?? ''),
+                trim((string) ($_POST['app_version'] ?? '')) ?: null,
+                $user['id']
+            );
+
+            // Shown exactly once here - afterwards only retrievable from
+            // Node.js Apps > Env (INITIAL_PASSWORD, stored encrypted), and
+            // irrelevant anyway once the admin sets their own password
+            // inside the 9Router dashboard.
+            flash('success',
+                "9Router" . ($result['version'] !== null ? " v{$result['version']}" : '') . " berhasil diinstal ke {$result['domain']}"
+                . " (app Node.js \"{$result['app_name']}\", port lokal {$result['port']})."
+                . " Dashboard: http://{$result['domain']}/dashboard - password awal: {$result['initial_password']}"
+                . " (catat sekarang; tersimpan juga di Node.js Apps > Env sebagai INITIAL_PASSWORD, ganti dari dashboard setelah login)."
+                . " Endpoint API untuk Claude Code/Cursor/dll: http://{$result['domain']}/v1."
+            );
+            flash('warning',
+                "Langkah lanjutan 9Router: (1) aktifkan SSL untuk {$result['domain']} di Node.js Apps > Domain & SSL,"
+                . " (2) di dashboard 9Router aktifkan opsi \"Require API key\" lalu buat API key -"
+                . " tanpa itu endpoint /v1 bisa dipakai siapa saja yang tahu domainnya."
+            );
+        } elseif ($action === 'install') {
             Rbac::require('apps.install');
 
             $appSlug = (string) ($_POST['app_slug'] ?? '');
@@ -53,6 +80,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     . " - lanjutkan instalasi lewat web installer bawaan aplikasi.";
             }
             flash('success', $msg);
+        } elseif ($action === 'update_9router') {
+            Rbac::require('apps.install');
+
+            $newVersion = NineRouterInstallerService::update((int) ($_POST['nodejs_app_id'] ?? 0), null, $user['id']);
+            flash('success', '9Router berhasil diupdate' . ($newVersion !== null ? " ke v{$newVersion}" : '') . ' dan dijalankan ulang. Data provider, API key & riwayat pemakaian tidak berubah.');
         }
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
@@ -82,7 +114,7 @@ include __DIR__ . '/partials/header.php';
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
     <h4 class="fw-bold mb-0">App Installer</h4>
-    <p class="text-muted mb-0">Instal aplikasi PHP siap pakai ke website baru dengan satu form</p>
+    <p class="text-muted mb-0">Instal aplikasi siap pakai (PHP &amp; Node.js) ke domain baru dengan satu form</p>
   </div>
 </div>
 
@@ -96,9 +128,12 @@ include __DIR__ . '/partials/header.php';
           <div>
             <div class="fw-semibold"><?= e($app['name']) ?></div>
             <span class="badge <?= e($tierBadge[$app['tier']]) ?>"><?= e($tierLabel[$app['tier']]) ?></span>
+            <?php if (AppCatalog::runtime($slug) === 'nodejs'): ?>
+              <span class="badge text-bg-dark">Node.js <?= e($app['node_version']) ?></span>
+            <?php endif; ?>
             <?php if (!empty($app['versions'])): ?>
               <span class="text-muted small"><?= count($app['versions']) > 1 ? 'Pilih versi saat instal' : 'v' . e($app['versions'][0]['version']) ?></span>
-            <?php elseif ($slug === 'wordpress'): ?>
+            <?php elseif ($slug === 'wordpress' || AppCatalog::runtime($slug) === 'nodejs'): ?>
               <span class="text-muted small">Otomatis versi terbaru</span>
             <?php endif; ?>
           </div>
@@ -110,10 +145,12 @@ include __DIR__ . '/partials/header.php';
                 data-slug="<?= e($slug) ?>"
                 data-name="<?= e($app['name']) ?>"
                 data-tier="<?= e($app['tier']) ?>"
+                data-runtime="<?= e(AppCatalog::runtime($slug)) ?>"
                 data-requires-db="<?= $app['requires_database'] ? '1' : '0' ?>"
                 data-versions="<?= e(json_encode($app['versions'] ?? [])) ?>"
                 data-php-min="<?= e($app['php_min'] ?? '') ?>"
-                data-php-max="<?= e($app['php_max'] ?? '') ?>">
+                data-php-max="<?= e($app['php_max'] ?? '') ?>"
+                data-node-version="<?= e($app['node_version'] ?? '') ?>">
           <i class="bi bi-download me-1"></i>Instal
         </button>
         <?php endif; ?>
@@ -129,25 +166,53 @@ include __DIR__ . '/partials/header.php';
     <div class="table-responsive">
       <table class="table table-hover mb-0 align-middle">
         <thead class="table-light">
-          <tr><th>Domain</th><th>Aplikasi</th><th>Versi</th><th>Database</th><th>Diinstal</th></tr>
+          <tr><th>Domain</th><th>Aplikasi</th><th>Versi</th><th>Database</th><th>Diinstal</th><th class="text-end">Aksi</th></tr>
         </thead>
         <tbody>
         <?php if (empty($installedApps)): ?>
-          <tr><td colspan="5" class="text-center text-muted py-4">Belum ada aplikasi terinstall</td></tr>
+          <tr><td colspan="6" class="text-center text-muted py-4">Belum ada aplikasi terinstall</td></tr>
         <?php endif; ?>
         <?php foreach ($installedApps as $row): ?>
+          <?php
+            $scheme = (int) $row['ssl_enabled'] === 1 ? 'https' : 'http';
+            $isNineRouter = $row['app_slug'] === NineRouterInstallerService::APP_SLUG && $row['nodejs_app_id'] !== null;
+          ?>
           <tr>
-            <td><a href="http://<?= e($row['domain']) ?>" target="_blank" rel="noopener"><?= e($row['domain']) ?></a></td>
-            <td><?= e(AppCatalog::get($row['app_slug'])['name'] ?? $row['app_slug']) ?></td>
+            <td>
+              <?php if ($row['domain'] !== null): ?>
+                <a href="<?= e($scheme) ?>://<?= e($row['domain']) ?><?= $isNineRouter ? '/dashboard' : '' ?>" target="_blank" rel="noopener"><?= e($row['domain']) ?></a>
+              <?php else: ?>
+                <span class="text-muted">-</span>
+              <?php endif; ?>
+            </td>
+            <td>
+              <?= e(AppCatalog::get($row['app_slug'])['name'] ?? $row['app_slug']) ?>
+              <?php if ($row['nodejs_app_id'] !== null): ?>
+                <div class="text-muted small">Node.js: <?= e($row['nodejs_app_name'] ?? '') ?></div>
+              <?php endif; ?>
+            </td>
             <td><?= e($row['app_version'] ?? '-') ?></td>
             <td><?= e($row['db_name'] ?? '-') ?></td>
             <td class="text-muted small"><?= e($row['installed_at']) ?></td>
+            <td class="text-end text-nowrap">
+              <?php if ($row['nodejs_app_id'] !== null && Rbac::can($user['role'], 'nodejs.view')): ?>
+                <a href="/nodejs_settings?id=<?= (int) $row['nodejs_app_id'] ?>" class="btn btn-sm btn-outline-secondary" title="Kelola di Node.js Apps"><i class="bi bi-gear"></i></a>
+              <?php endif; ?>
+              <?php if ($isNineRouter && Rbac::can($user['role'], 'apps.install')): ?>
+                <form method="post" class="d-inline" data-confirm="Update 9Router ke versi terbaru dari npm? Aplikasi berhenti sebentar (biasanya kurang dari 1 menit) selama update. Data provider, API key &amp; riwayat pemakaian tidak berubah.">
+                  <?= Csrf::field() ?>
+                  <input type="hidden" name="action" value="update_9router">
+                  <input type="hidden" name="nodejs_app_id" value="<?= (int) $row['nodejs_app_id'] ?>">
+                  <button type="submit" class="btn btn-sm btn-outline-primary" title="Update ke versi terbaru"><i class="bi bi-arrow-up-circle me-1"></i>Update</button>
+                </form>
+              <?php endif; ?>
+            </td>
           </tr>
         <?php endforeach; ?>
         </tbody>
       </table>
     </div>
-    <p class="text-muted small p-3 mb-0">Hapus aplikasi lewat menu <a href="/websites">Hapus Website</a> pada domain terkait - database & catatan aplikasi ikut dibersihkan otomatis.</p>
+    <p class="text-muted small p-3 mb-0">Hapus aplikasi PHP lewat menu <a href="/websites">Hapus Website</a> pada domain terkait, aplikasi Node.js (9Router) lewat menu <a href="/nodejs">Node.js Apps</a> - database &amp; catatan aplikasi ikut dibersihkan otomatis.</p>
   </div>
 </div>
 
@@ -168,9 +233,9 @@ include __DIR__ . '/partials/header.php';
             <div class="col-md-6">
               <label class="form-label">Domain</label>
               <input type="text" name="domain" class="form-control" placeholder="contoh.com" required pattern="^[a-zA-Z0-9.\-]+$">
-              <div class="form-text">Website baru akan dibuat otomatis di domain ini.</div>
+              <div class="form-text" id="installDomainHelp">Website baru akan dibuat otomatis di domain ini.</div>
             </div>
-            <div class="col-md-6">
+            <div class="col-md-6" id="installPhpVersionField">
               <label class="form-label">Versi PHP</label>
               <select name="php_version" id="installPhpVersionSelect" class="form-select" required>
                 <?php foreach ($phpVersions as $v): ?>
@@ -188,6 +253,24 @@ include __DIR__ . '/partials/header.php';
               <label class="form-label">Versi WordPress (opsional)</label>
               <input type="text" name="app_version" id="installWpVersionInput" class="form-control" placeholder="Kosongkan = terbaru otomatis" pattern="^\d{1,2}\.\d{1,2}(\.\d{1,3})?$">
               <div class="form-text">Kosongkan untuk selalu memakai rilis stabil terbaru (direkomendasikan).</div>
+            </div>
+
+            <div class="col-md-6" id="installNodeAppNameField" style="display:none">
+              <label class="form-label">Nama Aplikasi (PM2)</label>
+              <input type="text" name="node_app_name" id="installNodeAppNameInput" class="form-control" value="9router" required pattern="^[a-zA-Z0-9_\-]{1,64}$" maxlength="64">
+              <div class="form-text">Jadi folder <code>/home/nodeapps/apps/&lt;nama&gt;</code> &amp; nama proses PM2 - huruf, angka, <code>-</code>, <code>_</code>.</div>
+            </div>
+            <div class="col-md-6" id="installNodeVersionField" style="display:none">
+              <label class="form-label">Versi 9Router (opsional)</label>
+              <input type="text" name="app_version" id="installNodeVersionInput" class="form-control" placeholder="Kosongkan = terbaru otomatis" pattern="^\d{1,3}\.\d{1,3}\.\d{1,4}$">
+              <div class="form-text">Format <code>x.y.z</code> sesuai rilis npm. Kosongkan untuk rilis terbaru (direkomendasikan).</div>
+            </div>
+            <div class="col-12" id="installNodeNote" style="display:none">
+              <div class="alert alert-success small mb-0">
+                Dipasang sebagai aplikasi Node.js baru (PM2, Node.js <span id="installNodeRuntimeVersion"></span>) di belakang Nginx dengan mode proxy streaming.
+                Port lokal, secret JWT/API key &amp; password dashboard awal dibuat otomatis - password ditampilkan sekali setelah instal selesai.
+                Unduh paket dari npm bisa memakan waktu 1-2 menit, jangan tutup halaman ini.
+              </div>
             </div>
 
             <div class="col-12" id="installZipField" style="display:none">
@@ -256,13 +339,31 @@ document.getElementById('installAppModal').addEventListener('show.bs.modal', fun
   document.getElementById('installAppSlug').value = slug;
   document.getElementById('installAppName').textContent = btn.getAttribute('data-name');
 
+  // Node.js-runtime apps (9Router) are a different shape entirely: no PHP
+  // version/database, but a PM2 app name + optional npm version instead.
+  // Hidden fields are DISABLED (not just hidden) for the same reason
+  // explained above - a hidden-but-enabled `required` field like the PHP
+  // select would otherwise block submission or post a bogus value.
+  var isNode = btn.getAttribute('data-runtime') === 'nodejs';
+  document.getElementById('installPhpVersionField').style.display = isNode ? 'none' : '';
+  document.getElementById('installPhpVersionSelect').disabled = isNode;
+  ['installNodeAppNameField', 'installNodeVersionField', 'installNodeNote'].forEach(function (id) {
+    document.getElementById(id).style.display = isNode ? '' : 'none';
+  });
+  document.getElementById('installNodeAppNameInput').disabled = !isNode;
+  document.getElementById('installNodeVersionInput').disabled = !isNode;
+  document.getElementById('installDomainHelp').textContent = isNode
+    ? 'Domain/subdomain khusus untuk dashboard & endpoint API (contoh: ai.contoh.com) - arahkan DNS-nya ke server ini dulu.'
+    : 'Website baru akan dibuat otomatis di domain ini.';
+  document.getElementById('installNodeRuntimeVersion').textContent = btn.getAttribute('data-node-version') || '';
+
   var zipField = document.getElementById('installZipField');
   var zipInput = zipField.querySelector('input[name="app_zip"]');
   var showZip = (slug === 'custom');
   zipField.style.display = showZip ? '' : 'none';
   zipInput.disabled = !showZip;
 
-  document.getElementById('installFullTierNote').style.display = (tier === 'full') ? '' : 'none';
+  document.getElementById('installFullTierNote').style.display = (tier === 'full' && !isNode) ? '' : 'none';
 
   // Multi-version apps (joomla/drupal/phpbb): populate the dropdown from
   // the button's data-versions JSON (sourced server-side from AppCatalog,
@@ -296,7 +397,11 @@ document.getElementById('installAppModal').addEventListener('show.bs.modal', fun
   wpVersionField.style.display = showWpVersion ? '' : 'none';
   wpVersionInput.disabled = !showWpVersion;
 
-  filterPhpVersionsForApp(btn);
+  if (isNode) {
+    document.getElementById('installPhpIncompatibleWarning').classList.add('d-none');
+  } else {
+    filterPhpVersionsForApp(btn);
+  }
 
   var dbFields = document.getElementById('installDbFields');
   var dbDetailFields = document.getElementById('installDbDetailFields');

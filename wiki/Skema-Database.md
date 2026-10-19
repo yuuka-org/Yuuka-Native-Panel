@@ -130,6 +130,7 @@ dibaca live dari `pm2 jlist`, bukan dari tabel ini (lihat
 | `start_command`, `build_command` | `build_command` dijalankan (sebagai user `nodeapps`, di folder app) setiap redeploy lewat tab Settings > Umum — **kecuali** saat create pertama kali (folder masih kosong) |
 | `instances`, `exec_mode` (fork/cluster), `autorestart`, `watch`, `max_memory_restart` | Parameter `ecosystem.config.cjs`. Ecosystem juga selalu set `merge_logs: true` supaya log multi-instance (cluster mode) tidak tercecer ke file terpisah per-worker |
 | `node_env` | default `production` |
+| `proxy_profile` | `default` (snippet `proxy-params.conf` biasa) atau `streaming` (`proxy_buffering off`, timeout 900 detik, body 100 MB - dipakai 9Router dari App Installer). Dibaca ulang tiap vhost app digenerate (`createApp`/`addDomain`/`applySslForDomain`) |
 | `wildcard_enabled` | Cloudflare for SaaS Custom Hostname — sama seperti `websites.wildcard_enabled`, satu slot untuk seluruh server (lintas tabel `websites`+`nodejs_apps`) |
 | `is_managed` | Membedakan app yang dikelola penuh vs. hasil `importUnmanaged()` |
 | `last_known_status` | **Historis/audit only** — komentar di skema eksplisit menyebut ini bukan sumber kebenaran runtime |
@@ -149,6 +150,21 @@ Environment variable per aplikasi Node.js, nilai **terenkripsi**.
 | `var_key` | UNIQUE per `app_id` |
 | `var_value_enc` | AES-256-GCM, kunci dari `APP_KEY` di `.env` (lihat `EnvService`) |
 | `is_secret` | Menentukan apakah disamarkan (`••••••••`) di UI |
+
+## `installed_apps`
+
+Aplikasi yang dipasang lewat App Installer. Tepat **satu** dari
+`website_id`/`nodejs_app_id` terisi per baris (migrasi `2026101901`):
+aplikasi PHP menempel ke `websites`, aplikasi Node.js (9Router) ke
+`nodejs_apps`.
+
+| Kolom | Keterangan |
+|---|---|
+| `website_id` | FK `websites`, `ON DELETE CASCADE`, UNIQUE, NULL untuk app Node.js |
+| `nodejs_app_id` | FK `nodejs_apps`, `ON DELETE CASCADE`, NULL untuk app PHP |
+| `app_slug` | Kunci `AppCatalog` (`wordpress`, `joomla`, `drupal`, `phpbb`, `custom`, `9router`) |
+| `app_version`, `table_prefix` | `table_prefix` khusus WordPress (dipakai WP Manager) |
+| `db_name` | FK `databases_registry`, `ON DELETE SET NULL` |
 
 ## `databases_registry`
 

@@ -805,6 +805,99 @@ op_pm2_save() {
 }
 
 # ---------------------------------------------------------------------------
+# 9Router (App Installer) - AI gateway berbasis Next.js dari npm ('9router').
+# Dipasang sebagai dependency LOKAL di folder app Node.js-nya sendiri
+# (${NODEAPPS_BASE}/<app>/node_modules/9router), BUKAN `npm install -g`, dan
+# dijalankan PM2 lewat node_modules/9router/app/custom-server.js langsung -
+# CLI bawaan paketnya (`9router`) sengaja tidak dipakai sama sekali: CLI itu
+# menu TUI interaktif, dan sebelum start ia membunuh (kill -9) SEMUA proses
+# di server yang command line-nya mengandung "next-server" - termasuk app
+# Next.js milik pelanggan lain yang jalan di bawah user nodeapps yang sama.
+#
+# mode=fresh  : folder app harus belum ada/kosong (instal baru).
+# mode=update : folder app harus sudah berisi node_modules/9router (update
+#               versi di tempat - PHP yang men-stop/start PM2 di sekitarnya).
+#
+# --ignore-scripts disengaja: postinstall paketnya memasang runtime SQLite
+# (better-sqlite3) ke $HOME/.9router (bukan DATA_DIR app ini) DAN systray2
+# (ikon tray desktop, tidak berguna di server). Runtime SQLite dipasang
+# manual di bawah dengan DATA_DIR yang benar; systray2 dilewati. Gagal
+# memasang better-sqlite3 tidak fatal - 9Router fallback ke node:sqlite
+# (built-in Node 22) lalu sql.js.
+# ---------------------------------------------------------------------------
+RE_NINEROUTER_VERSION='^(latest|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,4})$'
+
+op_ninerouter_install() {
+    local app="$1" node_version="$2" version="$3" mode="${4:-fresh}"
+    require_match "$app" "$RE_APPNAME" "appname"
+    require_match "$node_version" "$RE_NODE_VERSION" "node_version"
+    require_match "$version" "$RE_NINEROUTER_VERSION" "versi 9router"
+    require_match "$mode" '^(fresh|update)$' "mode"
+
+    local app_dir
+    app_dir=$(require_path_within "${NODEAPPS_BASE}/${app}" "$NODEAPPS_BASE")
+    local pkg_dir="${app_dir}/node_modules/9router"
+    local data_dir="${app_dir}/data"
+
+    if [[ "$mode" == "fresh" ]]; then
+        if [[ -e "$app_dir" && -n "$(ls -A -- "$app_dir" 2>/dev/null)" ]]; then
+            fail "Folder ${app_dir} sudah ada dan tidak kosong - pakai nama aplikasi lain"
+        fi
+        mkdir -p "$data_dir"
+        printf '{\n  "name": "yuuka-9router",\n  "private": true\n}\n' > "${app_dir}/package.json"
+    else
+        [[ -f "${pkg_dir}/package.json" ]] || fail "Folder ${app_dir} bukan instalasi 9Router"
+        mkdir -p "$data_dir"
+    fi
+    chown -R nodeapps:nodeapps "$app_dir"
+    chmod 750 "$app_dir"
+    fm_reapply_terminal_acl "$app_dir"
+
+    # `|| exit 97` (bukan `|| true` seperti op_pm2_deploy): 9Router butuh
+    # versi Node spesifik ini (better-sqlite3/node:sqlite), diam-diam jatuh
+    # ke versi default nvm justru menghasilkan instalasi rusak yang baru
+    # ketahuan saat app di-start.
+    local nvm_use="nvm use ${node_version} >/dev/null 2>&1 || { echo 'Node.js ${node_version} belum terpasang di nvm user nodeapps' >&2; exit 97; }; "
+
+    # Instal baru yang gagal di tengah jalan menghapus folder yang BARU SAJA
+    # dibuatnya sendiri di atas (dijamin kosong sebelumnya oleh cek mode
+    # fresh) - supaya percobaan ulang dengan nama yang sama tidak mentok di
+    # "folder sudah ada". Mode update tidak pernah menghapus apa pun: folder
+    # itu milik app yang sedang berjalan.
+    local failed_msg=""
+    if ! as_nodeapps "${nvm_use}cd '${app_dir}' && npm install --save-exact --omit=dev --ignore-scripts --no-audit --no-fund --no-progress '9router@${version}'"; then
+        failed_msg="npm install 9router@${version} gagal"
+    elif [[ ! -f "${pkg_dir}/app/custom-server.js" ]]; then
+        failed_msg="Paket 9router terpasang tapi app/custom-server.js tidak ditemukan - struktur paket berubah?"
+    fi
+    if [[ -n "$failed_msg" ]]; then
+        [[ "$mode" == "fresh" ]] && rm -rf -- "$app_dir"
+        fail "$failed_msg"
+    fi
+
+    local sqlite_result
+    sqlite_result=$(as_nodeapps "${nvm_use}cd '${app_dir}' && DATA_DIR='${data_dir}' node -e 'process.stdout.write(JSON.stringify(require(\"./node_modules/9router/hooks/sqliteRuntime.js\").ensureSqliteRuntime({silent:true})))'" 2>/dev/null) \
+        || sqlite_result="gagal (fallback ke node:sqlite/sql.js)"
+
+    chown -R nodeapps:nodeapps "$app_dir"
+
+    # jq is installed by modules/system.sh, but a server provisioned before
+    # that (or with it removed) still gets the version via grep - the first
+    # "version" key in an npm package.json is always the top-level one,
+    # whether the file is pretty-printed or a single line.
+    local installed=""
+    if command -v jq >/dev/null 2>&1; then
+        installed=$(jq -r '.version // empty' "${pkg_dir}/package.json" 2>/dev/null) || installed=""
+    fi
+    if [[ -z "$installed" ]]; then
+        installed=$(grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "${pkg_dir}/package.json" 2>/dev/null \
+            | head -1 | sed 's/.*"\([^"]*\)"$/\1/') || installed=""
+    fi
+    echo "SQLITE_RUNTIME=${sqlite_result}"
+    echo "VERSION=${installed}"
+}
+
+# ---------------------------------------------------------------------------
 # Certbot / SSL
 # ---------------------------------------------------------------------------
 op_certbot_issue() {
@@ -2389,6 +2482,7 @@ case "$SUBCOMMAND" in
     pm2-flush)             op_pm2_flush "$@" ;;
     pm2-reset)             op_pm2_reset "$@" ;;
     pm2-save)              op_pm2_save ;;
+    ninerouter-install)    op_ninerouter_install "$@" ;;
     certbot-issue)         op_certbot_issue "$@" ;;
     certbot-remove)        op_certbot_remove "$@" ;;
     panel-ssl-issue)       op_panel_ssl_issue "$@" ;;

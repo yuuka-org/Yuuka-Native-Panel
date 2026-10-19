@@ -108,6 +108,22 @@ final class AppCatalog
                 ],
             ],
         ],
+        // runtime 'nodejs' (default untuk entri lain: PHP) - dipasang sebagai
+        // app Node.js baru (PM2 + vhost reverse proxy), bukan website PHP,
+        // lewat NineRouterInstallerService. Versi diambil dari npm registry
+        // saat instal ("latest") kecuali admin mengisi versi spesifik -
+        // sama seperti WordPress, tidak ada daftar versi yang perlu di-bump.
+        '9router' => [
+            'name' => '9Router',
+            'icon' => 'bi-router',
+            'description' => 'AI gateway: satu endpoint OpenAI-compatible (/v1) untuk Claude Code, Codex, Cursor, Cline dll, dengan fallback otomatis antar provider/akun. Dipasang sebagai aplikasi Node.js baru di domain sendiri, password dashboard dibuat otomatis.',
+            'tier' => self::TIER_FULL,
+            'runtime' => 'nodejs',
+            'requires_database' => false,
+            'npm_package' => '9router',
+            'node_version' => '22',
+            'start_script' => 'node_modules/9router/app/custom-server.js',
+        ],
         'custom' => [
             'name' => 'Custom App (Upload ZIP Sendiri)',
             'icon' => 'bi-upload',
@@ -132,6 +148,12 @@ final class AppCatalog
     public static function exists(string $slug): bool
     {
         return isset(self::APPS[$slug]);
+    }
+
+    /** 'php' (default, ditanam ke website PHP baru) atau 'nodejs' (app Node.js baru). */
+    public static function runtime(string $slug): string
+    {
+        return self::APPS[$slug]['runtime'] ?? 'php';
     }
 
     /** @return array<string,mixed>|null */

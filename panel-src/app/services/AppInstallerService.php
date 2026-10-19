@@ -37,6 +37,12 @@ final class AppInstallerService
         if ($app === null) {
             throw new InvalidArgumentException('Aplikasi tidak dikenal');
         }
+        // Node.js-runtime entries (9Router) have their own installer -
+        // this PHP path would otherwise create a pointless PHP website
+        // and then fail on the missing download URL.
+        if (AppCatalog::runtime($appSlug) !== 'php') {
+            throw new InvalidArgumentException("{$app['name']} bukan aplikasi PHP - gunakan installer khususnya");
+        }
         $tier = $app['tier'];
 
         if ($tier === AppCatalog::TIER_GENERIC && ($customZipBytes === null || $customZipBytes === '')) {
@@ -185,13 +191,25 @@ final class AppInstallerService
         }
     }
 
-    /** @return array<int,array{website_id:int,domain:string,app_slug:string,app_version:?string,db_name:?string,installed_at:string}> */
+    /**
+     * PHP apps hang off websites, Node.js apps (9Router) off nodejs_apps -
+     * exactly one of website_id/nodejs_app_id is set per row (migration
+     * 2026101901). A Node.js app whose primary domain was removed later
+     * still lists, just with domain NULL.
+     *
+     * @return array<int,array{website_id:?int,nodejs_app_id:?int,nodejs_app_name:?string,domain:?string,ssl_enabled:int,app_slug:string,app_version:?string,db_name:?string,installed_at:string}>
+     */
     public static function listInstalled(): array
     {
         return Database::app()->query(
-            'SELECT ia.website_id, w.domain, ia.app_slug, ia.app_version, ia.db_name, ia.installed_at
+            'SELECT ia.website_id, ia.nodejs_app_id, n.app_name AS nodejs_app_name,
+                    COALESCE(w.domain, n.domain) AS domain, COALESCE(d.ssl_enabled, 0) AS ssl_enabled,
+                    ia.app_slug, ia.app_version, ia.db_name, ia.installed_at
              FROM installed_apps ia
-             JOIN websites w ON w.id = ia.website_id
+             LEFT JOIN websites w ON w.id = ia.website_id
+             LEFT JOIN nodejs_apps n ON n.id = ia.nodejs_app_id
+             LEFT JOIN domains d ON d.domain = COALESCE(w.domain, n.domain)
+             WHERE w.id IS NOT NULL OR n.id IS NOT NULL
              ORDER BY ia.installed_at DESC'
         )->fetchAll();
     }
