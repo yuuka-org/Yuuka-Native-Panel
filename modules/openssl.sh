@@ -23,8 +23,10 @@
 #               guarantees strict ABI/API compatibility across every 3.x
 #               release (this was the explicit point of the 3.0 versioning
 #               scheme), so every other program dynamically linked against
-#               libssl.so.3/libcrypto.so.3 on this box (OpenSSH, curl, PHP,
-#               Python, apt itself) keeps working completely unmodified and
+#               libssl.so.3/libcrypto.so.3 on this box (curl, PHP, Python,
+#               apt itself; OpenSSH only from 9.x - older sshd rejects a
+#               different minor version, see the sshd pre-check in
+#               module_openssl_upgrade_system) keeps working unmodified and
 #               benefits from the exact same upgrade - one OpenSSL version to
 #               track and patch on this server, not two silently drifting
 #               copies where a routine security update only reaches one of
@@ -80,13 +82,12 @@ module_openssl_upgrade_system() {
     log_step "Upgrade OpenSSL sistem ke jalur LTS 3.5.x"
 
     # Written by the SSH Rescue plugin's "restore OpenSSL" action after it put
-    # Ubuntu's own OpenSSL packages back (an in-place rebuild here coincided
-    # with sshd resetting every new connection, locking the operator out of
-    # SSH). Without this check the very next update.sh would rebuild 3.5.x
-    # straight over the restored packages again.
+    # Ubuntu's own OpenSSL packages back, or by the sshd pre-check below.
+    # Without this check the very next update.sh would rebuild 3.5.x straight
+    # over the restored packages again.
     local disabled_marker="${STATE_DIR}/openssl-module.disabled"
     if [[ -f "$disabled_marker" ]]; then
-        log_warn "Modul OpenSSL DINONAKTIFKAN sejak $(cat "$disabled_marker" 2>/dev/null) (OpenSSL sistem dipulihkan ke paket Ubuntu lewat plugin SSH Rescue) - build dilewati. Aktifkan lagi: hapus ${disabled_marker} lalu jalankan 'sudo yp custom-build openssl'."
+        log_warn "Modul OpenSSL DINONAKTIFKAN ($(head -1 "$disabled_marker" 2>/dev/null)) - build dilewati. Aktifkan lagi: hapus ${disabled_marker} lalu jalankan 'sudo yp custom-build openssl'."
         return 0
     fi
 
@@ -145,6 +146,25 @@ module_openssl_upgrade_system() {
         return 1
     fi
     log_ok "Build OpenSSL ${version} sukses"
+
+    # The "every 3.x is ABI compatible" premise in this file's header does NOT
+    # hold for OpenSSH older than 9.x (Ubuntu 22.04 ships 8.9): it refuses to
+    # run when the libcrypto major.MINOR differs from the one it was built
+    # against - "OpenSSL version mismatch. Built against 30000020, you have
+    # 30500090" - and since sshd re-execs itself for every connection, every
+    # new SSH login gets reset right after the TCP connect (seen live: the
+    # operator was locked out of SSH until the SSH Rescue plugin restored
+    # Ubuntu's packages). Load the FRESHLY BUILT library into the system's own
+    # sshd before installing anything; if sshd can't run on it, leave the
+    # system OpenSSL alone for good (marker) instead of rebuilding every update.
+    local sshd_check
+    if [[ -x /usr/sbin/sshd ]] && /usr/sbin/sshd -t >/dev/null 2>&1 \
+        && ! sshd_check=$(LD_LIBRARY_PATH="$src_dir" /usr/sbin/sshd -t 2>&1); then
+        log_warn "sshd di server ini TIDAK bisa jalan dengan OpenSSL ${version}: ${sshd_check} - install dibatalkan supaya akses SSH tidak terkunci. OpenSSL sistem TIDAK diubah (masih ${current})."
+        echo "$(date -Iseconds) - sshd server ini tidak kompatibel dengan OpenSSL ${version}" > "$disabled_marker"
+        rm -rf "$OPENSSL_BUILD_DIR"
+        return 0
+    fi
 
     # install_sw (bukan 'make install' penuh) - hanya memasang
     # library/binary/header, TIDAK menyentuh openssldir (/etc/ssl - CA
