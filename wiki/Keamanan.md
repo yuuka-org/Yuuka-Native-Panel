@@ -65,3 +65,72 @@ Audit log: timestamp, uid, subcommand, status
 
 Lihat [Referensi panel-exec.sh](Panel-Exec-Reference.md) untuk daftar
 lengkap subcommand yang diizinkan lewat jembatan ini.
+
+## Mitigasi php2shell (CVE-2026-109618 / CVE-2026-109619)
+
+Dua bug inti PHP yang dirilis 21 Oktober 2026 (CVSS v4 9.2, RCE tanpa
+autentikasi, detailnya bocor sehari sebelum patch keluar):
+
+- **CVE-2026-109618**: alokasi memori gagal di tengah parsing request
+  (form dengan nama field raksasa, atau multipart yang menghabiskan
+  `memory_limit`) meninggalkan data `$_POST` setengah jadi yang kemudian
+  "dibersihkan" sebagai data valid.
+- **CVE-2026-109619**: state dari request sebelumnya di worker yang sama
+  menunjuk ke memori yang sudah di-free. Bisa dieksploitasi lewat *session
+  upload progress* (aktif secara default, tetap jalan walau aplikasi tidak
+  memanggil `session_start()`), dan di PHP 8.5 lewat `fatal_error_backtraces`.
+
+Perbaikan resmi: **8.2.35, 8.3.36, 8.4.27, 8.5.12**. Cabang 7.4/8.0/8.1 sudah
+EOL, upstream hanya merilis patch sumber, jadi aman atau tidaknya bergantung
+pada backport paket PPA/distro.
+
+### Yang dipasang panel (`modules/php.sh`, `modules/nginx.sh`, `modules/panel.sh`)
+
+Berjalan otomatis di setiap `sudo bash update.sh` / `install.sh` /
+`yp custom-build php`, atau sendiri lewat `sudo yp php-security`:
+
+| Lapisan | Isi | Menutup |
+|---|---|---|
+| Patch | `apt-get install --only-upgrade` untuk semua paket `php<versi>*` yang terpasang (config yang sudah disesuaikan dipertahankan) | Keduanya (satu-satunya perbaikan tuntas) |
+| `conf.d/99-yuuka-php2shell.ini` per versi | `session.upload_progress.enabled = 0` (+ `fatal_error_backtraces = 0` untuk 8.5+). Dimuat sebelum request di-parse dan berlaku untuk semua pool (situs, panel, phpMyAdmin). Tetap dipasang walau sudah dipatch, sebagai lapisan tambahan | Jalur session 109619 |
+| Restart pool | Hanya versi yang paket atau ini-nya berubah. State basi hidup di worker yang sudah berjalan | — |
+| Penyaring Nginx vhost panel | `snippets/php2shell-guard.conf`: tolak (413) form `application/x-www-form-urlencoded` ≥ 2 MB atau tanpa `Content-Length`. Upload sah panel selalu multipart | Jalur nama-field-raksasa 109618 |
+| Laporan | Status per versi: *patched* / *backport* / *vulnerable* / *unknown* + pindaian indikator | — |
+
+**Kenapa vhost panel yang paling penting:** PHP mem-parse body POST
+**sebelum** kode panel sempat mengecek login, dan pool panel bisa memanggil
+`panel-exec.sh` sebagai root. Jadi RCE di pool panel praktis setara root.
+Vhost situs pelanggan dan phpMyAdmin tidak mengatur `client_max_body_size`,
+jadi sudah dibatasi bawaan Nginx 1 MB dan tidak perlu penyaring yang sama.
+
+**Sengaja tidak diterapkan:** `memory_limit=-1` (mitigasi 109618 dari
+advisory). Di server multi-situs, satu skrip yang bocor memori bisa
+menghabiskan RAM seluruh server, dan jalur yang ditutupnya sudah tidak berlaku
+untuk PHP-FPM (FPM mematikan worker saat startup gagal). Server ini tidak
+memakai `mod_php`.
+
+### Selama masih ada versi yang belum aman
+
+- Aktifkan **BasicAuth panel** (Settings > Umum, atau `sudo yp basicauth`).
+  Nginx menolak request tanpa kredensial **sebelum** PHP sempat mem-parse
+  body. Security Entrance saja tidak cukup, karena endpoint PHP lain tetap
+  menerima body.
+- Pindahkan situs yang masih di 7.4/8.0/8.1 berstatus *vulnerable/unknown*
+  ke 8.2+ (Website > Settings > Umum).
+- Jalankan ulang `sudo yp php-security` beberapa jam sekali sampai PPA
+  merilis versi perbaikan. Perintah ini aman diulang: kalau tidak ada yang
+  berubah, tidak ada restart.
+
+### Indikator eksploitasi (`yp php-security status`)
+
+- `Allowed memory size of ... bytes exhausted` dengan `Unknown on line 0` di
+  log error Nginx/panel, yang menandakan kehabisan memori **saat parsing request**.
+- Worker PHP-FPM crash (`SIGSEGV`) di `/var/log/php*-fpm.log`. Bisa jadi
+  tebakan alamat memori yang gagal.
+- Shell/interpreter (`sh`, `bash`, `nc`, `python`, ...) yang induknya worker
+  `php-fpm`. Ini bukti paling langsung. `sudo` dikecualikan karena panel
+  sendiri memanggil `panel-exec.sh` lewat sudo.
+
+Tidak satu pun indikator ini bukti pasti, dan tidak adanya indikator juga
+tidak menjamin aman: eksploit yang berhasil bisa mengembalikan HTTP 200 tanpa
+crash.

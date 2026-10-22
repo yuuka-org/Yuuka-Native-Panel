@@ -385,6 +385,15 @@ module_panel_nginx_vhost() {
         security_entrance_include="    include ${NGINX_SNIPPETS}/includes/security-entrance.conf;"
     fi
 
+    # Written by module_nginx_snippets (modules/nginx.sh) - see the comment
+    # there. Same self-healing existence check, so regenerating this vhost
+    # on a server that hasn't run the nginx module yet never produces a
+    # dangling include.
+    local php2shell_include=""
+    if [[ -f "${NGINX_SNIPPETS}/php2shell-guard.conf" ]]; then
+        php2shell_include="    include ${NGINX_SNIPPETS}/php2shell-guard.conf;"
+    fi
+
     # Self-healing SSL detection: this decides both whether the vhost gets
     # an HTTPS listener at all AND (right below) whether location / needs
     # the Cloudflare-safe redirect guard - no caller-passed flag to keep in
@@ -454,6 +463,7 @@ map \"\$scheme:\$panel_cf_visitor_is_https\" \$panel_needs_https_redirect {
     panel_body=$(cat <<EOF
     include ${NGINX_SNIPPETS}/cloudflare-realip.conf;
 ${basicauth_include}
+${php2shell_include}
 
     root ${PANEL_ROOT}/public;
     index index.php;

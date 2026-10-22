@@ -34,6 +34,8 @@ yp <aksi> <target> [args...]
 | `yp update` | `git pull` di `/opt/yuuka-installer` + redeploy `panel-src` ke `/opt/server-panel` (tanpa mengulang wizard) |
 | `yp version` | Commit installer aktif + versi Nginx/MariaDB/PHP-FPM/cloudflared |
 | `yp custom-build <modul>` | Rerun `module_<modul>_run_all` untuk satu komponen saja: `nginx`, `php`, `nodejs`, `mariadb`, `phpmyadmin`, `ssl`, `cloudflare`, `panel` |
+| `yp php-security` | Mitigasi php2shell (CVE-2026-109618/109619): upgrade paket PHP terpasang, pasang `conf.d/99-yuuka-php2shell.ini` di semua versi, restart pool yang berubah, pasang penyaring Nginx di vhost panel, lalu pindai indikator eksploitasi. Lihat [Keamanan § php2shell](Keamanan.md#mitigasi-php2shell-cve-2026-109618--cve-2026-109619) |
+| `yp php-security status` | Hanya membaca: status patch per versi PHP, status penyaring panel, indikator eksploitasi. Exit code = jumlah versi PHP yang belum aman |
 
 ## `yp repair panel --reset-env`
 
@@ -54,7 +56,7 @@ Meniru filosofi `./build <komponen>` di DirectAdmin: membangun ulang satu kompon
 | Modul | Yang dilakukan | Keterbatasan |
 |---|---|---|
 | `nginx` | Install + snippet + hardening | — |
-| `php` | Install versi PHP + pilih default (interaktif) | — |
+| `php` | Install versi PHP + mitigasi php2shell (upgrade paket, `conf.d` hardening) + pilih default (interaktif) | Penyaring Nginx panel butuh `yp repair panel` (atau pakai `yp php-security` yang sudah mencakup semuanya) |
 | `nodejs` | NVM + Node + PM2 | — |
 | `mariadb` | Install + hardening + akun (aman di-re-run, lihat guard `state_has` di `module_mariadb_create_accounts`) | — |
 | `phpmyadmin` | Install/reinstall binary + config PHP-FPM | **Tidak** regenerasi vhost Nginx phpMyAdmin — kalau belum pernah dikonfigurasi, lengkapi lewat `install.sh` tahap 8 |

@@ -95,6 +95,7 @@ Pemakaian: yp <aksi> <target> [args...]
   yp update
   yp version
   yp custom-build <nginx|php|nodejs|mariadb|phpmyadmin|ssl|cloudflare|panel|terminal|openssl>
+  yp php-security [status]   (mitigasi/cek php2shell CVE-2026-109618/109619)
   yp help
 USAGE
 }
@@ -670,6 +671,56 @@ cmd_version() {
 }
 
 # ---------------------------------------------------------------------------
+# php-security [status]
+# Mitigasi php2shell (CVE-2026-109618, CVE-2026-109619) tanpa menjalankan
+# ulang seluruh modul PHP (yang juga menanyakan versi default secara
+# interaktif). 'status' hanya membaca - tidak upgrade, tidak restart.
+# Exit code = jumlah versi PHP yang belum aman, supaya bisa dipakai di skrip.
+# ---------------------------------------------------------------------------
+cmd_php_security() {
+    # shellcheck source=/dev/null
+    source "${INSTALLER_DIR}/modules/php.sh"
+
+    local versions=()
+    mapfile -t versions < <(module_php_detect_installed_versions)
+    [[ ${#versions[@]} -gt 0 ]] || die "Tidak ada PHP-FPM yang terpasang di server ini"
+
+    if [[ "${1:-}" == "status" ]]; then
+        log_step "Status php2shell (CVE-2026-109618, CVE-2026-109619)"
+        local not_safe=0
+        module_php_php2shell_report "${versions[@]}" || not_safe=$?
+        if grep -qs 'php2shell-guard.conf' "$(panel_vhost_file)"; then
+            log_ok "Vhost panel: penyaring form urlencoded besar aktif"
+        else
+            log_warn "Vhost panel: penyaring Nginx BELUM aktif - jalankan 'sudo yp php-security'"
+        fi
+        module_php_php2shell_ioc_scan
+        return "$not_safe"
+    fi
+
+    [[ -n "${1:-}" ]] && { usage; exit 2; }
+
+    module_php_php2shell_mitigate "${versions[@]}"
+
+    # Front-end guard for the panel vhost (512m body limit) - written by
+    # module_nginx_snippets, wired in by module_panel_nginx_vhost; same
+    # domain detection 'yp repair panel' uses.
+    module_nginx_snippets
+    local vhost domain
+    vhost=$(panel_vhost_file)
+    domain=$(grep -h 'server_name' "${vhost:-/dev/null}" 2>/dev/null | head -1 | awk '{print $2}' | tr -d ';')
+    if [[ -n "$domain" ]]; then
+        PANEL_DOMAIN="$domain"
+        export PANEL_DOMAIN
+        module_panel_nginx_vhost
+    else
+        log_warn "Tidak bisa mendeteksi domain panel - penyaring Nginx panel belum dipasang (jalankan 'sudo yp repair panel')"
+    fi
+
+    module_php_php2shell_ioc_scan
+}
+
+# ---------------------------------------------------------------------------
 # custom-build <module>
 # ---------------------------------------------------------------------------
 cmd_custom_build() {
@@ -822,6 +873,7 @@ case "$ACTION" in
     update) cmd_update ;;
     version) cmd_version ;;
     custom-build) cmd_custom_build "$TARGET" ;;
+    php-security) cmd_php_security "$TARGET" ;;
     help|--help|-h|"") usage ;;
     *)
         echo "Aksi tidak dikenal: ${ACTION}" >&2

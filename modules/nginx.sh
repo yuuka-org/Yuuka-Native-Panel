@@ -59,6 +59,30 @@ location ^~ /.well-known/acme-challenge/ {
 EOF
     log_ok "snippets/acme-challenge.conf"
 
+    # php2shell (CVE-2026-109618) - lapisan depan untuk vhost yang body-nya
+    # besar (panel: client_max_body_size 512m). Jalur eksploit memakai form
+    # application/x-www-form-urlencoded dengan nama field raksasa supaya PHP
+    # kehabisan memory_limit SAAT MEM-PARSE request - sebelum kode aplikasi
+    # (termasuk cek login panel) sempat jalan. Upload sah di panel selalu
+    # multipart (File Manager editor pun pakai FormData), jadi form
+    # urlencoded >= 2 MB, atau yang tanpa Content-Length (chunked - browser
+    # tidak pernah mengirim form begitu), ditolak di sini.
+    #
+    # Sengaja berdiri sendiri (set + if di level server, tanpa map di
+    # conf.d): vhost yang meng-include-nya tidak pernah bisa gagal nginx -t
+    # karena variabel map belum ada. Content-Type yang aneh (mengandung
+    # ':') lolos (fail-open) - lebih baik daripada memblokir request sah.
+    # Vhost situs & phpMyAdmin tidak butuh ini: tanpa client_max_body_size
+    # mereka memakai batas bawaan Nginx 1 MB.
+    write_file_if_changed "${NGINX_SNIPPETS}/php2shell-guard.conf" <<'EOF'
+# php2shell (CVE-2026-109618) - dikelola modules/nginx.sh, jangan diedit manual.
+set $yuuka_p2s "$request_method:$content_type:$content_length";
+if ($yuuka_p2s ~* "^(POST|PUT|PATCH):application/x-www-form-urlencoded[^:]*:([2-9][0-9]{6}|[0-9]{8,})?$") {
+    return 413;
+}
+EOF
+    log_ok "snippets/php2shell-guard.conf"
+
     write_file_if_changed "${NGINX_SNIPPETS}/proxy-params.conf" <<'EOF'
 # Shared reverse-proxy headers for Node.js applications
 proxy_http_version 1.1;
