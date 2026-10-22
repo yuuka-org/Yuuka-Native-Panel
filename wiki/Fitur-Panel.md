@@ -415,10 +415,12 @@ membuat domain baru + memasang aplikasinya. Dua jenis runtime:
 - **PHP** (WordPress, Joomla, Drupal, phpBB, Custom ZIP) -
   `AppInstallerService::installApp()`: website PHP baru + database
   (opsional) + ekstrak source ke `public/`.
-- **Node.js** (`'runtime' => 'nodejs'` di katalog, saat ini: **9Router**) -
-  `NineRouterInstallerService`: hasilnya app Node.js biasa di menu
-  Node.js Apps, jadi Start/Stop/Logs/Env/Domain & SSL/Backup langsung
-  tersedia tanpa kode khusus.
+- **Node.js** (`'runtime' => 'nodejs'` di katalog: **9Router** lewat
+  `NineRouterInstallerService`, **Hermes Agent** lewat
+  `HermesInstallerService`): hasilnya app biasa di menu Node.js Apps (PM2),
+  jadi Start/Stop/Logs/Env/Domain & SSL/Backup langsung tersedia tanpa
+  kode khusus. Hermes sebenarnya aplikasi Python, tapi PM2 menjalankannya
+  lewat launcher Node kecil sehingga dikelola dengan cara yang sama.
 
 Semua instalasi dicatat di tabel `installed_apps` (lihat
 [Skema Database](Skema-Database.md)) dan memakai pola saga: kalau satu
@@ -482,6 +484,71 @@ Node.js biasa) - normalnya 30-90 detik. Di VPS yang sangat lambat bisa
 melewati `fastcgi_read_timeout` panel (120 detik): browser menampilkan
 504, tapi proses di server tetap selesai - muat ulang App Installer
 setelah 1-2 menit untuk melihat hasilnya.
+
+### Hermes Agent (agent AI Nous Research)
+
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) (Python, MIT)
+adalah agent AI dengan memori, skills, tools, jadwal, dan gateway
+Telegram/Discord/Slack, plus dashboard web untuk konfigurasi dan chat.
+
+Alur instal (`HermesInstallerService::install()`):
+
+1. `panel-exec.sh hermes-install <app> prepare` - membuat
+   `/home/nodeapps/apps/<app>/data` (dipakai sebagai `HERMES_HOME` per app)
+   dan menulis launcher `yuuka-hermes.cjs`.
+2. `NodeService::createApp()` - script PM2 `yuuka-hermes.cjs`, profil proxy
+   `streaming` (chat dashboard memakai WebSocket `/api/pty`), env:
+   `HERMES_HOME`, `HERMES_DASHBOARD_PUBLIC_URL=http://<domain>`,
+   `HERMES_DASHBOARD_BASIC_AUTH_USERNAME`/`_PASSWORD` (acak, ditampilkan
+   sekali) dan `_SECRET` (supaya sesi login tidak hilang setiap restart).
+3. `panel-exec.sh hermes-install <app> start` - menjalankan **installer
+   resmi** (`install.sh --non-interactive --hermes-home <app>/data
+   --skip-browser --skip-computer-use --channel stable`) di unit
+   `systemd-run` `yuuka-hermes-<app>`, karena prosesnya 3-10 menit (uv,
+   Python terkelola, Node, ripgrep, ffmpeg, build UI) dan jauh melewati
+   batas request panel. Root hanya menjalankan string tetap (libatomic1
+   best-effort, lalu `exec runuser -u nodeapps`). Semua file di folder app
+   ditulis lewat `runuser -u nodeapps -- tee`, sehingga root tidak pernah
+   menulis ke folder milik nodeapps (mencegah serangan symlink).
+
+Launcher (`yuuka-hermes.cjs`):
+
+- Selama `.install-ok` belum ada, launcher menyajikan halaman status generik
+  di domain (503, auto-refresh). Isi log sengaja tidak ditampilkan karena
+  halaman ini publik sampai login Hermes aktif. `install.log` diteruskan ke
+  log PM2, sehingga progres detailnya terlihat di **Node.js Apps > Logs**.
+  Kalau `.install-failed` muncul, halamannya berubah jadi 500 tanpa
+  auto-refresh.
+- Setelah instalasi selesai, launcher otomatis menjalankan
+  `hermes dashboard --host 127.0.0.1 --port <PORT> --no-open` (proses yang
+  dilihat PM2/Nginx; kalau mati, launcher keluar dan PM2 me-restart) dan
+  `hermes gateway run`. Gateway yang langsung mati, biasanya karena provider
+  model belum diatur, dicoba ulang dengan jeda bertambah (10 detik sampai
+  5 menit) tanpa mematikan dashboard.
+
+**Kenapa login bawaan Hermes, bukan BasicAuth Nginx:** pola reverse proxy
+resmi Hermes adalah *bind* ke `127.0.0.1` ditambah
+`HERMES_DASHBOARD_PUBLIC_URL`. Tanpa `public_url`, penjaga
+DNS-rebinding/CORS-nya menolak `Host`/`Origin` dari domain. `public_url`
+non-loopback otomatis menyalakan *auth gate* yang menolak start tanpa auth
+provider. Menambahkan BasicAuth Nginx di atasnya hanya akan membuat dua kali
+login. Dokumentasi Hermes menyarankan login password untuk jaringan
+tepercaya. Untuk internet publik, OAuth Nous Portal atau OIDC bisa diatur
+belakangan lewat env `HERMES_DASHBOARD_OAUTH_*`/`HERMES_DASHBOARD_OIDC_*` di
+tab Env.
+
+Setelah instal: aktifkan SSL untuk domainnya, lalu ubah
+`HERMES_DASHBOARD_PUBLIC_URL` di tab Env menjadi `https://<domain>` dan
+simpan supaya app di-redeploy (sebelum ada sertifikat nilainya sengaja
+`http://`, karena URL https yang disajikan lewat http merusak cookie login).
+Password dashboard bisa dilihat lagi atau diganti di tab Env
+(`HERMES_DASHBOARD_BASIC_AUTH_PASSWORD`).
+
+Tombol **Update** menjalankan ulang installer resmi di background
+(`hermes-install <app> update`, rilis stable terbaru; config, sesi, skills,
+dan memori di `HERMES_HOME` tidak tersentuh). Runner-nya sendiri yang
+menjalankan `pm2 restart <app>` setelah selesai. Hapus lewat Node.js Apps >
+Hapus.
 
 ## File Manager
 

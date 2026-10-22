@@ -46,20 +46,8 @@ final class NineRouterInstallerService
         }
         $versionArg = self::versionArg($version);
 
-        // Fail fast BEFORE the slow npm install - NodeService::createApp()
-        // re-checks both of these anyway, but only after minutes of
-        // downloading would otherwise have been wasted.
+        AppInstallerService::assertNodeAppSlotFree($appName, $domain);
         $pdo = Database::app();
-        $dup = $pdo->prepare('SELECT COUNT(*) FROM domains WHERE domain = :d');
-        $dup->execute(['d' => $domain]);
-        if ((int) $dup->fetchColumn() > 0) {
-            throw new InvalidArgumentException("Domain {$domain} sudah dipakai website/aplikasi lain");
-        }
-        $dup = $pdo->prepare('SELECT COUNT(*) FROM nodejs_apps WHERE pm2_name = :n OR app_name = :n2');
-        $dup->execute(['n' => $appName, 'n2' => $appName]);
-        if ((int) $dup->fetchColumn() > 0) {
-            throw new InvalidArgumentException("Nama aplikasi {$appName} sudah dipakai aplikasi Node.js lain");
-        }
 
         $port = NodeService::findFreePort();
         if ($port === null) {

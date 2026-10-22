@@ -123,6 +123,32 @@ final class AppCatalog
             'npm_package' => '9router',
             'node_version' => '22',
             'start_script' => 'node_modules/9router/app/custom-server.js',
+            // Install-form shape (app_installer.php): optional exact npm
+            // version field, default PM2 app name, note under the fields.
+            'pin_version' => true,
+            'default_app_name' => '9router',
+            'install_note' => 'Dipasang sebagai aplikasi Node.js baru (PM2) di belakang Nginx dengan mode proxy streaming. Port lokal, secret JWT/API key & password dashboard awal dibuat otomatis - password ditampilkan sekali setelah instal selesai. Unduh paket dari npm bisa memakan waktu 1-2 menit, jangan tutup halaman ini.',
+        ],
+        // Python app, but managed exactly like a Node.js app (PM2 runs a
+        // small Node launcher, see panel-exec.sh op_hermes_install) so
+        // Logs/Env/Domain & SSL/Backup all come for free - hence runtime
+        // 'nodejs'. Installed by Nous Research's own installer in the
+        // background (HermesInstallerService), always the latest stable
+        // release, so there is no version to pin here.
+        'hermes' => [
+            'name' => 'Hermes Agent',
+            'icon' => 'bi-robot',
+            'description' => 'Agent AI open-source dari Nous Research: memori jangka panjang, skills, tools, jadwal, dan gateway Telegram/Discord/Slack. Dashboard web di domain sendiri dengan login bawaan Hermes. Instalasi berjalan di latar belakang (3-10 menit).',
+            'tier' => self::TIER_FULL,
+            'runtime' => 'nodejs',
+            'requires_database' => false,
+            'node_version' => '22',
+            'start_script' => 'yuuka-hermes.cjs',
+            'dashboard_login' => true,
+            // Catalog-card badge - node_version above is only the launcher's.
+            'runtime_label' => 'Python (PM2)',
+            'default_app_name' => 'hermes',
+            'install_note' => 'Installer resmi Nous Research berjalan di latar belakang (3-10 menit) - halaman ini langsung kembali, progres detailnya ada di Node.js Apps > Logs. Dashboard di-bind ke 127.0.0.1 di belakang Nginx (proxy streaming + WebSocket) dan memakai login bawaan Hermes; password dibuat otomatis dan ditampilkan sekali.',
         ],
         'custom' => [
             'name' => 'Custom App (Upload ZIP Sendiri)',

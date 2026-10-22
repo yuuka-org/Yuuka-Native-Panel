@@ -192,7 +192,28 @@ final class AppInstallerService
     }
 
     /**
-     * PHP apps hang off websites, Node.js apps (9Router) off nodejs_apps -
+     * Shared pre-flight for the Node.js-runtime installers (9Router, Hermes):
+     * fail fast on a taken domain/app name BEFORE any slow download starts -
+     * NodeService::createApp() re-checks both, but only after that work
+     * would already have been wasted.
+     */
+    public static function assertNodeAppSlotFree(string $appName, string $domain): void
+    {
+        $pdo = Database::app();
+        $dup = $pdo->prepare('SELECT COUNT(*) FROM domains WHERE domain = :d');
+        $dup->execute(['d' => $domain]);
+        if ((int) $dup->fetchColumn() > 0) {
+            throw new InvalidArgumentException("Domain {$domain} sudah dipakai website/aplikasi lain");
+        }
+        $dup = $pdo->prepare('SELECT COUNT(*) FROM nodejs_apps WHERE pm2_name = :n OR app_name = :n2');
+        $dup->execute(['n' => $appName, 'n2' => $appName]);
+        if ((int) $dup->fetchColumn() > 0) {
+            throw new InvalidArgumentException("Nama aplikasi {$appName} sudah dipakai aplikasi Node.js lain");
+        }
+    }
+
+    /**
+     * PHP apps hang off websites, Node.js apps (9Router, Hermes) off nodejs_apps -
      * exactly one of website_id/nodejs_app_id is set per row (migration
      * 2026101901). A Node.js app whose primary domain was removed later
      * still lists, just with domain NULL.

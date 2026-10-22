@@ -898,6 +898,249 @@ op_ninerouter_install() {
 }
 
 # ---------------------------------------------------------------------------
+# Hermes Agent (App Installer) - agent AI Nous Research (Python). Dipasang
+# lewat installer resminya ke ${NODEAPPS_BASE}/<app>/data (HERMES_HOME per
+# app), dijalankan PM2 sebagai app Node.js biasa lewat launcher kecil
+# (yuuka-hermes.cjs) yang menjalankan `hermes dashboard --host 127.0.0.1` +
+# `hermes gateway run`. Selama instalasi belum selesai, launcher menyajikan
+# halaman status generik (tanpa isi log - halaman ini publik sampai Hermes
+# sendiri aktif dengan login-nya) dan meneruskan install.log ke log PM2,
+# yang terlihat di panel (Node.js Apps > Logs, di balik login panel).
+#
+#   prepare : buat folder app (harus belum ada/kosong) + tulis launcher
+#   start   : mulai instalasi pertama di background
+#   update  : jalankan ulang installer resmi (update ke rilis stable
+#             terbaru) di background, lalu `pm2 restart` app-nya
+#
+# Instalasi butuh 3-10 menit (uv, Python terkelola, Node, ripgrep, ffmpeg,
+# build UI) - jauh di atas fastcgi_read_timeout panel, jadi dijalankan
+# lewat systemd-run (unit terpisah, lolos dari cgroup + mount namespace
+# PHP-FPM, sama seperti op_installer_self_update). Nama unit tetap per app
+# supaya instalasi ganda untuk app yang sama ditolak.
+#
+# Batas keamanan: root di sini TIDAK PERNAH menulis ke dalam folder milik
+# nodeapps (symlink yang disiapkan nodeapps bisa membelokkan tulisan root
+# ke file sistem) - semua file app ditulis lewat `runuser -u nodeapps --
+# tee`. Bagian yang berjalan sebagai root di unit hanya string tetap di
+# bawah (libatomic1, dibutuhkan toolchain Hermes, best-effort) lalu
+# langsung exec runuser ke runner milik nodeapps.
+# ---------------------------------------------------------------------------
+HERMES_INSTALL_URL="https://hermes-agent.nousresearch.com/install.sh"
+
+hermes_write_as_nodeapps() {
+    # hermes_write_as_nodeapps <path> <mode>  (konten dari stdin)
+    # chmod too - as root it would follow a symlink planted at $1.
+    runuser -u nodeapps -- tee "$1" >/dev/null || fail "Gagal menulis $1"
+    runuser -u nodeapps -- chmod "$2" "$1" || fail "Gagal mengatur izin $1"
+}
+
+op_hermes_install() {
+    local app="$1" mode="${2:-}"
+    require_match "$app" "$RE_APPNAME" "appname"
+    require_match "$mode" '^(prepare|start|update)$' "mode"
+    local app_dir
+    app_dir=$(require_path_within "${NODEAPPS_BASE}/${app}" "$NODEAPPS_BASE")
+    local launcher="${app_dir}/yuuka-hermes.cjs"
+    local runner="${app_dir}/.yuuka-hermes-runner.sh"
+
+    if [[ "$mode" == "prepare" ]]; then
+        if [[ -e "$app_dir" && -n "$(ls -A -- "$app_dir" 2>/dev/null)" ]]; then
+            fail "Folder ${app_dir} sudah ada dan tidak kosong - pakai nama aplikasi lain"
+        fi
+        mkdir -p "${app_dir}/data"
+        chown -R nodeapps:nodeapps "$app_dir"
+        chmod 750 "$app_dir"
+        fm_reapply_terminal_acl "$app_dir"
+    else
+        [[ -f "$launcher" ]] || fail "Folder ${app_dir} bukan instalasi Hermes dari panel"
+        if [[ "$mode" == "update" && ! -d "${app_dir}/data/hermes-agent" ]]; then
+            fail "Hermes di ${app_dir} belum pernah selesai terpasang - tunggu instalasi pertama atau hapus & instal ulang"
+        fi
+    fi
+
+    # Launcher ditulis ulang di setiap mode supaya perbaikan launcher ikut
+    # terbawa saat Update.
+    hermes_write_as_nodeapps "$launcher" 640 <<'LAUNCHER_EOF'
+// yuuka-hermes.cjs - dibuat panel-exec.sh (hermes-install), ditulis ulang
+// setiap install/update - jangan diedit manual.
+'use strict';
+const { spawn } = require('node:child_process');
+const fs = require('node:fs');
+const http = require('node:http');
+const path = require('node:path');
+
+const DIR = __dirname;
+const HOME = process.env.HERMES_HOME || path.join(DIR, 'data');
+const PORT = Number(process.env.PORT || 0);
+const OK = path.join(DIR, '.install-ok');
+const FAILED = path.join(DIR, '.install-failed');
+const LOG = path.join(DIR, 'install.log');
+
+function hermesBin() {
+  const home = process.env.HOME || '/home/nodeapps';
+  return [process.env.HERMES_BIN,
+    path.join(HOME, 'hermes-agent', '.venv', 'bin', 'hermes'),
+    path.join(HOME, 'hermes-agent', 'venv', 'bin', 'hermes'),
+    path.join(home, '.local', 'bin', 'hermes')].find((c) => c && fs.existsSync(c)) || null;
+}
+
+// Copies whatever the background installer appended to install.log since
+// the last call into this process's stdout - i.e. into the PM2 log the
+// panel shows (behind the panel login) - instead of exposing it on the
+// public progress page.
+let logOffset = 0;
+function mirrorInstallLog() {
+  try {
+    const fd = fs.openSync(LOG, 'r');
+    const size = fs.fstatSync(fd).size;
+    if (size < logOffset) logOffset = 0;
+    if (size > logOffset) {
+      const buf = Buffer.alloc(size - logOffset);
+      fs.readSync(fd, buf, 0, buf.length, logOffset);
+      logOffset = size;
+      // Drop the chunk's own trailing newline before prefixing - otherwise
+      // /^/gm also prefixes the empty "line" after it, leaving a dangling
+      // "[install] " that the next console.log line gets glued onto.
+      process.stdout.write(buf.toString('utf8').replace(/\n$/, '').replace(/^/gm, '[install] ') + '\n');
+    }
+    fs.closeSync(fd);
+  } catch { /* log not created yet */ }
+}
+
+// Status page while the background installer runs. Public until Hermes
+// itself (with its login) takes over the port, so it shows no details.
+function placeholder() {
+  const srv = http.createServer((req, res) => {
+    const failed = fs.existsSync(FAILED);
+    const title = failed ? 'Instalasi Hermes gagal' : 'Hermes sedang diinstal...';
+    const hint = failed
+      ? 'Detail error ada di panel: Node.js Apps &gt; Logs. Setelah penyebabnya diperbaiki, jalankan App Installer &gt; Update.'
+      : 'Biasanya 3-10 menit. Halaman ini memuat ulang sendiri setiap 10 detik; progres detail ada di panel (Node.js Apps &gt; Logs).';
+    res.writeHead(failed ? 500 : 503, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Retry-After': '10' });
+    res.end(`<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${failed ? '' : '<meta http-equiv="refresh" content="10">'}<title>${title}</title></head>`
+      + `<body style="font-family:system-ui,sans-serif;max-width:720px;margin:3rem auto;padding:0 1rem"><h2>${title}</h2><p>${hint}</p></body></html>`);
+  });
+  srv.listen(PORT, '127.0.0.1', () => console.log(`[yuuka] menunggu instalasi Hermes selesai - halaman progres di 127.0.0.1:${PORT}`));
+  const timer = setInterval(() => {
+    if (fs.existsSync(OK) && hermesBin()) {
+      clearInterval(timer);
+      srv.close(() => start());
+      if (srv.closeAllConnections) srv.closeAllConnections();
+    }
+  }, 5000);
+}
+
+const children = new Set();
+let stopping = false;
+
+function run(name, args, onExit) {
+  const child = spawn(hermesBin(), args, {
+    cwd: HOME,
+    env: { ...process.env, HERMES_HOME: HOME, PYTHONUNBUFFERED: '1', NO_COLOR: '1' },
+    stdio: ['ignore', 'inherit', 'inherit'],
+  });
+  children.add(child);
+  child.on('error', (e) => console.error(`[yuuka] gagal menjalankan ${name}: ${e.message}`));
+  child.on('exit', (code, sig) => {
+    children.delete(child);
+    if (!stopping) onExit(code, sig);
+  });
+}
+
+let gatewayDelay = 5000;
+function startGateway() {
+  const startedAt = Date.now();
+  run('gateway', ['gateway', 'run'], (code, sig) => {
+    // A gateway that ran a while before dying gets a fresh short delay;
+    // one that keeps dying right away (typically: no model provider
+    // configured yet) backs off up to 5 minutes instead of spamming logs.
+    gatewayDelay = Date.now() - startedAt > 120000 ? 5000 : Math.min(gatewayDelay * 2, 300000);
+    console.error(`[yuuka] gateway berhenti (code=${code}, signal=${sig}) - dicoba lagi dalam ${gatewayDelay / 1000} detik. Biasanya karena provider model belum diatur di dashboard.`);
+    setTimeout(() => { if (!stopping) startGateway(); }, gatewayDelay);
+  });
+}
+
+function start() {
+  if (!hermesBin()) {
+    console.error('[yuuka] binary hermes tidak ditemukan setelah instalasi - lihat install.log');
+    process.exit(1);
+  }
+  console.log(`[yuuka] menjalankan Hermes dashboard (127.0.0.1:${PORT}) + gateway, HERMES_HOME=${HOME}`);
+  // The dashboard IS this app from PM2's/Nginx's point of view - if it
+  // dies, exit so PM2 restarts the whole thing.
+  run('dashboard', ['dashboard', '--host', '127.0.0.1', '--port', String(PORT), '--no-open'], (code, sig) => {
+    console.error(`[yuuka] dashboard berhenti (code=${code}, signal=${sig}) - keluar supaya PM2 menjalankan ulang`);
+    shutdown(1);
+  });
+  startGateway();
+}
+
+function shutdown(code) {
+  stopping = true;
+  for (const c of children) {
+    try { c.kill('SIGTERM'); } catch { /* already gone */ }
+  }
+  setTimeout(() => process.exit(code), 3000);
+}
+process.on('SIGTERM', () => shutdown(0));
+process.on('SIGINT', () => shutdown(0));
+
+if (!PORT) {
+  console.error('[yuuka] env PORT tidak diset');
+  process.exit(1);
+}
+// install.log keeps being mirrored in both modes, so an Update's progress
+// (which runs while Hermes itself is up) shows in the panel too. Starting
+// straight into Hermes mode (PM2 restart) skips what's already there
+// instead of re-dumping the whole history into the PM2 log each time.
+if (fs.existsSync(OK) && hermesBin()) {
+  try { logOffset = fs.statSync(LOG).size; } catch { /* no log */ }
+  start();
+} else {
+  placeholder();
+}
+setInterval(mirrorInstallLog, 5000);
+LAUNCHER_EOF
+
+    [[ "$mode" == "prepare" ]] && { echo "OK: ${app_dir} disiapkan"; return 0; }
+
+    hermes_write_as_nodeapps "$runner" 750 <<RUNNER_EOF
+#!/usr/bin/env bash
+# Dibuat panel-exec.sh (hermes-install), dijalankan sebagai nodeapps di unit
+# systemd yuuka-hermes-${app}. Ditulis ulang setiap install/update.
+set -uo pipefail
+export HOME='${NODEAPPS_HOME}' NO_COLOR=1
+DIR='${app_dir}'
+exec >>"\$DIR/install.log" 2>&1
+echo "[yuuka] \$(date -Iseconds) mulai: ${mode}"
+rm -f "\$DIR/.install-failed"
+if curl -fsSL '${HERMES_INSTALL_URL}' -o "\$DIR/install-hermes.sh" \\
+    && bash "\$DIR/install-hermes.sh" --non-interactive --hermes-home "\$DIR/data" \\
+        --skip-browser --skip-computer-use --channel stable; then
+    touch "\$DIR/.install-ok"
+    echo "[yuuka] \$(date -Iseconds) instalasi selesai"
+    if [ '${mode}' = update ]; then
+        export NVM_DIR='${NODEAPPS_HOME}/.nvm'
+        set +u  # nvm.sh is not nounset-safe
+        . "\$NVM_DIR/nvm.sh"
+        pm2 restart '${app}' && echo "[yuuka] proses Hermes dijalankan ulang dengan versi baru"
+    fi
+else
+    touch "\$DIR/.install-failed"
+    echo "[yuuka] \$(date -Iseconds) instalasi GAGAL - lihat pesan di atas"
+fi
+RUNNER_EOF
+
+    systemd-run --unit="yuuka-hermes-${app}" --collect \
+        --description="Yuuka Panel - instalasi Hermes (${app})" \
+        -- /bin/bash -c 'ldconfig -p 2>/dev/null | grep -q "libatomic\.so\.1" || DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libatomic1 || true; exec runuser -u nodeapps -- /bin/bash "$1"' \
+        yuuka-hermes "$runner" \
+        < /dev/null \
+        || fail "Instalasi Hermes untuk ${app} masih berjalan (unit yuuka-hermes-${app}) atau gagal dijadwalkan"
+    echo "OK: instalasi Hermes (${mode}) berjalan di background, log: ${app_dir}/install.log"
+}
+
+# ---------------------------------------------------------------------------
 # Certbot / SSL
 # ---------------------------------------------------------------------------
 op_certbot_issue() {
@@ -2483,6 +2726,7 @@ case "$SUBCOMMAND" in
     pm2-reset)             op_pm2_reset "$@" ;;
     pm2-save)              op_pm2_save ;;
     ninerouter-install)    op_ninerouter_install "$@" ;;
+    hermes-install)        op_hermes_install "$@" ;;
     certbot-issue)         op_certbot_issue "$@" ;;
     certbot-remove)        op_certbot_remove "$@" ;;
     panel-ssl-issue)       op_panel_ssl_issue "$@" ;;

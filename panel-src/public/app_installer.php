@@ -12,6 +12,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     try {
         if ($action === 'install' && AppCatalog::exists((string) ($_POST['app_slug'] ?? ''))
+            && AppCatalog::runtime((string) $_POST['app_slug']) === 'nodejs'
+            && $_POST['app_slug'] === HermesInstallerService::APP_SLUG) {
+            Rbac::require('apps.install');
+
+            $result = HermesInstallerService::install(
+                (string) ($_POST['node_app_name'] ?? ''),
+                (string) ($_POST['domain'] ?? ''),
+                (string) ($_POST['dashboard_user'] ?? ''),
+                $user['id']
+            );
+
+            // Like 9Router's INITIAL_PASSWORD: shown once here, afterwards
+            // only in Node.js Apps > Env (stored encrypted, revealable).
+            flash('success',
+                "Hermes Agent sedang diinstal di latar belakang untuk {$result['domain']}"
+                . " (app Node.js \"{$result['app_name']}\", port lokal {$result['port']}) - biasanya 3-10 menit;"
+                . " progresnya di Node.js Apps > Logs, dan http://{$result['domain']} menampilkan halaman status sampai selesai."
+                . " Login dashboard: {$result['username']} / {$result['password']}"
+                . " (catat sekarang; tersimpan juga di Node.js Apps > Env sebagai HERMES_DASHBOARD_BASIC_AUTH_PASSWORD)."
+            );
+            flash('warning',
+                "Langkah lanjutan Hermes: (1) aktifkan SSL untuk {$result['domain']} di Node.js Apps > Domain & SSL,"
+                . " lalu di tab Env ubah HERMES_DASHBOARD_PUBLIC_URL menjadi https://{$result['domain']} dan simpan supaya app di-redeploy;"
+                . " (2) setelah login, atur provider model & API key-nya dari dashboard Hermes."
+            );
+        } elseif ($action === 'install' && AppCatalog::exists((string) ($_POST['app_slug'] ?? ''))
             && AppCatalog::runtime((string) $_POST['app_slug']) === 'nodejs') {
             Rbac::require('apps.install');
 
@@ -85,6 +111,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $newVersion = NineRouterInstallerService::update((int) ($_POST['nodejs_app_id'] ?? 0), null, $user['id']);
             flash('success', '9Router berhasil diupdate' . ($newVersion !== null ? " ke v{$newVersion}" : '') . ' dan dijalankan ulang. Data provider, API key & riwayat pemakaian tidak berubah.');
+        } elseif ($action === 'update_hermes') {
+            Rbac::require('apps.install');
+
+            HermesInstallerService::update((int) ($_POST['nodejs_app_id'] ?? 0), $user['id']);
+            flash('success', 'Update Hermes berjalan di latar belakang (beberapa menit) - app dijalankan ulang otomatis setelah selesai. Pantau progresnya di Node.js Apps > Logs. Config, sesi, skills & memori tidak berubah.');
         }
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
@@ -129,7 +160,7 @@ include __DIR__ . '/partials/header.php';
             <div class="fw-semibold"><?= e($app['name']) ?></div>
             <span class="badge <?= e($tierBadge[$app['tier']]) ?>"><?= e($tierLabel[$app['tier']]) ?></span>
             <?php if (AppCatalog::runtime($slug) === 'nodejs'): ?>
-              <span class="badge text-bg-dark">Node.js <?= e($app['node_version']) ?></span>
+              <span class="badge text-bg-dark"><?= e($app['runtime_label'] ?? ('Node.js ' . $app['node_version'])) ?></span>
             <?php endif; ?>
             <?php if (!empty($app['versions'])): ?>
               <span class="text-muted small"><?= count($app['versions']) > 1 ? 'Pilih versi saat instal' : 'v' . e($app['versions'][0]['version']) ?></span>
@@ -150,7 +181,11 @@ include __DIR__ . '/partials/header.php';
                 data-versions="<?= e(json_encode($app['versions'] ?? [])) ?>"
                 data-php-min="<?= e($app['php_min'] ?? '') ?>"
                 data-php-max="<?= e($app['php_max'] ?? '') ?>"
-                data-node-version="<?= e($app['node_version'] ?? '') ?>">
+                data-node-version="<?= e($app['node_version'] ?? '') ?>"
+                data-pin-version="<?= !empty($app['pin_version']) ? '1' : '0' ?>"
+                data-dashboard-login="<?= !empty($app['dashboard_login']) ? '1' : '0' ?>"
+                data-default-app-name="<?= e($app['default_app_name'] ?? '') ?>"
+                data-install-note="<?= e($app['install_note'] ?? '') ?>">
           <i class="bi bi-download me-1"></i>Instal
         </button>
         <?php endif; ?>
@@ -176,6 +211,7 @@ include __DIR__ . '/partials/header.php';
           <?php
             $scheme = (int) $row['ssl_enabled'] === 1 ? 'https' : 'http';
             $isNineRouter = $row['app_slug'] === NineRouterInstallerService::APP_SLUG && $row['nodejs_app_id'] !== null;
+            $isHermes = $row['app_slug'] === HermesInstallerService::APP_SLUG && $row['nodejs_app_id'] !== null;
           ?>
           <tr>
             <td>
@@ -204,6 +240,14 @@ include __DIR__ . '/partials/header.php';
                   <input type="hidden" name="action" value="update_9router">
                   <input type="hidden" name="nodejs_app_id" value="<?= (int) $row['nodejs_app_id'] ?>">
                   <button type="submit" class="btn btn-sm btn-outline-primary" title="Update ke versi terbaru"><i class="bi bi-arrow-up-circle me-1"></i>Update</button>
+                </form>
+              <?php endif; ?>
+              <?php if ($isHermes && Rbac::can($user['role'], 'apps.install')): ?>
+                <form method="post" class="d-inline" data-confirm="Update Hermes ke rilis stable terbaru? Installer resmi berjalan di latar belakang beberapa menit, lalu app dijalankan ulang otomatis. Config, sesi, skills &amp; memori tidak berubah.">
+                  <?= Csrf::field() ?>
+                  <input type="hidden" name="action" value="update_hermes">
+                  <input type="hidden" name="nodejs_app_id" value="<?= (int) $row['nodejs_app_id'] ?>">
+                  <button type="submit" class="btn btn-sm btn-outline-primary" title="Update ke rilis stable terbaru"><i class="bi bi-arrow-up-circle me-1"></i>Update</button>
                 </form>
               <?php endif; ?>
             </td>
@@ -257,8 +301,13 @@ include __DIR__ . '/partials/header.php';
 
             <div class="col-md-6" id="installNodeAppNameField" style="display:none">
               <label class="form-label">Nama Aplikasi (PM2)</label>
-              <input type="text" name="node_app_name" id="installNodeAppNameInput" class="form-control" value="9router" required pattern="^[a-zA-Z0-9_\-]{1,64}$" maxlength="64">
+              <input type="text" name="node_app_name" id="installNodeAppNameInput" class="form-control" required pattern="^[a-zA-Z0-9_\-]{1,64}$" maxlength="64">
               <div class="form-text">Jadi folder <code>/home/nodeapps/apps/&lt;nama&gt;</code> &amp; nama proses PM2 - huruf, angka, <code>-</code>, <code>_</code>.</div>
+            </div>
+            <div class="col-md-6" id="installDashboardUserField" style="display:none">
+              <label class="form-label">Username Dashboard</label>
+              <input type="text" name="dashboard_user" id="installDashboardUserInput" class="form-control" value="admin" required pattern="^[a-zA-Z0-9_.\-]{3,64}$" maxlength="64">
+              <div class="form-text">Untuk login bawaan dashboard. Password dibuat otomatis &amp; ditampilkan sekali.</div>
             </div>
             <div class="col-md-6" id="installNodeVersionField" style="display:none">
               <label class="form-label">Versi 9Router (opsional)</label>
@@ -266,11 +315,7 @@ include __DIR__ . '/partials/header.php';
               <div class="form-text">Format <code>x.y.z</code> sesuai rilis npm. Kosongkan untuk rilis terbaru (direkomendasikan).</div>
             </div>
             <div class="col-12" id="installNodeNote" style="display:none">
-              <div class="alert alert-success small mb-0">
-                Dipasang sebagai aplikasi Node.js baru (PM2, Node.js <span id="installNodeRuntimeVersion"></span>) di belakang Nginx dengan mode proxy streaming.
-                Port lokal, secret JWT/API key &amp; password dashboard awal dibuat otomatis - password ditampilkan sekali setelah instal selesai.
-                Unduh paket dari npm bisa memakan waktu 1-2 menit, jangan tutup halaman ini.
-              </div>
+              <div class="alert alert-success small mb-0" id="installNodeNoteText"></div>
             </div>
 
             <div class="col-12" id="installZipField" style="display:none">
@@ -339,23 +384,32 @@ document.getElementById('installAppModal').addEventListener('show.bs.modal', fun
   document.getElementById('installAppSlug').value = slug;
   document.getElementById('installAppName').textContent = btn.getAttribute('data-name');
 
-  // Node.js-runtime apps (9Router) are a different shape entirely: no PHP
-  // version/database, but a PM2 app name + optional npm version instead.
+  // Node.js-runtime apps (9Router, Hermes) are a different shape entirely:
+  // no PHP version/database, but a PM2 app name plus per-app extras from
+  // the catalog (9Router: optional npm version; Hermes: dashboard username).
   // Hidden fields are DISABLED (not just hidden) for the same reason
   // explained above - a hidden-but-enabled `required` field like the PHP
   // select would otherwise block submission or post a bogus value.
   var isNode = btn.getAttribute('data-runtime') === 'nodejs';
   document.getElementById('installPhpVersionField').style.display = isNode ? 'none' : '';
   document.getElementById('installPhpVersionSelect').disabled = isNode;
-  ['installNodeAppNameField', 'installNodeVersionField', 'installNodeNote'].forEach(function (id) {
+  var pinVersion = isNode && btn.getAttribute('data-pin-version') === '1';
+  var dashboardLogin = isNode && btn.getAttribute('data-dashboard-login') === '1';
+  ['installNodeAppNameField', 'installNodeNote'].forEach(function (id) {
     document.getElementById(id).style.display = isNode ? '' : 'none';
   });
+  document.getElementById('installNodeVersionField').style.display = pinVersion ? '' : 'none';
+  document.getElementById('installDashboardUserField').style.display = dashboardLogin ? '' : 'none';
   document.getElementById('installNodeAppNameInput').disabled = !isNode;
-  document.getElementById('installNodeVersionInput').disabled = !isNode;
+  document.getElementById('installNodeVersionInput').disabled = !pinVersion;
+  document.getElementById('installDashboardUserInput').disabled = !dashboardLogin;
+  if (isNode) {
+    document.getElementById('installNodeAppNameInput').value = btn.getAttribute('data-default-app-name') || '';
+    document.getElementById('installNodeNoteText').textContent = btn.getAttribute('data-install-note') || '';
+  }
   document.getElementById('installDomainHelp').textContent = isNode
     ? 'Domain/subdomain khusus untuk dashboard & endpoint API (contoh: ai.contoh.com) - arahkan DNS-nya ke server ini dulu.'
     : 'Website baru akan dibuat otomatis di domain ini.';
-  document.getElementById('installNodeRuntimeVersion').textContent = btn.getAttribute('data-node-version') || '';
 
   var zipField = document.getElementById('installZipField');
   var zipInput = zipField.querySelector('input[name="app_zip"]');
