@@ -550,6 +550,37 @@ dan memori di `HERMES_HOME` tidak tersentuh). Runner-nya sendiri yang
 menjalankan `pm2 restart <app>` setelah selesai. Hapus lewat Node.js Apps >
 Hapus.
 
+#### Hubungkan Hermes ke 9Router
+
+Tombol **9Router** di baris Hermes (tabel Aplikasi Terinstall) menjadikan
+9Router di server yang sama sebagai provider model Hermes
+(`HermesInstallerService::connectNineRouter()`):
+
+1. Admin memilih app 9Router, mengisi API key-nya, lalu menekan **Muat
+   model**. Panel memanggil `http://127.0.0.1:<port-9router>/v1/models`
+   langsung dari PHP (`NineRouterInstallerService::listModels()`), sekaligus
+   memeriksa key-nya (9Router dengan *Require API key* membalas 401). ID
+   model yang akan di-*coerce* oleh `hermes config set` menjadi bool atau
+   angka (`true`, `123`, `1e5`, dst.) disaring.
+2. Saat submit, daftar model diambil ulang (key masih berlaku dan modelnya
+   memang ada), lalu `panel-exec.sh hermes-config` menjalankan CLI resmi
+   `hermes config set` sebagai `nodeapps`: `model.provider=custom`,
+   `model.base_url=http://127.0.0.1:<port>/v1`, `model.default=<model>`,
+   `model.key_env=NINEROUTER_API_KEY`. Sisa route lama (`api_key` inline
+   yang akan mengalahkan `key_env`, `api_mode`/`transport`) dihapus.
+3. API key disimpan terenkripsi di Node.js Apps > Env app Hermes sebagai
+   `NINEROUTER_API_KEY`, lalu app di-redeploy lewat PM2
+   (`NodeService::applyEnv()`), sehingga dashboard dan gateway Hermes
+   restart dengan env tersebut. Key tidak pernah ditulis ke `config.yaml`
+   atau `.env` Hermes dan tidak muncul di argv.
+
+Endpoint lokal dipakai karena 9Router hanya *listen* di `127.0.0.1`. Lalu
+lintas Hermes ke 9Router tidak lewat Nginx, Cloudflare, atau internet, dan
+tidak terkena batas timeout vhost. Key boleh dikosongkan untuk 9Router yang
+tidak mewajibkan API key (`model.key_env` dan env-nya ikut dihapus). Model
+bisa diganti kapan saja dari tombol yang sama atau dari dashboard Hermes.
+Hermes menolak model dengan konteks di bawah 64K token saat start.
+
 ## File Manager
 
 `FileManagerService`, akses via sidebar (`/file_manager`) atau tombol

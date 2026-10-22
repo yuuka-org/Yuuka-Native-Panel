@@ -44,17 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash('success', count($parsed) . ' variabel diimpor.');
         } elseif ($action === 'apply') {
             Rbac::require('nodejs.control');
-            $env = EnvService::plainMapForApp($id);
-            $env['PORT'] = (string) $app['port'];
-            $ecosystem = nodejs_build_ecosystem_config(
-                $app['pm2_name'], $app['project_path'], $app['start_command'],
-                (int) $app['instances'], $app['exec_mode'], (bool) $app['autorestart'],
-                (bool) $app['watch'], $app['max_memory_restart'], $app['node_env'], $env
-            );
-            $result = nodejs_pm2_deploy($app['pm2_name'], $ecosystem);
-            if (!$result['ok']) {
-                throw new RuntimeException('Gagal menerapkan environment variable: ' . $result['output']);
-            }
+            NodeService::applyEnv($id);
             flash('success', 'Environment variable diterapkan dan aplikasi di-restart via PM2.');
         }
     } catch (InvalidArgumentException|RuntimeException $e) {

@@ -28,6 +28,18 @@ final class HermesInstallerService
     private const USERNAME_PATTERN = '/^[a-zA-Z0-9_.-]{3,64}$/';
 
     /**
+     * Node.js Apps > Env variable (stored encrypted, injected by PM2) that
+     * holds the 9Router API key - config.yaml only names it through
+     * model.key_env, so the key itself never lands in Hermes' files.
+     */
+    public const NINEROUTER_KEY_ENV = 'NINEROUTER_API_KEY';
+    // Same charset as RE_HERMES_MODEL in panel-exec.sh.
+    private const MODEL_ID_PATTERN = '#^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$#';
+    // `hermes config set` turns these into bool/None/float instead of
+    // keeping them as a model id string.
+    private const COERCED_WORDS = ['true', 'false', 'yes', 'no', 'on', 'off', 'null', 'none', 'inf', 'infinity', 'nan'];
+
+    /**
      * @return array{app_id:int,app_name:string,domain:string,port:int,username:string,password:string}
      */
     public static function install(string $appName, string $domain, string $username, ?int $userId): array
@@ -168,6 +180,94 @@ final class HermesInstallerService
      */
     public static function update(int $nodeAppId, ?int $userId): void
     {
+        $nodeApp = self::installedApp($nodeAppId);
+
+        $result = Executor::run('hermes-install', [(string) $nodeApp['app_name'], 'update'], null, 60);
+        if (!$result['ok']) {
+            throw new RuntimeException('Gagal memulai update Hermes: ' . $result['output']);
+        }
+        ActivityLog::record($userId, 'app_installer.update', "Update Hermes ({$nodeApp['app_name']}) dimulai di background");
+    }
+
+    /**
+     * Models from the given 9Router that Hermes can use as model.default,
+     * fetched live with $apiKey (which also validates the key).
+     *
+     * @return list<string>
+     */
+    public static function nineRouterModels(int $nineRouterNodeAppId, string $apiKey): array
+    {
+        $router = NineRouterInstallerService::installedApp($nineRouterNodeAppId);
+        $models = NineRouterInstallerService::listModels(NineRouterInstallerService::localBaseUrl($router), trim($apiKey));
+        $usable = array_values(array_filter($models, static fn(string $id): bool =>
+            preg_match(self::MODEL_ID_PATTERN, $id) === 1
+            && preg_match('/[A-Za-z]/', $id) === 1
+            && !is_numeric($id)
+            && !in_array(strtolower($id), self::COERCED_WORDS, true)));
+        if ($usable === []) {
+            throw new RuntimeException('9Router belum menyediakan model yang bisa dipakai - hubungkan provider di dashboard 9Router dulu');
+        }
+        return $usable;
+    }
+
+    /**
+     * Points Hermes' main model at a 9Router on this server: provider
+     * `custom` with 9Router's loopback endpoint (written by Hermes' own CLI
+     * through panel-exec.sh hermes-config), the key in the app's encrypted
+     * env as NINEROUTER_KEY_ENV, then a PM2 redeploy so the dashboard and
+     * gateway restart with both. An empty key is allowed for a 9Router that
+     * doesn't require one.
+     */
+    public static function connectNineRouter(int $hermesNodeAppId, int $nineRouterNodeAppId, string $apiKey, string $model, ?int $userId): void
+    {
+        $hermes = self::installedApp($hermesNodeAppId);
+        $router = NineRouterInstallerService::installedApp($nineRouterNodeAppId);
+        $apiKey = trim($apiKey);
+        $model = trim($model);
+
+        // Re-fetched rather than trusting the list the form was built from:
+        // proves the key still works and that the model really exists.
+        if (!in_array($model, self::nineRouterModels($nineRouterNodeAppId, $apiKey), true)) {
+            throw new InvalidArgumentException('Model tidak ada di daftar 9Router - muat ulang daftar model lalu pilih lagi');
+        }
+        $baseUrl = NineRouterInstallerService::localBaseUrl($router);
+
+        // Config first: it's the step most likely to fail (install not
+        // finished, CLI error) and nothing has changed yet if it does.
+        $result = Executor::run(
+            'hermes-config',
+            [(string) $hermes['app_name'], 'custom', $baseUrl, $model, $apiKey !== '' ? self::NINEROUTER_KEY_ENV : '-'],
+            null,
+            120
+        );
+        if (!$result['ok']) {
+            throw new RuntimeException('Gagal menulis config Hermes: ' . trim($result['output']));
+        }
+
+        if ($apiKey !== '') {
+            EnvService::setVariable($hermesNodeAppId, self::NINEROUTER_KEY_ENV, $apiKey, true);
+        } else {
+            EnvService::deleteVariable($hermesNodeAppId, self::NINEROUTER_KEY_ENV);
+        }
+        try {
+            NodeService::applyEnv($hermesNodeAppId);
+        } catch (RuntimeException $e) {
+            throw new RuntimeException(
+                'Config Hermes sudah diarahkan ke 9Router, tapi app gagal dijalankan ulang: ' . $e->getMessage()
+                . ' - terapkan ulang dari Node.js Apps > Env.'
+            );
+        }
+
+        ActivityLog::record(
+            $userId,
+            'app_installer.hermes_9router',
+            "Hermes ({$hermes['app_name']}) dihubungkan ke 9Router ({$router['app_name']}), model {$model}"
+        );
+    }
+
+    /** The Node.js app row of a Hermes installed through the App Installer. */
+    private static function installedApp(int $nodeAppId): array
+    {
         $stmt = Database::app()->prepare('SELECT id FROM installed_apps WHERE nodejs_app_id = :id AND app_slug = :slug');
         $stmt->execute(['id' => $nodeAppId, 'slug' => self::APP_SLUG]);
         if ($stmt->fetchColumn() === false) {
@@ -177,12 +277,7 @@ final class HermesInstallerService
         if ($nodeApp === null) {
             throw new InvalidArgumentException('Aplikasi Node.js tidak ditemukan');
         }
-
-        $result = Executor::run('hermes-install', [(string) $nodeApp['app_name'], 'update'], null, 60);
-        if (!$result['ok']) {
-            throw new RuntimeException('Gagal memulai update Hermes: ' . $result['output']);
-        }
-        ActivityLog::record($userId, 'app_installer.update', "Update Hermes ({$nodeApp['app_name']}) dimulai di background");
+        return $nodeApp;
     }
 
     /** 20 chars, letters+digits only - easy to copy, no shell/URL-special characters. */

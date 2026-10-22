@@ -183,17 +183,7 @@ final class NineRouterInstallerService
      */
     public static function update(int $nodeAppId, ?string $version, ?int $userId): ?string
     {
-        $stmt = Database::app()->prepare(
-            'SELECT id FROM installed_apps WHERE nodejs_app_id = :id AND app_slug = :slug'
-        );
-        $stmt->execute(['id' => $nodeAppId, 'slug' => self::APP_SLUG]);
-        if ($stmt->fetchColumn() === false) {
-            throw new InvalidArgumentException('Instalasi 9Router tidak ditemukan');
-        }
-        $nodeApp = NodeService::find($nodeAppId);
-        if ($nodeApp === null) {
-            throw new InvalidArgumentException('Aplikasi Node.js tidak ditemukan');
-        }
+        $nodeApp = self::installedApp($nodeAppId);
         $versionArg = self::versionArg($version);
 
         // node_version is whatever the admin last set in Node.js Apps >
@@ -267,6 +257,106 @@ final class NineRouterInstallerService
             }
         }
         return $parsed;
+    }
+
+    /**
+     * The Node.js app row of a 9Router installed through the App Installer -
+     * checked against installed_apps, so an arbitrary Node.js app id can't
+     * be passed off as one.
+     */
+    public static function installedApp(int $nodeAppId): array
+    {
+        $stmt = Database::app()->prepare(
+            'SELECT id FROM installed_apps WHERE nodejs_app_id = :id AND app_slug = :slug'
+        );
+        $stmt->execute(['id' => $nodeAppId, 'slug' => self::APP_SLUG]);
+        if ($stmt->fetchColumn() === false) {
+            throw new InvalidArgumentException('Instalasi 9Router tidak ditemukan');
+        }
+        $nodeApp = NodeService::find($nodeAppId);
+        if ($nodeApp === null) {
+            throw new InvalidArgumentException('Aplikasi Node.js tidak ditemukan');
+        }
+        return $nodeApp;
+    }
+
+    /**
+     * OpenAI-compatible endpoint on the loopback port - 9Router only listens
+     * on 127.0.0.1 (HOSTNAME in install()), so other apps on this server
+     * reach it without going through Nginx/Cloudflare or the public domain.
+     */
+    public static function localBaseUrl(array $nodeApp): string
+    {
+        $port = (int) ($nodeApp['port'] ?? 0);
+        if ($port < 1 || $port > 65535) {
+            throw new RuntimeException('Port lokal 9Router tidak valid');
+        }
+        return "http://127.0.0.1:{$port}/v1";
+    }
+
+    /**
+     * Model ids (combos included) that 9Router serves to $apiKey, in
+     * 9Router's own order. Doubles as the key check: with "Require API key"
+     * on, /v1/models answers 401 to a wrong or missing key.
+     *
+     * @return list<string>
+     */
+    public static function listModels(string $baseUrl, string $apiKey): array
+    {
+        if (!preg_match('#^http://127\.0\.0\.1:\d{1,5}/v1$#', $baseUrl)) {
+            throw new InvalidArgumentException('Endpoint 9Router tidak valid');
+        }
+        if (strlen($apiKey) > 512 || preg_match('/[\x00-\x20\x7f]/', $apiKey)) {
+            throw new InvalidArgumentException('API key tidak valid (tanpa spasi, maksimal 512 karakter)');
+        }
+
+        $headers = ['Accept: application/json'];
+        if ($apiKey !== '') {
+            $headers[] = 'Authorization: Bearer ' . $apiKey;
+        }
+        $ch = curl_init();
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $baseUrl . '/models',
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTP,
+            // Never hand the key to an http_proxy from the environment.
+            CURLOPT_PROXY => '',
+            CURLOPT_NOPROXY => '*',
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT => 20,
+            CURLOPT_MAXFILESIZE => 4194304,
+            CURLOPT_USERAGENT => 'YuukaPanel/1.0',
+        ]);
+        $body = curl_exec($ch);
+        $errno = curl_errno($ch);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($body === false || $errno !== 0) {
+            throw new RuntimeException("9Router tidak merespons di {$baseUrl} - pastikan app-nya berjalan (Node.js Apps)");
+        }
+        if ($httpCode === 401 || $httpCode === 403) {
+            throw new RuntimeException($apiKey === ''
+                ? '9Router mewajibkan API key - buat di dashboard 9Router lalu isi di sini'
+                : "API key ditolak 9Router (HTTP {$httpCode}) - periksa lagi key-nya di dashboard 9Router");
+        }
+        if ($httpCode < 200 || $httpCode >= 300) {
+            throw new RuntimeException("9Router membalas HTTP {$httpCode} saat diminta daftar model");
+        }
+        $decoded = json_decode((string) $body, true);
+        if (!is_array($decoded) || !isset($decoded['data']) || !is_array($decoded['data'])) {
+            throw new RuntimeException('Respons daftar model dari 9Router tidak dikenali');
+        }
+
+        $ids = [];
+        foreach ($decoded['data'] as $entry) {
+            if (is_array($entry) && isset($entry['id']) && is_string($entry['id']) && $entry['id'] !== '') {
+                $ids[$entry['id']] = true;
+            }
+        }
+        return array_map('strval', array_keys($ids));
     }
 
     /** npm's stderr can run to hundreds of lines - keep only the end, where the actual error is. */

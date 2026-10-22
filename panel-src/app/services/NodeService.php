@@ -434,6 +434,31 @@ final class NodeService
         return in_array($profile, self::ALLOWED_PROXY_PROFILES, true) ? $profile : 'default';
     }
 
+    /**
+     * Redeploys the app via PM2 with its current env vars (EnvService) -
+     * PM2 only reads env at start, so this is what makes an env change
+     * take effect. Restarts the app. Uses the app's own Node.js version,
+     * same as createApp()/updateApp().
+     */
+    public static function applyEnv(int $id): void
+    {
+        $app = self::find($id);
+        if ($app === null) {
+            throw new InvalidArgumentException('Aplikasi tidak ditemukan');
+        }
+        $env = EnvService::plainMapForApp($id);
+        $env['PORT'] = (string) $app['port'];
+        $ecosystem = nodejs_build_ecosystem_config(
+            $app['pm2_name'], $app['project_path'], $app['start_command'],
+            (int) $app['instances'], $app['exec_mode'], (bool) $app['autorestart'],
+            (bool) $app['watch'], $app['max_memory_restart'], $app['node_env'], $env
+        );
+        $result = nodejs_pm2_deploy($app['pm2_name'], $ecosystem, (string) $app['node_version']);
+        if (!$result['ok']) {
+            throw new RuntimeException('Gagal menerapkan environment variable: ' . $result['output']);
+        }
+    }
+
     public static function controlApp(int $id, string $action, ?int $userId): void
     {
         $app = self::find($id);

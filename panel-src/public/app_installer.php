@@ -10,6 +10,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     Csrf::validateRequest();
     $action = (string) ($_POST['action'] ?? '');
 
+    // Fetched by the "Hubungkan 9Router" modal - answers JSON instead of
+    // the flash + redirect flow below.
+    if ($action === 'ninerouter_models') {
+        Rbac::require('apps.install');
+        try {
+            jsonResponse(['ok' => true, 'models' => HermesInstallerService::nineRouterModels(
+                (int) ($_POST['ninerouter_app_id'] ?? 0),
+                (string) ($_POST['api_key'] ?? '')
+            )]);
+        } catch (InvalidArgumentException|RuntimeException $e) {
+            jsonResponse(['ok' => false, 'error' => $e->getMessage()], 422);
+        }
+    }
+
     try {
         if ($action === 'install' && AppCatalog::exists((string) ($_POST['app_slug'] ?? ''))
             && AppCatalog::runtime((string) $_POST['app_slug']) === 'nodejs'
@@ -35,7 +49,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash('warning',
                 "Langkah lanjutan Hermes: (1) aktifkan SSL untuk {$result['domain']} di Node.js Apps > Domain & SSL,"
                 . " lalu di tab Env ubah HERMES_DASHBOARD_PUBLIC_URL menjadi https://{$result['domain']} dan simpan supaya app di-redeploy;"
-                . " (2) setelah login, atur provider model & API key-nya dari dashboard Hermes."
+                . " (2) setelah login, atur provider model & API key-nya dari dashboard Hermes,"
+                . " atau pakai tombol 9Router di tabel Aplikasi Terinstall kalau 9Router terpasang di server ini."
             );
         } elseif ($action === 'install' && AppCatalog::exists((string) ($_POST['app_slug'] ?? ''))
             && AppCatalog::runtime((string) $_POST['app_slug']) === 'nodejs') {
@@ -116,6 +131,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             HermesInstallerService::update((int) ($_POST['nodejs_app_id'] ?? 0), $user['id']);
             flash('success', 'Update Hermes berjalan di latar belakang (beberapa menit) - app dijalankan ulang otomatis setelah selesai. Pantau progresnya di Node.js Apps > Logs. Config, sesi, skills & memori tidak berubah.');
+        } elseif ($action === 'connect_9router') {
+            Rbac::require('apps.install');
+
+            $model = trim((string) ($_POST['model'] ?? ''));
+            $withKey = trim((string) ($_POST['api_key'] ?? '')) !== '';
+            HermesInstallerService::connectNineRouter(
+                (int) ($_POST['nodejs_app_id'] ?? 0),
+                (int) ($_POST['ninerouter_app_id'] ?? 0),
+                (string) ($_POST['api_key'] ?? ''),
+                $model,
+                $user['id']
+            );
+            flash('success',
+                "Hermes sekarang memakai model {$model} lewat 9Router (endpoint lokal, tidak lewat internet) dan sudah dijalankan ulang."
+                . ($withKey
+                    ? ' API key tersimpan terenkripsi di Node.js Apps > Env sebagai ' . HermesInstallerService::NINEROUTER_KEY_ENV . '.'
+                    : '')
+                . ' Model lain bisa dipilih kapan saja dari tombol yang sama atau dari dashboard Hermes.'
+            );
         }
     } catch (InvalidArgumentException|RuntimeException $e) {
         flash('error', $e->getMessage());
@@ -126,6 +160,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $catalog = AppCatalog::all();
 $phpVersions = PhpService::installedVersions();
 $installedApps = AppInstallerService::listInstalled();
+$nineRouterApps = array_values(array_filter(
+    $installedApps,
+    static fn(array $row): bool => $row['app_slug'] === NineRouterInstallerService::APP_SLUG && $row['nodejs_app_id'] !== null
+));
 
 $tierBadge = [
     AppCatalog::TIER_FULL => 'text-bg-success',
@@ -243,6 +281,9 @@ include __DIR__ . '/partials/header.php';
                 </form>
               <?php endif; ?>
               <?php if ($isHermes && Rbac::can($user['role'], 'apps.install')): ?>
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#hermesNineRouterModal"
+                        data-hermes-id="<?= (int) $row['nodejs_app_id'] ?>" data-hermes-name="<?= e($row['nodejs_app_name'] ?? '') ?>"
+                        title="Pakai 9Router sebagai provider model"><i class="bi bi-plug me-1"></i>9Router</button>
                 <form method="post" class="d-inline" data-confirm="Update Hermes ke rilis stable terbaru? Installer resmi berjalan di latar belakang beberapa menit, lalu app dijalankan ulang otomatis. Config, sesi, skills &amp; memori tidak berubah.">
                   <?= Csrf::field() ?>
                   <input type="hidden" name="action" value="update_hermes">
@@ -256,7 +297,7 @@ include __DIR__ . '/partials/header.php';
         </tbody>
       </table>
     </div>
-    <p class="text-muted small p-3 mb-0">Hapus aplikasi PHP lewat menu <a href="/websites">Hapus Website</a> pada domain terkait, aplikasi Node.js (9Router) lewat menu <a href="/nodejs">Node.js Apps</a> - database &amp; catatan aplikasi ikut dibersihkan otomatis.</p>
+    <p class="text-muted small p-3 mb-0">Hapus aplikasi PHP lewat menu <a href="/websites">Hapus Website</a> pada domain terkait, aplikasi Node.js (9Router, Hermes) lewat menu <a href="/nodejs">Node.js Apps</a> - database &amp; catatan aplikasi ikut dibersihkan otomatis.</p>
   </div>
 </div>
 
@@ -546,6 +587,160 @@ document.getElementById('installAppVersionSelect').addEventListener('change', fu
   var btn = document.querySelector('[data-slug="' + slug + '"][data-bs-target="#installAppModal"]');
   if (btn) filterPhpVersionsForApp(btn);
 });
+</script>
+
+<div class="modal fade" id="hermesNineRouterModal" tabindex="-1" aria-labelledby="hnrTitle">
+  <div class="modal-dialog">
+    <form method="post" id="hnrForm">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="hnrTitle">Hubungkan <span id="hnrHermesName"></span> ke 9Router</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+        </div>
+        <div class="modal-body">
+          <?= Csrf::field() ?>
+          <input type="hidden" name="action" value="connect_9router">
+          <input type="hidden" name="nodejs_app_id" id="hnrHermesId">
+          <?php if (empty($nineRouterApps)): ?>
+            <p class="mb-0">Belum ada 9Router yang terpasang di server ini. Instal 9Router dari katalog di atas, buat API key di dashboard-nya, lalu kembali ke sini.</p>
+          <?php else: ?>
+            <div class="mb-3">
+              <label class="form-label" for="hnrRouter">Aplikasi 9Router</label>
+              <select name="ninerouter_app_id" id="hnrRouter" class="form-select" required>
+                <?php foreach ($nineRouterApps as $nr): ?>
+                  <option value="<?= (int) $nr['nodejs_app_id'] ?>"><?= e($nr['nodejs_app_name'] ?? '') ?><?= $nr['domain'] !== null ? ' (' . e($nr['domain']) . ')' : '' ?></option>
+                <?php endforeach; ?>
+              </select>
+              <div class="form-text">Hermes memanggilnya lewat port lokal di server ini, tidak lewat domain atau internet.</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="hnrKey">API key 9Router</label>
+              <div class="input-group">
+                <input type="password" name="api_key" id="hnrKey" class="form-control" autocomplete="off" spellcheck="false" maxlength="512">
+                <button class="btn btn-outline-secondary" type="button" data-toggle-password-input="hnrKey" aria-label="Tampilkan API key"><i class="bi bi-eye"></i></button>
+              </div>
+              <div class="form-text">Buat di dashboard 9Router. Kosongkan hanya kalau 9Router Anda tidak mewajibkan API key.</div>
+            </div>
+            <div>
+              <label class="form-label" for="hnrModel">Model</label>
+              <div class="input-group">
+                <select name="model" id="hnrModel" class="form-select" required disabled>
+                  <option value="">Muat daftar model dulu</option>
+                </select>
+                <button class="btn btn-outline-secondary" type="button" id="hnrLoad"><i class="bi bi-arrow-repeat me-1"></i>Muat model</button>
+              </div>
+              <div class="form-text text-danger d-none" id="hnrError" role="alert"></div>
+              <div class="form-text" id="hnrHelp">Diambil langsung dari 9Router dengan API key di atas. Hermes butuh model dengan konteks minimal 64K token.</div>
+            </div>
+          <?php endif; ?>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+          <?php if (!empty($nineRouterApps)): ?>
+            <button type="submit" class="btn btn-primary" id="hnrSubmit" disabled>Hubungkan &amp; restart Hermes</button>
+          <?php endif; ?>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function () {
+  var modal = document.getElementById('hermesNineRouterModal');
+  var form = document.getElementById('hnrForm');
+  var router = document.getElementById('hnrRouter');
+  var key = document.getElementById('hnrKey');
+  var model = document.getElementById('hnrModel');
+  var loadBtn = document.getElementById('hnrLoad');
+  var submitBtn = document.getElementById('hnrSubmit');
+  var errorEl = document.getElementById('hnrError');
+
+  modal.addEventListener('show.bs.modal', function (ev) {
+    var btn = ev.relatedTarget;
+    document.getElementById('hnrHermesId').value = btn.getAttribute('data-hermes-id');
+    document.getElementById('hnrHermesName').textContent = btn.getAttribute('data-hermes-name');
+    if (!router) return;
+    key.value = '';
+    key.type = 'password';
+    resetModels('Muat daftar model dulu');
+  });
+  if (!router) return;
+
+  function showError(message) {
+    errorEl.textContent = message;
+    errorEl.classList.toggle('d-none', message === '');
+  }
+
+  // The model list belongs to one router + key pair - changing either
+  // invalidates it, so nothing stale can be submitted.
+  function resetModels(placeholder) {
+    model.innerHTML = '';
+    var opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = placeholder;
+    model.appendChild(opt);
+    model.disabled = true;
+    submitBtn.disabled = true;
+    showError('');
+  }
+
+  function loadModels() {
+    var body = new FormData();
+    body.append('_csrf', form.querySelector('input[name="_csrf"]').value);
+    body.append('action', 'ninerouter_models');
+    body.append('ninerouter_app_id', router.value);
+    body.append('api_key', key.value);
+    resetModels('Memuat...');
+    loadBtn.disabled = true;
+    loadBtn.classList.add('is-loading');
+    fetch('/app_installer', { method: 'POST', body: body, headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+      .then(function (r) {
+        return r.json().catch(function () {
+          throw new Error('Sesi panel mungkin sudah berakhir - muat ulang halaman lalu coba lagi.');
+        });
+      })
+      .then(function (data) {
+        if (!data.ok) throw new Error(data.error || 'Gagal memuat daftar model.');
+        model.innerHTML = '';
+        data.models.forEach(function (id) {
+          var opt = document.createElement('option');
+          opt.value = id;
+          opt.textContent = id;
+          model.appendChild(opt);
+        });
+        model.disabled = false;
+        submitBtn.disabled = false;
+        model.focus();
+      })
+      .catch(function (err) {
+        resetModels('Muat daftar model dulu');
+        showError(err.message);
+      })
+      .finally(function () {
+        loadBtn.disabled = false;
+        loadBtn.classList.remove('is-loading');
+      });
+  }
+
+  loadBtn.addEventListener('click', loadModels);
+  router.addEventListener('change', function () { resetModels('Muat daftar model dulu'); });
+  key.addEventListener('input', function () {
+    if (model.disabled) {
+      showError('');
+    } else {
+      resetModels('Muat daftar model dulu');
+    }
+  });
+  // Enter in the key field loads models instead of submitting a form whose
+  // submit button is still disabled.
+  key.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      loadModels();
+    }
+  });
+})();
 </script>
 <?php endif; ?>
 

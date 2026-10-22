@@ -1141,6 +1141,79 @@ RUNNER_EOF
 }
 
 # ---------------------------------------------------------------------------
+# hermes-config <app> custom <base_url> <model> <key_env|->
+#
+# Mengarahkan model utama Hermes ke endpoint OpenAI-compatible yang berjalan
+# di server ini (App Installer > Hubungkan 9Router). Ditulis lewat CLI resmi
+# `hermes config set/unset` yang dijalankan sebagai nodeapps: root tidak
+# menyentuh config.yaml milik nodeapps, dan format serta validasi YAML tetap
+# urusan Hermes sendiri. API key TIDAK lewat sini - key_env hanya NAMA env
+# var; nilainya disimpan terenkripsi di panel dan disuntikkan PM2 ke proses
+# Hermes, sehingga key tidak pernah muncul di argv maupun di disk.
+#
+# Urutan penting: mengganti model.provider membuang base_url/api_mode/
+# key_env milik provider lama, jadi provider di-set paling awal. Sisa route
+# lama (api_key inline mengalahkan key_env; api_mode/transport lama bisa
+# salah untuk endpoint chat completions) dihapus - "Config key not set"
+# untuk kunci yang memang belum ada itu wajar dan diabaikan.
+# ---------------------------------------------------------------------------
+RE_HERMES_LOCAL_BASE_URL='^http://127\.0\.0\.1:[0-9]{1,5}/v1$'
+RE_HERMES_MODEL='^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$'
+RE_HERMES_KEY_ENV='^(-|[A-Z_][A-Z0-9_]{0,63})$'
+
+hermes_cli_as_nodeapps() {
+    # hermes_cli_as_nodeapps <bin> <hermes_home> <args...> - selalu sebagai
+    # nodeapps, tidak pernah root (bin & config ada di folder milik nodeapps).
+    local bin="$1" home="$2"
+    shift 2
+    runuser -u nodeapps -- env -C "$home" HOME="$NODEAPPS_HOME" HERMES_HOME="$home" NO_COLOR=1 \
+        "$bin" "$@" < /dev/null 2>&1
+}
+
+op_hermes_config() {
+    local app="$1" mode="${2:-}" base_url="${3:-}" model="${4:-}" key_env="${5:-}"
+    require_match "$app" "$RE_APPNAME" "appname"
+    require_match "$mode" '^custom$' "mode"
+    require_match "$base_url" "$RE_HERMES_LOCAL_BASE_URL" "base_url"
+    require_match "$model" "$RE_HERMES_MODEL" "model"
+    require_match "$key_env" "$RE_HERMES_KEY_ENV" "key_env"
+    local app_dir
+    app_dir=$(require_path_within "${NODEAPPS_BASE}/${app}" "$NODEAPPS_BASE")
+    [[ -f "${app_dir}/yuuka-hermes.cjs" ]] || fail "Folder ${app_dir} bukan instalasi Hermes dari panel"
+    [[ -f "${app_dir}/.install-ok" ]] || fail "Hermes ${app} belum selesai terpasang - tunggu instalasinya selesai (Node.js Apps > Logs)"
+
+    # Same candidates, same order as the launcher's hermesBin().
+    local bin="" candidate
+    for candidate in "${app_dir}/data/hermes-agent/.venv/bin/hermes" \
+                     "${app_dir}/data/hermes-agent/venv/bin/hermes" \
+                     "${NODEAPPS_HOME}/.local/bin/hermes"; do
+        if [[ -x "$candidate" ]]; then
+            bin="$candidate"
+            break
+        fi
+    done
+    [[ -n "$bin" ]] || fail "Binary hermes untuk ${app} tidak ditemukan - jalankan App Installer > Update"
+
+    local home="${app_dir}/data" out pair key value
+    for pair in "model.provider=custom" "model.base_url=${base_url}" "model.default=${model}"; do
+        key="${pair%%=*}"
+        value="${pair#*=}"
+        out=$(hermes_cli_as_nodeapps "$bin" "$home" config set "$key" "$value") \
+            || fail "hermes config set ${key} gagal: $(tail -n 5 <<<"$out")"
+    done
+    for key in model.api_key model.api model.api_mode model.transport; do
+        hermes_cli_as_nodeapps "$bin" "$home" config unset "$key" >/dev/null || true
+    done
+    if [[ "$key_env" == "-" ]]; then
+        hermes_cli_as_nodeapps "$bin" "$home" config unset model.key_env >/dev/null || true
+    else
+        out=$(hermes_cli_as_nodeapps "$bin" "$home" config set model.key_env "$key_env") \
+            || fail "hermes config set model.key_env gagal: $(tail -n 5 <<<"$out")"
+    fi
+    echo "OK: Hermes ${app} memakai model ${model} lewat ${base_url}"
+}
+
+# ---------------------------------------------------------------------------
 # Certbot / SSL
 # ---------------------------------------------------------------------------
 op_certbot_issue() {
@@ -2727,6 +2800,7 @@ case "$SUBCOMMAND" in
     pm2-save)              op_pm2_save ;;
     ninerouter-install)    op_ninerouter_install "$@" ;;
     hermes-install)        op_hermes_install "$@" ;;
+    hermes-config)         op_hermes_config "$@" ;;
     certbot-issue)         op_certbot_issue "$@" ;;
     certbot-remove)        op_certbot_remove "$@" ;;
     panel-ssl-issue)       op_panel_ssl_issue "$@" ;;
