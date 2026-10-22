@@ -260,11 +260,14 @@ foreach ($widgetConfig as $widgetId => $cfg) {
 <script>
 // Color-codes a gauge ring by severity: green under 60%, orange 60-85%,
 // red above that - a quick "does this need attention" signal without
-// having to read the exact number.
+// having to read the exact number. Passed as var() references so the
+// Graphite layer can supply its own palette (and follow dark/light
+// switches live); the classic theme defines none of them and gets the
+// original hex fallbacks.
 function gaugeColorFor(percent) {
-  if (percent >= 85) return '#ef4444';
-  if (percent >= 60) return '#f59e0b';
-  return '#22c55e';
+  if (percent >= 85) return 'var(--gauge-crit, #ef4444)';
+  if (percent >= 60) return 'var(--gauge-warn, #f59e0b)';
+  return 'var(--gauge-ok, #22c55e)';
 }
 function setGauge(id, valueId, percent) {
   var gauge = document.getElementById(id);

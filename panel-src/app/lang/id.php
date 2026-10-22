@@ -34,6 +34,9 @@ return [
         'toggle_theme' => 'Ganti mode gelap/terang',
         'toggle_sidebar' => 'Ciutkan/lebarkan sidebar',
         'language' => 'Bahasa',
+        'menu' => 'Buka menu',
+        'role' => 'Peran',
+        'skip_to_content' => 'Lewati ke konten',
     ],
     'sidebar' => [
         'dashboard' => 'Dashboard',
@@ -51,6 +54,11 @@ return [
         'user_management' => 'Manajemen User',
         'settings' => 'Pengaturan',
         'plugin' => 'Plugin',
+        'nav_label' => 'Navigasi utama',
+        'group_sites' => 'Situs & Aplikasi',
+        'group_server' => 'Server',
+        'group_panel' => 'Panel',
+        'group_plugins' => 'Ekstensi',
     ],
     'login' => [
         'subtitle' => 'Masuk untuk mengelola server Anda',

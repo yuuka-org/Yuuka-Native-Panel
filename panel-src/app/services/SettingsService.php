@@ -9,7 +9,7 @@ final class SettingsService
      * sql/schema.sql (`deployment_mode`, the 3 alert thresholds), ones
      * written by install.sh/update.sh itself (`php_installed_versions`,
      * `php_default_version`), the UI-managed ones (`phpmyadmin_url`,
-     * `panel_login_title`, `panel_login_logo`). Settings > Migrate's
+     * `panel_login_title`, `panel_login_logo`, `panel_ui_style`). Settings > Migrate's
      * import rejects anything not in this list - the table has no dynamic
      * behavior tied to arbitrary keys, but there's no reason to let an
      * imported file seed rows nothing here will ever read.
@@ -24,6 +24,7 @@ final class SettingsService
         'php_default_version',
         'panel_login_title',
         'panel_login_logo',
+        'panel_ui_style',
         'session_idle_timeout',
         'session_lifetime',
         'alarm_webhook_url',

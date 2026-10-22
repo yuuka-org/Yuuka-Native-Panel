@@ -21,8 +21,26 @@ document.addEventListener('DOMContentLoaded', function () {
   var toggle = document.getElementById('sidebarToggle');
   var sidebar = document.getElementById('appSidebar');
   if (toggle && sidebar) {
+    // Off-canvas sidebar below lg. body.sidebar-open lets a theme draw a
+    // backdrop behind it (Graphite does); tapping anywhere outside it or
+    // pressing Escape closes it again instead of leaving it stuck open.
+    var setSidebarOpen = function (open) {
+      sidebar.classList.toggle('show', open);
+      document.body.classList.toggle('sidebar-open', open);
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
     toggle.addEventListener('click', function () {
-      sidebar.classList.toggle('show');
+      setSidebarOpen(!sidebar.classList.contains('show'));
+    });
+    document.addEventListener('click', function (e) {
+      if (!sidebar.classList.contains('show')) return;
+      if (sidebar.contains(e.target) || toggle.contains(e.target)) return;
+      setSidebarOpen(false);
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape' || !sidebar.classList.contains('show')) return;
+      setSidebarOpen(false);
+      toggle.focus();
     });
   }
 

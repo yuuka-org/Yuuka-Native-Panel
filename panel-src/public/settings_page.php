@@ -8,6 +8,12 @@ $user = Auth::user();
 const LOGIN_LOGO_MAX_BYTES = 1048576; // 1 MB
 const LOGIN_LOGO_ALLOWED_EXT = ['png', 'jpg', 'jpeg', 'svg'];
 
+// Keys must match PANEL_UI_STYLES (app/helpers/response.php).
+const PANEL_UI_STYLE_LABELS = [
+    'graphite' => ['Graphite', 'Sidebar grafit, huruf IBM Plex, tabel lebih padat. Tampilan bawaan.'],
+    'classic' => ['Klasik', 'Tampilan lama dengan sidebar indigo, sama persis seperti sebelumnya.'],
+];
+
 // Must match dashboard.php's $widgetDefaults keys exactly - this is the
 // one place an admin edits show/hide + order, dashboard.php only reads.
 const DASHBOARD_WIDGET_LABELS = [
@@ -30,7 +36,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
     try {
-        if ($action === 'update_page') {
+        if ($action === 'update_ui_style') {
+            $style = (string) ($_POST['panel_ui_style'] ?? '');
+            if (!in_array($style, PANEL_UI_STYLES, true)) {
+                throw new InvalidArgumentException('Pilihan tampilan tidak dikenal');
+            }
+            SettingsService::set('panel_ui_style', $style);
+            flash('success', 'Tampilan panel diganti ke ' . PANEL_UI_STYLE_LABELS[$style][0] . '.');
+        } elseif ($action === 'update_page') {
             $title = trim((string) ($_POST['panel_login_title'] ?? ''));
             if ($title === '' || strlen($title) > 100) {
                 throw new InvalidArgumentException('Judul halaman login wajib diisi (maks 100 karakter)');
@@ -127,10 +140,42 @@ include __DIR__ . '/partials/settings_nav.php';
 
 <div class="mb-4">
   <h4 class="fw-bold mb-0">Page</h4>
-  <p class="text-muted mb-0">Kustomisasi tampilan halaman login panel.</p>
+  <p class="text-muted mb-0">Tampilan panel, halaman login, dan widget Dashboard.</p>
 </div>
 
 <div class="row g-3">
+  <div class="col-12">
+    <div class="card stat-card">
+      <div class="card-header bg-white fw-semibold">Tampilan Panel</div>
+      <div class="card-body">
+        <form method="post">
+          <?= Csrf::field() ?>
+          <input type="hidden" name="action" value="update_ui_style">
+          <fieldset>
+            <legend class="visually-hidden">Tampilan Panel</legend>
+            <div class="row g-2 mb-3">
+              <?php foreach (PANEL_UI_STYLE_LABELS as $styleKey => [$styleName, $styleDesc]): ?>
+              <div class="col-md-6">
+                <label class="ui-style-option d-flex gap-2 border rounded px-3 py-2 h-100" for="uiStyle_<?= e($styleKey) ?>">
+                  <input class="form-check-input mt-1 flex-shrink-0" type="radio" name="panel_ui_style" value="<?= e($styleKey) ?>" id="uiStyle_<?= e($styleKey) ?>" <?= ui_style() === $styleKey ? 'checked' : '' ?>>
+                  <span>
+                    <span class="fw-semibold d-block"><?= e($styleName) ?></span>
+                    <span class="text-muted small"><?= e($styleDesc) ?></span>
+                  </span>
+                </label>
+              </div>
+              <?php endforeach; ?>
+            </div>
+          </fieldset>
+          <div class="d-flex align-items-center gap-3">
+            <button class="btn btn-primary">Simpan</button>
+            <span class="form-text mt-0">Berlaku untuk semua admin dan halaman login. Mode gelap/terang tetap diatur per browser.</span>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
   <div class="col-md-6">
     <div class="card stat-card h-100">
       <div class="card-header bg-white fw-semibold">Halaman Login</div>

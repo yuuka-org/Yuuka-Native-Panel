@@ -34,6 +34,9 @@ return [
         'toggle_theme' => 'Toggle dark/light mode',
         'toggle_sidebar' => 'Collapse/expand sidebar',
         'language' => 'Language',
+        'menu' => 'Open menu',
+        'role' => 'Role',
+        'skip_to_content' => 'Skip to content',
     ],
     'sidebar' => [
         'dashboard' => 'Dashboard',
@@ -51,6 +54,11 @@ return [
         'user_management' => 'User Management',
         'settings' => 'Settings',
         'plugin' => 'Plugin',
+        'nav_label' => 'Main navigation',
+        'group_sites' => 'Sites & Apps',
+        'group_server' => 'Server',
+        'group_panel' => 'Panel',
+        'group_plugins' => 'Extensions',
     ],
     'login' => [
         'subtitle' => 'Sign in to manage your server',

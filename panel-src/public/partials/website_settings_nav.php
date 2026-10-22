@@ -39,9 +39,9 @@ $idQuery = '?id=' . (int) $site['id'] . ($embed ? '&embed=1' : '');
   </div>
 </div>
 <?php else: ?>
-<div class="btn-group mb-3 flex-wrap">
+<div class="btn-group mb-3 flex-wrap subnav">
   <?php foreach ($websiteTabs as $key => [$href, $label, $icon]): ?>
-    <a href="<?= e($href . $idQuery) ?>" class="btn btn-sm <?= $activeWebsiteTab === $key ? 'btn-primary' : 'btn-outline-secondary' ?>"><?= e($label) ?></a>
+    <a href="<?= e($href . $idQuery) ?>" class="btn btn-sm <?= $activeWebsiteTab === $key ? 'btn-primary' : 'btn-outline-secondary' ?>"<?= $activeWebsiteTab === $key ? ' aria-current="page"' : '' ?>><?= e($label) ?></a>
   <?php endforeach; ?>
 </div>
 <?php endif; ?>

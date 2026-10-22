@@ -254,6 +254,7 @@ Migrate saat impor, menolak kunci di luar daftar ini).
 | `phpmyadmin_url` | URL phpMyAdmin (diisi otomatis saat instalasi modul phpMyAdmin, bisa diedit manual di Pengaturan) |
 | `php_installed_versions`, `php_default_version` | Ditulis oleh installer/`update.sh`, bukan lewat UI |
 | `panel_login_title`, `panel_login_logo` | Kustomisasi halaman login (Pengaturan > Page) |
+| `panel_ui_style` | Gaya tampilan panel (Pengaturan > Page): `graphite` (default, juga dipakai bila kosong/tidak dikenal) atau `classic` |
 | `session_idle_timeout`, `session_lifetime` | Override `.env` (`SESSION_IDLE_TIMEOUT`/`SESSION_LIFETIME`) lewat Pengaturan > Umum — kalau kosong/0, fallback ke nilai `.env` |
 | `alarm_webhook_url`, `alarm_last_notified_at` | Notifikasi webhook Dashboard |
 | `dashboard_widget_config` | Widget mana yang tampil di Dashboard |

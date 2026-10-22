@@ -17,9 +17,9 @@ $settingsTabs = [
 ];
 ?>
 <?php if (Rbac::can($user['role'], 'settings.manage')): ?>
-<div class="btn-group mb-3 flex-wrap">
+<div class="btn-group mb-3 flex-wrap subnav">
   <?php foreach ($settingsTabs as $key => [$href, $label]): ?>
-    <a href="<?= e($href) ?>" class="btn btn-sm <?= $activeSettingsTab === $key ? 'btn-primary' : 'btn-outline-secondary' ?>"><?= e($label) ?></a>
+    <a href="<?= e($href) ?>" class="btn btn-sm <?= $activeSettingsTab === $key ? 'btn-primary' : 'btn-outline-secondary' ?>"<?= $activeSettingsTab === $key ? ' aria-current="page"' : '' ?>><?= e($label) ?></a>
   <?php endforeach; ?>
 </div>
 <?php endif; ?>

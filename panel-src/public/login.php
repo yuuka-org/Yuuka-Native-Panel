@@ -43,7 +43,7 @@ $securityEntrancePath = SettingsService::get('security_entrance_path');
 $loginFormAction = $securityEntrancePath !== '' ? '/' . $securityEntrancePath : '/login';
 ?>
 <!DOCTYPE html>
-<html lang="<?= e(PanelLocale::current()) ?>">
+<html lang="<?= e(PanelLocale::current()) ?>" data-ui="<?= e(ui_style()) ?>">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -54,22 +54,22 @@ $loginFormAction = $securityEntrancePath !== '' ? '/' . $securityEntrancePath : 
   document.documentElement.setAttribute('data-bs-theme', theme);
 })();
 </script>
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-<link href="/assets/css/app.css" rel="stylesheet">
+<?php include __DIR__ . '/partials/head_assets.php'; ?>
+<?php if (ui_style() === 'classic'): ?>
 <style>
   body { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg,#1e1b4b,#4f46e5); }
   .login-card { width: 100%; max-width: 400px; border: none; border-radius: 1rem; }
 </style>
+<?php endif; ?>
 </head>
-<body>
+<body class="login-page">
 <div class="card login-card shadow-lg">
   <div class="card-body p-4 p-md-5">
     <div class="text-center mb-4">
       <?php if ($loginLogo !== ''): ?>
         <img src="/<?= e($loginLogo) ?>" alt="Logo" style="max-height:56px;max-width:160px;object-fit:contain;">
       <?php else: ?>
-        <i class="bi bi-hdd-network-fill fs-1 text-primary"></i>
+        <i class="bi bi-hdd-network-fill fs-1 text-primary login-mark" aria-hidden="true"></i>
       <?php endif; ?>
       <h4 class="mt-2 mb-0 fw-bold"><?= e($loginTitle) ?></h4>
       <p class="text-muted small"><?= e(t('login.subtitle')) ?></p>
@@ -81,12 +81,12 @@ $loginFormAction = $securityEntrancePath !== '' ? '/' . $securityEntrancePath : 
       <input type="hidden" name="redirect" value="<?= e($redirectTo) ?>">
       <?php endif; ?>
       <div class="mb-3">
-        <label class="form-label"><?= e(t('login.username')) ?></label>
-        <input type="text" name="username" class="form-control" required autofocus autocomplete="username">
+        <label class="form-label" for="loginUsername"><?= e(t('login.username')) ?></label>
+        <input type="text" name="username" id="loginUsername" class="form-control" required autofocus autocomplete="username">
       </div>
       <div class="mb-3">
-        <label class="form-label"><?= e(t('login.password')) ?></label>
-        <input type="password" name="password" class="form-control" required autocomplete="current-password">
+        <label class="form-label" for="loginPassword"><?= e(t('login.password')) ?></label>
+        <input type="password" name="password" id="loginPassword" class="form-control" required autocomplete="current-password">
       </div>
       <button type="submit" class="btn btn-primary w-100"><?= e(t('login.submit')) ?></button>
     </form>

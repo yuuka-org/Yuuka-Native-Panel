@@ -2,9 +2,10 @@
 /** @var string $pageTitle */
 $pageTitle = $pageTitle ?? 'Dashboard';
 $currentUser = Auth::user();
+$uiClassic = ui_style() === 'classic';
 ?>
 <!DOCTYPE html>
-<html lang="<?= e(PanelLocale::current()) ?>">
+<html lang="<?= e(PanelLocale::current()) ?>" data-ui="<?= e(ui_style()) ?>">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -26,19 +27,18 @@ $currentUser = Auth::user();
   }
 })();
 </script>
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-<link href="<?= e(asset_url('/assets/css/app.css')) ?>" rel="stylesheet">
+<?php include __DIR__ . '/head_assets.php'; ?>
 <?php if (!empty($extraHeadHtml)): ?>
 <?= $extraHeadHtml ?>
 <?php endif; ?>
 </head>
 <body>
+<a class="visually-hidden-focusable skip-link" href="#mainContent"><?= e(t('topbar.skip_to_content')) ?></a>
 <div class="panel-loading-bar" id="panelLoadingBar"></div>
 <div class="app-shell">
-  <nav class="app-sidebar" id="appSidebar">
+  <nav class="app-sidebar" id="appSidebar" aria-label="<?= e(t('sidebar.nav_label')) ?>">
     <div class="sidebar-brand">
-      <i class="bi bi-hdd-network-fill"></i>
+      <i class="bi bi-hdd-network-fill" aria-hidden="true"></i>
       <span>Yuuka Panel</span>
     </div>
     <?php include __DIR__ . '/sidebar.php'; ?>
@@ -46,15 +46,18 @@ $currentUser = Auth::user();
 
   <div class="app-main">
     <header class="app-topbar">
-      <button class="btn btn-sm btn-outline-secondary d-lg-none" id="sidebarToggle" type="button">
+      <button class="btn btn-sm btn-outline-secondary d-lg-none" id="sidebarToggle" type="button" aria-label="<?= e(t('topbar.menu')) ?>" aria-controls="appSidebar" aria-expanded="false">
         <i class="bi bi-list"></i>
       </button>
-      <button class="btn btn-sm btn-outline-secondary d-none d-lg-inline-flex" id="sidebarCollapseToggle" type="button" title="<?= e(t('topbar.toggle_sidebar')) ?>">
+      <button class="btn btn-sm btn-outline-secondary d-none d-lg-inline-flex" id="sidebarCollapseToggle" type="button" title="<?= e(t('topbar.toggle_sidebar')) ?>" aria-label="<?= e(t('topbar.toggle_sidebar')) ?>">
         <i class="bi bi-chevron-bar-left" id="sidebarCollapseIconExpanded"></i>
         <i class="bi bi-chevron-bar-right d-none" id="sidebarCollapseIconCollapsed"></i>
       </button>
+      <?php if (!$uiClassic): ?>
+      <span class="topbar-host" title="Hostname"><i class="bi bi-hdd" aria-hidden="true"></i><span><?= e((string) gethostname()) ?></span></span>
+      <?php endif; ?>
       <div class="ms-auto d-flex align-items-center gap-3">
-        <button class="btn btn-sm btn-outline-secondary" id="themeToggle" type="button" title="<?= e(t('topbar.toggle_theme')) ?>">
+        <button class="btn btn-sm btn-outline-secondary" id="themeToggle" type="button" title="<?= e(t('topbar.toggle_theme')) ?>" aria-label="<?= e(t('topbar.toggle_theme')) ?>">
           <i class="bi bi-moon-stars"></i>
         </button>
         <div class="dropdown">
@@ -74,12 +77,17 @@ $currentUser = Auth::user();
             <?php endforeach; ?>
           </ul>
         </div>
+        <?php if ($uiClassic): ?>
         <span class="badge text-bg-light border"><i class="bi bi-person-badge me-1"></i><?= e($currentUser['role'] ?? '') ?></span>
+        <?php endif; ?>
         <div class="dropdown">
           <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
             <i class="bi bi-person-circle me-1"></i><?= e($currentUser['username'] ?? 'guest') ?>
           </button>
           <ul class="dropdown-menu dropdown-menu-end">
+            <?php if (!$uiClassic): ?>
+            <li><span class="dropdown-header"><?= e(t('topbar.role')) ?>: <?= e($currentUser['role'] ?? '') ?></span></li>
+            <?php endif; ?>
             <li><a class="dropdown-item" href="/settings"><i class="bi bi-gear me-2"></i><?= e(t('topbar.settings')) ?></a></li>
             <li><hr class="dropdown-divider"></li>
             <li>
@@ -93,5 +101,5 @@ $currentUser = Auth::user();
       </div>
     </header>
 
-    <main class="app-content">
+    <main class="app-content" id="mainContent">
       <?php include __DIR__ . '/flash.php'; ?>

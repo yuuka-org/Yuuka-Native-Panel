@@ -10,7 +10,7 @@
 $pageTitle = $pageTitle ?? 'Yuuka Panel';
 ?>
 <!DOCTYPE html>
-<html lang="id">
+<html lang="id" data-ui="<?= e(ui_style()) ?>">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -21,9 +21,7 @@ $pageTitle = $pageTitle ?? 'Yuuka Panel';
   document.documentElement.setAttribute('data-bs-theme', theme);
 })();
 </script>
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-<link href="<?= e(asset_url('/assets/css/app.css')) ?>" rel="stylesheet">
+<?php include __DIR__ . '/head_assets.php'; ?>
 </head>
-<body class="p-3">
+<body class="p-3 embed-page">
 <div class="panel-loading-bar" id="panelLoadingBar"></div>

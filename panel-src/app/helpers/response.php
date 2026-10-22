@@ -24,6 +24,30 @@ function asset_url(string $relPath): string
     return $mtime !== false ? $relPath . '?v=' . $mtime : $relPath;
 }
 
+/**
+ * Panel-wide UI style, picked in Settings > Page. 'graphite' is the
+ * default; 'classic' is the original indigo look, which is exactly what
+ * app.css on its own renders - the Graphite layer (graphite.css) is simply
+ * not loaded for it, see partials/head_assets.php. Anything unrecognised
+ * (empty row, a hand-edited/imported value, DB not reachable yet) falls
+ * back to the default instead of rendering an unstyled page.
+ */
+const PANEL_UI_STYLES = ['graphite', 'classic'];
+
+function ui_style(): string
+{
+    static $style = null;
+    if ($style === null) {
+        try {
+            $saved = SettingsService::get('panel_ui_style', 'graphite');
+        } catch (Throwable) {
+            $saved = 'graphite';
+        }
+        $style = in_array($saved, PANEL_UI_STYLES, true) ? $saved : 'graphite';
+    }
+    return $style;
+}
+
 function redirect(string $path): never
 {
     header('Location: ' . $path);

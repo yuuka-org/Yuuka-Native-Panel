@@ -799,3 +799,21 @@ dipakai kalau mau menambah setting lain yang boleh diubah dari UI:
 tambahkan kuncinya ke `SettingsService::KNOWN_KEYS`, baca dengan
 `SettingsService::get($key) ?: Config::getInt(...)` (DB override
 `.env` default).
+
+### Tampilan panel (Pengaturan > Page)
+
+Dua gaya, berlaku untuk semua admin dan halaman login (`panel_ui_style`):
+
+- **Graphite** (default) - `assets/css/graphite.css` dimuat di atas
+  `app.css`: sidebar grafit berkelompok, huruf IBM Plex Sans/Mono
+  (fontsource via jsDelivr), tabel dan form lebih padat, hostname server
+  di topbar.
+- **Klasik** - `app.css` saja, tampilan indigo lama tanpa perubahan.
+
+Pemilihan stylesheet ada di `partials/head_assets.php` (dipakai
+`header.php`, `embed_header.php`, `login.php`); `ui_style()` di
+`app/helpers/response.php` membaca setting-nya. `<html>` membawa
+`data-ui="graphite|classic"` kalau halaman plugin perlu gaya berbeda per
+tema. Mode gelap/terang tetap per browser (`localStorage`), terpisah
+dari pilihan ini. Aturan untuk tampilan baru masuk ke `graphite.css`;
+`app.css` sengaja dibiarkan sebagai tema klasik.
