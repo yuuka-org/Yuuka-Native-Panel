@@ -90,9 +90,10 @@ export PANEL_DOMAIN
 
 log_step "Rebuild konfigurasi sistem (OpenSSL, Nginx, PHP-FPM, phpMyAdmin, Terminal, SSL)"
 
-module_openssl_run_all || log_warn "Upgrade OpenSSL sistem gagal/dilewati, cek log di atas. Bisa dicoba lagi: sudo yp custom-build openssl"
-
 module_nginx_run_all
+# After Nginx: rebuilds the installed nginx package against a private OpenSSL
+# 3.5 (system OpenSSL untouched) whenever either has a new version.
+module_openssl_run_all || log_warn "Nginx + OpenSSL 3.5 gagal/dilewati - Nginx tetap memakai binary sebelumnya, cek log di atas. Bisa dicoba lagi: sudo yp custom-build openssl"
 module_php_run_all
 
 # phpMyAdmin: only rebuild if it was actually set up before, and only in

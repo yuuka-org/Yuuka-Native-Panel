@@ -735,8 +735,10 @@ cmd_custom_build() {
         openssl)
             # shellcheck source=/dev/null
             source "${INSTALLER_DIR}/modules/openssl.sh"
-            module_openssl_run_all
-            log_info "Jalankan ini lagi kapan pun ada rilis 3.5.x baru yang mau dipasang (mis. patch keamanan darurat) - paket distro sudah di-hold, jadi 'apt upgrade' tidak lagi menanganinya otomatis."
+            # forced: rebuild even when up to date, and retry a combination
+            # that failed before (update.sh skips those to stay quick)
+            YUUKA_FORCE_REBUILD=1 module_openssl_run_all
+            log_info "OpenSSL 3.5 di sini hanya dipakai Nginx (/opt/yuuka-openssl) - OpenSSL sistem tetap paket Ubuntu dan ikut 'apt upgrade'. Update panel membangun ulang Nginx sendiri saat ada rilis 3.5.x atau paket nginx Ubuntu baru."
             ;;
         php)
             # shellcheck source=/dev/null

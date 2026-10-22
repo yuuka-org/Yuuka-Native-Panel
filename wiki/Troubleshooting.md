@@ -363,6 +363,63 @@ untuk dapat fix ini; server yang masih pakai kode lama akan terus kena
 error ini setiap kali deploy app dengan versi Node selain versi
 default.
 
+## SSH tersambung lalu `connection reset by peer` setelah update panel
+
+**Gejala**: koneksi TCP ke port SSH berhasil, klien menampilkan "Starting
+SSH session", lalu `connection reset by peer`. Sesi SSH yang sudah terbuka
+sebelumnya tetap jalan normal. `journalctl -u ssh` penuh baris
+`OpenSSL version mismatch. Built against 30000020, you have 30500090`.
+
+**Akar masalah**: modul OpenSSL versi lama membangun OpenSSL 3.5.x lalu
+**menimpa** `libssl.so.3`/`libcrypto.so.3` milik sistem. OpenSSH sebelum
+9.x (Ubuntu 22.04: 8.9p1) menolak libcrypto yang minor version-nya berbeda
+dari saat ia dibangun. Karena sshd menjalankan ulang dirinya untuk setiap
+koneksi baru, semua login baru langsung mati. Sesi lama tidak terpengaruh,
+itu sebabnya masalah ini bisa baru ketahuan berhari-hari kemudian.
+
+**Fix**: `modules/openssl.sh` tidak lagi menyentuh OpenSSL sistem (lihat
+bagian berikut). `sudo bash update.sh` otomatis mengembalikan paket OpenSSL
+Ubuntu: melepas `apt-mark hold`, memasang ulang `openssl`/`libssl3`
+(plus `libssl-dev` bila terpasang), menghapus header/file dev 3.5 sisa
+yang tidak dimiliki paket mana pun, lalu me-restart PHP-FPM. Kalau SSH
+sudah terkunci dan VPS tidak punya console, jalankan update lewat panel
+(**Settings → System → Update**). Tombol itu menjalankan `update.sh`
+tanpa butuh SSH.
+
+## Cloudflare 525 `no suitable key share`: Nginx dengan OpenSSL 3.5
+
+OpenSSL 3.0 bawaan Ubuntu tidak mengenal grup key exchange TLS 1.3 yang
+lebih baru. Edge Cloudflare yang hanya menawarkan key share grup itu gagal
+handshake ke origin, dan muncul sebagai error 525 tanpa jejak di log Nginx.
+Hanya Nginx yang butuh OpenSSL 3.5, jadi hanya Nginx yang memakainya:
+
+| Komponen | Lokasi |
+|---|---|
+| OpenSSL 3.5.x pribadi (tidak dipakai program lain) | `/opt/yuuka-openssl/<versi>` |
+| Nginx build panel: source paket Ubuntu versi yang terpasang, argumen configure sama persis | `/usr/sbin/nginx` |
+| Binary paket Ubuntu (dialihkan `dpkg-divert`, tetap di-update apt) | `/usr/sbin/nginx.distrib` |
+| Versi yang terpasang / kombinasi yang pernah gagal / opt-out | `/var/lib/yuuka-installer/nginx-openssl.{state,failed,disabled}` |
+| Hook apt: kembali ke binary paket bila paket nginx naik versi upstream | `/etc/apt/apt.conf.d/99yuuka-nginx-guard` |
+
+Binary baru wajib lolos `nginx -t` terhadap konfigurasi yang sedang
+dipakai (modul dinamis `libnginx-mod-*` ikut dimuat) sebelum ditukar.
+Kalau Nginx tidak mau hidup setelah restart, binary sebelumnya otomatis
+dikembalikan. `update.sh` membangun ulang sendiri setiap ada rilis 3.5.x
+baru atau versi paket nginx Ubuntu baru. Kombinasi versi yang gagal tidak
+diulang di setiap update. Untuk mencoba lagi, jalankan
+`sudo yp custom-build openssl`; detailnya ada di log deployment.
+
+Cek yang sedang jalan: `nginx -V 2>&1 | grep 'built with'`.
+
+Kembali ke Nginx bawaan Ubuntu di satu server:
+
+```bash
+sudo touch /var/lib/yuuka-installer/nginx-openssl.disabled
+sudo rm /usr/sbin/nginx
+sudo dpkg-divert --package yuuka-panel --rename --remove /usr/sbin/nginx
+sudo systemctl restart nginx
+```
+
 ---
 
 Menemukan bug atau kejanggalan lain yang belum ada di sini? Lihat

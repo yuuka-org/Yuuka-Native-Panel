@@ -90,7 +90,6 @@ main() {
     module_system_timezone
     module_system_firewall
     module_system_create_users
-    module_openssl_run_all
 
     print_section "4. Database - MariaDB"
     step_progress
@@ -99,6 +98,9 @@ main() {
     print_section "5. Web Server - Nginx"
     step_progress
     module_nginx_run_all
+    # Rebuilds the nginx package just installed against a private OpenSSL
+    # 3.5 - so it has to come after it. Failure leaves the stock binary.
+    module_openssl_run_all || log_warn "Nginx + OpenSSL 3.5 belum terpasang - Nginx memakai binary paket Ubuntu. Bisa dicoba lagi: sudo yp custom-build openssl"
 
     print_section "6. PHP Multi-Version (PHP-FPM)"
     step_progress

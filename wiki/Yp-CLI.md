@@ -33,7 +33,7 @@ yp <aksi> <target> [args...]
 | `yp repair panel [--reset-env]` | Re-apply permission `/opt/server-panel`, pastikan `www-data` di grup `panel`, regenerate pool PHP-FPM & vhost Nginx dari kode saat ini, restart service terkait |
 | `yp update` | `git pull` di `/opt/yuuka-installer` + redeploy `panel-src` ke `/opt/server-panel` (tanpa mengulang wizard) |
 | `yp version` | Commit installer aktif + versi Nginx/MariaDB/PHP-FPM/cloudflared |
-| `yp custom-build <modul>` | Rerun `module_<modul>_run_all` untuk satu komponen saja: `nginx`, `php`, `nodejs`, `mariadb`, `phpmyadmin`, `ssl`, `cloudflare`, `panel` |
+| `yp custom-build <modul>` | Rerun `module_<modul>_run_all` untuk satu komponen saja: `nginx`, `php`, `nodejs`, `mariadb`, `phpmyadmin`, `ssl`, `cloudflare`, `panel`, `terminal`, `openssl` |
 | `yp php-security` | Mitigasi php2shell (CVE-2026-109618/109619): upgrade paket PHP terpasang, pasang `conf.d/99-yuuka-php2shell.ini` di semua versi, restart pool yang berubah, pasang penyaring Nginx di vhost panel, lalu pindai indikator eksploitasi. Lihat [Keamanan § php2shell](Keamanan.md#mitigasi-php2shell-cve-2026-109618--cve-2026-109619) |
 | `yp php-security status` | Hanya membaca: status patch per versi PHP, status penyaring panel, indikator eksploitasi. Exit code = jumlah versi PHP yang belum aman |
 
@@ -63,6 +63,7 @@ Meniru filosofi `./build <komponen>` di DirectAdmin: membangun ulang satu kompon
 | `ssl` | Pastikan Certbot terinstall + auto-renew aktif | **Tidak** menerbitkan sertifikat baru — pakai menu Domain di panel untuk itu |
 | `cloudflare` | Prompt setup tunnel (interaktif) | — |
 | `panel` | Redeploy `panel-src` saja | **Tidak** regenerasi pool PHP-FPM/vhost — pakai `yp repair panel` untuk itu |
+| `openssl` | Build OpenSSL 3.5.x pribadi (`/opt/yuuka-openssl`) + Nginx dari source paket Ubuntu yang terpasang, tukar `/usr/sbin/nginx` lewat `dpkg-divert`. Selalu build ulang, termasuk kombinasi versi yang pernah gagal | OpenSSL sistem **tidak** disentuh — lihat [Troubleshooting](Troubleshooting.md#cloudflare-525-no-suitable-key-share-nginx-dengan-openssl-35) |
 
 ## Keamanan
 
