@@ -79,6 +79,17 @@ module_openssl_build_deps() {
 module_openssl_upgrade_system() {
     log_step "Upgrade OpenSSL sistem ke jalur LTS 3.5.x"
 
+    # Written by the SSH Rescue plugin's "restore OpenSSL" action after it put
+    # Ubuntu's own OpenSSL packages back (an in-place rebuild here coincided
+    # with sshd resetting every new connection, locking the operator out of
+    # SSH). Without this check the very next update.sh would rebuild 3.5.x
+    # straight over the restored packages again.
+    local disabled_marker="${STATE_DIR}/openssl-module.disabled"
+    if [[ -f "$disabled_marker" ]]; then
+        log_warn "Modul OpenSSL DINONAKTIFKAN sejak $(cat "$disabled_marker" 2>/dev/null) (OpenSSL sistem dipulihkan ke paket Ubuntu lewat plugin SSH Rescue) - build dilewati. Aktifkan lagi: hapus ${disabled_marker} lalu jalankan 'sudo yp custom-build openssl'."
+        return 0
+    fi
+
     local tag version current
     tag=$(openssl_latest_35_tag)
     version="${tag#openssl-}"
