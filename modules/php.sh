@@ -248,10 +248,45 @@ module_php_php2shell_upgrade() {
     done
     [[ ${#pkgs[@]} -gt 0 ]] || return 0
 
-    spinner_run "apt-get update (cek patch PHP terbaru)" -- apt-get update -y || return 1
-    spinner_run "Upgrade paket PHP terpasang (${#pkgs[@]} paket)" -- \
-        env DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade \
-        -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "${pkgs[@]}"
+    spinner_run "apt-get update (cek patch PHP terbaru)" -- module_php_apt_noninteractive update -y || return 1
+
+    # Not behind spinner_run: ~15 packages x every installed PHP version,
+    # each php-fpm restarted by its own maintainer script, is legitimately
+    # several minutes - a silent spinner that long is indistinguishable from
+    # a hang (reported live). Progress lines are shown, the full output still
+    # goes to the install log.
+    log_info "Upgrade ${#pkgs[@]} paket PHP terpasang - bisa beberapa menit (setiap PHP-FPM ikut di-restart oleh paketnya):"
+    module_php_apt_noninteractive install -y --only-upgrade --no-remove "${pkgs[@]}" 2>&1 \
+        | tee -a "$INSTALL_LOG_FILE" \
+        | grep --line-buffered -E '^(Get:[0-9]+ |Unpacking |Setting up |E: |W: )' \
+        | sed -u 's/^/    /'
+    local rc=${PIPESTATUS[0]}
+    if [[ "$rc" -ne 0 ]]; then
+        log_error "Upgrade paket PHP gagal (exit ${rc}) - detail lengkap di ${INSTALL_LOG_FILE}"
+        return 1
+    fi
+    log_ok "Upgrade paket PHP selesai"
+}
+
+# apt-get with every prompt source on Ubuntu's path closed, plus stdin from
+# /dev/null so anything that still asks fails fast instead of waiting -
+# these calls run with stdout captured (spinner_run / pipe), so a question
+# would be written somewhere invisible and block on the operator's terminal
+# forever (reported live: update.sh "stuck" right after apt-get update).
+#   DEBIAN_FRONTEND        debconf questions
+#   --force-conf{def,old}  dpkg conffile prompts (keep the local version)
+#   UCF_FORCE_CONFFOLD     php.ini is ucf-managed, not a dpkg conffile, and
+#                          module_php_configure_pool edits it - keep ours
+#   NEEDRESTART_*          Ubuntu's post-upgrade "restart which services?"
+#                          dialog (php-fpm is restarted explicitly anyway)
+#   DPkg::Lock::Timeout    wait up to 5 min for unattended-upgrades' lock
+#                          instead of failing right away
+# --no-remove (install only): an upgrade that would need to REMOVE a
+# package aborts instead of -y silently accepting it.
+module_php_apt_noninteractive() {
+    env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1 UCF_FORCE_CONFFOLD=1 \
+        apt-get -o DPkg::Lock::Timeout=300 \
+        -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@" </dev/null
 }
 
 # Satu baris status per versi + petunjuk tindakan. Return = jumlah versi
