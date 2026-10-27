@@ -525,6 +525,18 @@ pre code,
 
 .subnav > .btn:focus-visible { outline-offset: -2px; }
 
+/* The Node.js/Website settings pages include their nav partial inside a
+   d-flex row next to the content - right for the embedded vertical list,
+   but the full-page tab row must sit above the content: as a flex column
+   it landed beside it and stretched to the content's height, dropping the
+   tab underlines far below the labels. */
+.d-flex:has(> .subnav) { flex-wrap: wrap; }
+
+.d-flex > .subnav {
+  flex: 0 0 100%;
+  align-self: flex-start;
+}
+
 .nav-tabs {
   --bs-nav-tabs-border-color: var(--g-border);
   --bs-nav-tabs-link-hover-border-color: transparent;
