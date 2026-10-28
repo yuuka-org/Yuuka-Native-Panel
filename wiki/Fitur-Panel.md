@@ -581,6 +581,44 @@ tidak mewajibkan API key (`model.key_env` dan env-nya ikut dihapus). Model
 bisa diganti kapan saja dari tombol yang sama atau dari dashboard Hermes.
 Hermes menolak model dengan konteks di bawah 64K token saat start.
 
+#### API Hermes (OpenAI-compatible) lewat domain
+
+Tombol **API** di baris Hermes mengaktifkan API server bawaan Hermes
+(platform `api_server` di gateway: `/v1/chat/completions`, `/v1/models`,
+`/v1/responses`, dst.) supaya Cline, Open WebUI, dan klien lain bisa memakai
+`https://<domain-hermes>/v1`, lewat jalur yang sama dengan dashboard
+(Nginx, termasuk di belakang Cloudflare Tunnel). Tidak butuh domain baru
+atau Public Hostname tambahan di Cloudflare.
+
+`HermesInstallerService::enableApi()`:
+
+1. Memilih port lokal pertama yang bebas di 8642-8699 (bukan port app lain,
+   bukan port API app lain, dan tidak sedang dipakai menurut `port-check`).
+2. Menulis env app: `API_SERVER_ENABLED=true`, `API_SERVER_KEY` acak
+   (`hk_` + 48 hex, secret), `API_SERVER_PORT`, `API_SERVER_HOST=127.0.0.1`.
+   API server hanya *listen* di loopback; satu-satunya jalan masuk adalah
+   Nginx.
+3. `NodeService::setApiProxyPort()` menyimpan port ke
+   `nodejs_apps.api_proxy_port` lalu menulis ulang vhost SEMUA domain app
+   dengan `location ^~ /v1/` (streaming, timeout 900 detik, body 100 MB)
+   ke port itu. Setiap tulisan lewat `nginx -t`; kalau satu domain gagal,
+   nilai DB dan vhost yang sudah ditulis dikembalikan, dan env API dihapus
+   lagi.
+4. PM2 redeploy (`NodeService::applyEnv()`), sehingga `hermes gateway run`
+   menyalakan listener.
+
+Modal menampilkan Base URL, Model ID (`hermes-agent`), dan API key dengan
+tombol salin. **Ganti key** membuat key baru dan me-restart Hermes (vhost
+tidak berubah). **Nonaktifkan** menghapus `/v1/` dari vhost lebih dulu, baru
+env-nya, lalu restart. Rute `/v1/` tidak mengganggu dashboard: dashboard
+Hermes tidak memakai path itu.
+
+Siapa pun yang memegang key bisa menyuruh Hermes (yang punya akses
+terminal di server) bekerja, jadi key diperlakukan seperti password.
+Pengaturan `platforms.api_server` di `config.yaml` Hermes mengalahkan env;
+kalau port diubah dari sana, `/v1/` di Nginx tidak lagi menunjuk ke port
+yang benar.
+
 ## File Manager
 
 `FileManagerService`, akses via sidebar (`/file_manager`) atau tombol

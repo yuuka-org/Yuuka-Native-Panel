@@ -339,7 +339,7 @@ final class NodeService
         }
 
         $siteName = "node-{$domain}";
-        $config = nginx_build_nodejs_proxy_config($domain, (int) $app['port'], false, self::proxyProfileOf($app));
+        $config = nginx_build_nodejs_proxy_config($domain, (int) $app['port'], false, self::proxyProfileOf($app), self::apiProxyPortOf($app));
         $write = nginx_write_config($siteName, $config);
         if (!$write['ok']) {
             throw new RuntimeException('Gagal menulis konfigurasi Nginx: ' . $write['output']);
@@ -410,7 +410,7 @@ final class NodeService
         }
 
         $siteName = "node-{$domain}";
-        $config = nginx_build_nodejs_proxy_config($domain, (int) $app['port'], $sslEnabled, self::proxyProfileOf($app));
+        $config = nginx_build_nodejs_proxy_config($domain, (int) $app['port'], $sslEnabled, self::proxyProfileOf($app), self::apiProxyPortOf($app));
         $write = nginx_write_config($siteName, $config);
         if (!$write['ok']) {
             throw new RuntimeException('Konfigurasi Nginx tidak valid: ' . $write['output']);
@@ -432,6 +432,74 @@ final class NodeService
     {
         $profile = (string) ($app['proxy_profile'] ?? 'default');
         return in_array($profile, self::ALLOWED_PROXY_PROFILES, true) ? $profile : 'default';
+    }
+
+    /**
+     * nodejs_apps.api_proxy_port (migration 2026102800), null when unset,
+     * missing (row read before the migration) or not a valid port.
+     *
+     * @param array<string,mixed> $app
+     */
+    private static function apiProxyPortOf(array $app): ?int
+    {
+        $port = (int) ($app['api_proxy_port'] ?? 0);
+        return Validator::port($port) ? $port : null;
+    }
+
+    /**
+     * Sets (or clears, with null) the second local port Nginx proxies at
+     * /v1/ on every domain of this app, then rewrites those vhosts. Each
+     * write is nginx -t checked by panel-exec.sh; if one fails, the DB
+     * value and the vhosts already rewritten are put back as they were.
+     */
+    public static function setApiProxyPort(int $appId, ?int $port): void
+    {
+        $app = self::find($appId);
+        if ($app === null) {
+            throw new InvalidArgumentException('Aplikasi tidak ditemukan');
+        }
+        if ($port !== null && !Validator::port($port)) {
+            throw new InvalidArgumentException('Port API tidak valid');
+        }
+        $previous = self::apiProxyPortOf($app);
+
+        $pdo = Database::app();
+        $pdo->prepare('UPDATE nodejs_apps SET api_proxy_port = :p WHERE id = :id')->execute(['p' => $port, 'id' => $appId]);
+        try {
+            self::rewriteDomainVhosts($appId);
+        } catch (RuntimeException $e) {
+            $pdo->prepare('UPDATE nodejs_apps SET api_proxy_port = :p WHERE id = :id')->execute(['p' => $previous, 'id' => $appId]);
+            try {
+                self::rewriteDomainVhosts($appId);
+            } catch (RuntimeException) {
+                // the original error below is the one worth showing
+            }
+            throw $e;
+        }
+    }
+
+    /** Regenerates the vhost of every domain of the app from its current DB row (SSL state per domain). */
+    private static function rewriteDomainVhosts(int $appId): void
+    {
+        $app = self::find($appId);
+        if ($app === null) {
+            throw new InvalidArgumentException('Aplikasi tidak ditemukan');
+        }
+        foreach (self::listDomains($appId) as $domainRow) {
+            $domain = (string) $domainRow['domain'];
+            $siteName = "node-{$domain}";
+            $config = nginx_build_nodejs_proxy_config(
+                $domain, (int) $app['port'], (bool) $domainRow['ssl_enabled'], self::proxyProfileOf($app), self::apiProxyPortOf($app)
+            );
+            $write = nginx_write_config($siteName, $config);
+            if (!$write['ok']) {
+                throw new RuntimeException("Konfigurasi Nginx untuk {$domain} tidak valid: " . $write['output']);
+            }
+            $enable = nginx_enable_site($siteName);
+            if (!$enable['ok']) {
+                throw new RuntimeException("Gagal memuat ulang Nginx untuk {$domain}: " . $enable['output']);
+            }
+        }
     }
 
     /**

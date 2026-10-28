@@ -289,8 +289,13 @@ CONF;
  *                 proxy-params.conf + override) karena proxy_read_timeout/
  *                 proxy_send_timeout tidak boleh muncul dua kali di satu
  *                 context - nginx -t akan menolak "directive is duplicate".
+ *
+ * $apiPort (nodejs_apps.api_proxy_port): kalau diisi, /v1/ diteruskan ke
+ * port lokal kedua itu, selalu dengan pengaturan streaming - dipakai API
+ * server OpenAI-compatible Hermes, yang berjalan terpisah dari dashboard di
+ * $port. `^~` supaya prefix ini menang atas location regex apa pun.
  */
-function nginx_build_nodejs_proxy_config(string $domain, int $port, bool $sslEnabled = false, string $proxyProfile = 'default'): string
+function nginx_build_nodejs_proxy_config(string $domain, int $port, bool $sslEnabled = false, string $proxyProfile = 'default', ?int $apiPort = null): string
 {
     $listen = $sslEnabled
         ? "    listen 443 ssl http2;\n    listen [::]:443 ssl http2;"
@@ -299,9 +304,7 @@ function nginx_build_nodejs_proxy_config(string $domain, int $port, bool $sslEna
     $sslDirectives = $sslEnabled ? nginx_ssl_cert_directives($domain) . "\n" : '';
     $logSuffix = $sslEnabled ? '-ssl' : '';
 
-    if ($proxyProfile === 'streaming') {
-        $bodyLimit = "    client_max_body_size 100m;\n";
-        $proxyDirectives = <<<CONF
+    $streamingDirectives = <<<CONF
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -315,9 +318,26 @@ function nginx_build_nodejs_proxy_config(string $domain, int $port, bool $sslEna
         proxy_read_timeout 900s;
         proxy_send_timeout 900s;
 CONF;
+
+    if ($proxyProfile === 'streaming') {
+        $bodyLimit = "    client_max_body_size 100m;\n";
+        $proxyDirectives = $streamingDirectives;
     } else {
         $bodyLimit = '';
         $proxyDirectives = '        include snippets/proxy-params.conf;';
+    }
+
+    $apiLocation = '';
+    if ($apiPort !== null) {
+        $apiLocation = <<<CONF
+    location ^~ /v1/ {
+        proxy_pass http://127.0.0.1:{$apiPort};
+        client_max_body_size 100m;
+{$streamingDirectives}
+    }
+
+
+CONF;
     }
 
     $mainBlock = <<<CONF
@@ -329,7 +349,7 @@ server {
     access_log /var/log/nginx/{$domain}{$logSuffix}-access.log;
     error_log  /var/log/nginx/{$domain}{$logSuffix}-error.log;
 
-    location / {
+{$apiLocation}    location / {
         proxy_pass http://127.0.0.1:{$port};
 {$proxyDirectives}
     }

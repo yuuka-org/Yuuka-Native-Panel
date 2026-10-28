@@ -131,6 +131,7 @@ dibaca live dari `pm2 jlist`, bukan dari tabel ini (lihat
 | `instances`, `exec_mode` (fork/cluster), `autorestart`, `watch`, `max_memory_restart` | Parameter `ecosystem.config.cjs`. Ecosystem juga selalu set `merge_logs: true` supaya log multi-instance (cluster mode) tidak tercecer ke file terpisah per-worker |
 | `node_env` | default `production` |
 | `proxy_profile` | `default` (snippet `proxy-params.conf` biasa) atau `streaming` (`proxy_buffering off`, timeout 900 detik, body 100 MB - dipakai 9Router dari App Installer). Dibaca ulang tiap vhost app digenerate (`createApp`/`addDomain`/`applySslForDomain`) |
+| `api_proxy_port` | NULL, atau port lokal kedua yang diproxy Nginx di `/v1/` pada semua domain app (API server OpenAI-compatible Hermes, App Installer > API). Diatur `NodeService::setApiProxyPort()`, dibaca ulang tiap vhost app digenerate |
 | `wildcard_enabled` | Cloudflare for SaaS Custom Hostname — sama seperti `websites.wildcard_enabled`, satu slot untuk seluruh server (lintas tabel `websites`+`nodejs_apps`) |
 | `is_managed` | Membedakan app yang dikelola penuh vs. hasil `importUnmanaged()` |
 | `last_known_status` | **Historis/audit only** — komentar di skema eksplisit menyebut ini bukan sumber kebenaran runtime |

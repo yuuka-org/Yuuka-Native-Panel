@@ -40,6 +40,17 @@ final class HermesInstallerService
     private const COERCED_WORDS = ['true', 'false', 'yes', 'no', 'on', 'off', 'null', 'none', 'inf', 'infinity', 'nan'];
 
     /**
+     * Hermes' OpenAI-compatible API server (gateway platform), configured
+     * purely through these env vars of the app - see enableApi().
+     */
+    private const API_ENV_KEYS = ['API_SERVER_ENABLED', 'API_SERVER_KEY', 'API_SERVER_PORT', 'API_SERVER_HOST'];
+    // Starts at Hermes' own default (8642); one port per Hermes app.
+    private const API_PORT_FIRST = 8642;
+    private const API_PORT_LAST = 8699;
+    /** What /v1/models advertises for the default profile. */
+    public const API_MODEL_NAME = 'hermes-agent';
+
+    /**
      * @return array{app_id:int,app_name:string,domain:string,port:int,username:string,password:string}
      */
     public static function install(string $appName, string $domain, string $username, ?int $userId): array
@@ -263,6 +274,131 @@ final class HermesInstallerService
             'app_installer.hermes_9router',
             "Hermes ({$hermes['app_name']}) dihubungkan ke 9Router ({$router['app_name']}), model {$model}"
         );
+    }
+
+    /**
+     * @return array{port:int,key:string,base_url:?string}|null null while the API is off;
+     *         base_url null when the app has no domain to serve /v1/ on.
+     */
+    public static function apiStatus(int $hermesNodeAppId): ?array
+    {
+        $app = self::installedApp($hermesNodeAppId);
+        $port = (int) ($app['api_proxy_port'] ?? 0);
+        if (!Validator::port($port)) {
+            return null;
+        }
+        $env = EnvService::listForApp($hermesNodeAppId);
+        $baseUrl = null;
+        foreach (NodeService::listDomains($hermesNodeAppId) as $row) {
+            if ($row['domain'] === $app['domain'] || $baseUrl === null) {
+                $baseUrl = ((int) $row['ssl_enabled'] === 1 ? 'https' : 'http') . '://' . $row['domain'] . '/v1';
+            }
+        }
+        return ['port' => $port, 'key' => (string) ($env['API_SERVER_KEY']['value'] ?? ''), 'base_url' => $baseUrl];
+    }
+
+    /**
+     * Turns on Hermes' OpenAI-compatible API server: a dedicated loopback
+     * port (API_SERVER_HOST stays 127.0.0.1 - the only way in is Nginx),
+     * a fresh key, /v1/ on every domain of the app proxied to that port,
+     * then a PM2 redeploy so `hermes gateway run` starts the listener.
+     * Clients (Cline, Open WebUI, ...) then use https://<domain>/v1.
+     */
+    public static function enableApi(int $hermesNodeAppId, ?int $userId): void
+    {
+        $app = self::installedApp($hermesNodeAppId);
+        if (Validator::port((int) ($app['api_proxy_port'] ?? 0))) {
+            throw new InvalidArgumentException('API Hermes ini sudah aktif');
+        }
+        if (NodeService::countDomains($hermesNodeAppId) === 0) {
+            throw new InvalidArgumentException('App Hermes ini belum punya domain - tambahkan domain dulu di Node.js Apps > Domain');
+        }
+        $port = self::findFreeApiPort();
+
+        EnvService::setVariable($hermesNodeAppId, 'API_SERVER_ENABLED', 'true', false);
+        EnvService::setVariable($hermesNodeAppId, 'API_SERVER_KEY', self::randomApiKey(), true);
+        EnvService::setVariable($hermesNodeAppId, 'API_SERVER_PORT', (string) $port, false);
+        EnvService::setVariable($hermesNodeAppId, 'API_SERVER_HOST', '127.0.0.1', false);
+        try {
+            NodeService::setApiProxyPort($hermesNodeAppId, $port);
+        } catch (RuntimeException $e) {
+            self::deleteApiEnv($hermesNodeAppId);
+            throw $e;
+        }
+        self::restartAfterApiChange($hermesNodeAppId);
+
+        ActivityLog::record($userId, 'app_installer.hermes_api', "API Hermes ({$app['app_name']}) diaktifkan di /v1, port lokal {$port}");
+    }
+
+    /** New API_SERVER_KEY (the old one stops working once Hermes restarts). */
+    public static function rotateApiKey(int $hermesNodeAppId, ?int $userId): void
+    {
+        $app = self::installedApp($hermesNodeAppId);
+        if (!Validator::port((int) ($app['api_proxy_port'] ?? 0))) {
+            throw new InvalidArgumentException('API Hermes ini belum aktif');
+        }
+        EnvService::setVariable($hermesNodeAppId, 'API_SERVER_KEY', self::randomApiKey(), true);
+        self::restartAfterApiChange($hermesNodeAppId);
+
+        ActivityLog::record($userId, 'app_installer.hermes_api', "API key Hermes ({$app['app_name']}) diganti");
+    }
+
+    /** Removes /v1/ from the vhosts first (nothing reaches the API anymore), then the env + restart. */
+    public static function disableApi(int $hermesNodeAppId, ?int $userId): void
+    {
+        $app = self::installedApp($hermesNodeAppId);
+        NodeService::setApiProxyPort($hermesNodeAppId, null);
+        self::deleteApiEnv($hermesNodeAppId);
+        self::restartAfterApiChange($hermesNodeAppId);
+
+        ActivityLog::record($userId, 'app_installer.hermes_api', "API Hermes ({$app['app_name']}) dinonaktifkan");
+    }
+
+    /** First port in the API range no app uses (as its own port or API port) and nothing listens on. */
+    private static function findFreeApiPort(): int
+    {
+        $used = [];
+        foreach (Database::app()->query('SELECT port, api_proxy_port FROM nodejs_apps')->fetchAll() as $row) {
+            $used[(int) $row['port']] = true;
+            if ($row['api_proxy_port'] !== null) {
+                $used[(int) $row['api_proxy_port']] = true;
+            }
+        }
+        for ($port = self::API_PORT_FIRST; $port <= self::API_PORT_LAST; $port++) {
+            if (isset($used[$port])) {
+                continue;
+            }
+            $check = Executor::run('port-check', [(string) $port], null, 10);
+            if ($check['ok'] && trim($check['output']) === 'free') {
+                return $port;
+            }
+        }
+        throw new RuntimeException('Tidak ada port kosong untuk API Hermes (' . self::API_PORT_FIRST . '-' . self::API_PORT_LAST . ')');
+    }
+
+    private static function deleteApiEnv(int $hermesNodeAppId): void
+    {
+        foreach (self::API_ENV_KEYS as $key) {
+            EnvService::deleteVariable($hermesNodeAppId, $key);
+        }
+    }
+
+    private static function restartAfterApiChange(int $hermesNodeAppId): void
+    {
+        try {
+            NodeService::applyEnv($hermesNodeAppId);
+        } catch (RuntimeException $e) {
+            throw new RuntimeException(
+                'Pengaturan API sudah disimpan, tapi Hermes gagal dijalankan ulang: ' . $e->getMessage()
+                . ' - terapkan ulang dari Node.js Apps > Env.'
+            );
+        }
+    }
+
+    /** 48 hex chars behind a recognisable prefix - well above Hermes' 16-char minimum. */
+    private static function randomApiKey(): string
+    {
+        return 'hk_' . bin2hex(random_bytes(24));
     }
 
     /** The Node.js app row of a Hermes installed through the App Installer. */

@@ -131,6 +131,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             HermesInstallerService::update((int) ($_POST['nodejs_app_id'] ?? 0), $user['id']);
             flash('success', 'Update Hermes berjalan di latar belakang (beberapa menit) - app dijalankan ulang otomatis setelah selesai. Pantau progresnya di Node.js Apps > Logs. Config, sesi, skills & memori tidak berubah.');
+        } elseif (in_array($action, ['hermes_api_enable', 'hermes_api_rotate', 'hermes_api_disable'], true)) {
+            Rbac::require('apps.install');
+
+            $hermesId = (int) ($_POST['nodejs_app_id'] ?? 0);
+            if ($action === 'hermes_api_enable') {
+                HermesInstallerService::enableApi($hermesId, $user['id']);
+                $api = HermesInstallerService::apiStatus($hermesId);
+                flash('success',
+                    'API Hermes aktif' . ($api !== null && $api['base_url'] !== null ? " di {$api['base_url']}" : '')
+                    . ' dan Hermes sudah dijalankan ulang. Buka tombol API di baris Hermes untuk melihat API key dan cara memakainya di Cline.'
+                );
+            } elseif ($action === 'hermes_api_rotate') {
+                HermesInstallerService::rotateApiKey($hermesId, $user['id']);
+                flash('success', 'API key Hermes diganti dan Hermes sudah dijalankan ulang - perbarui key di Cline dan klien lain.');
+            } else {
+                HermesInstallerService::disableApi($hermesId, $user['id']);
+                flash('success', 'API Hermes dinonaktifkan. /v1 di domain Hermes kembali ditangani dashboard.');
+            }
         } elseif ($action === 'connect_9router') {
             Rbac::require('apps.install');
 
@@ -164,6 +182,19 @@ $nineRouterApps = array_values(array_filter(
     $installedApps,
     static fn(array $row): bool => $row['app_slug'] === NineRouterInstallerService::APP_SLUG && $row['nodejs_app_id'] !== null
 ));
+$hermesApps = array_values(array_filter(
+    $installedApps,
+    static fn(array $row): bool => $row['app_slug'] === HermesInstallerService::APP_SLUG && $row['nodejs_app_id'] !== null
+));
+// nodejs_app_id => API state (null = off); never let one broken row take the page down.
+$hermesApi = [];
+foreach ($hermesApps as $hermesRow) {
+    try {
+        $hermesApi[(int) $hermesRow['nodejs_app_id']] = HermesInstallerService::apiStatus((int) $hermesRow['nodejs_app_id']);
+    } catch (InvalidArgumentException|RuntimeException|PDOException) {
+        $hermesApi[(int) $hermesRow['nodejs_app_id']] = null;
+    }
+}
 
 $tierBadge = [
     AppCatalog::TIER_FULL => 'text-bg-success',
@@ -284,6 +315,8 @@ include __DIR__ . '/partials/header.php';
                 <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#hermesNineRouterModal"
                         data-hermes-id="<?= (int) $row['nodejs_app_id'] ?>" data-hermes-name="<?= e($row['nodejs_app_name'] ?? '') ?>"
                         title="Pakai 9Router sebagai provider model"><i class="bi bi-plug me-1"></i>9Router</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#hermesApiModal<?= (int) $row['nodejs_app_id'] ?>"
+                        title="API OpenAI-compatible (Cline, Open WebUI, ...)"><?php if (!empty($hermesApi[(int) $row['nodejs_app_id']])): ?><span class="status-dot active" aria-hidden="true"></span><?php else: ?><i class="bi bi-code-slash me-1"></i><?php endif; ?>API<span class="visually-hidden"><?= !empty($hermesApi[(int) $row['nodejs_app_id']]) ? ' (aktif)' : ' (nonaktif)' ?></span></button>
                 <form method="post" class="d-inline" data-confirm="Update Hermes ke rilis stable terbaru? Installer resmi berjalan di latar belakang beberapa menit, lalu app dijalankan ulang otomatis. Config, sesi, skills &amp; memori tidak berubah.">
                   <?= Csrf::field() ?>
                   <input type="hidden" name="action" value="update_hermes">
@@ -644,6 +677,85 @@ document.getElementById('installAppVersionSelect').addEventListener('change', fu
     </form>
   </div>
 </div>
+
+<?php foreach ($hermesApps as $hermesRow): ?>
+<?php
+  $hid = (int) $hermesRow['nodejs_app_id'];
+  $api = $hermesApi[$hid] ?? null;
+?>
+<div class="modal fade" id="hermesApiModal<?= $hid ?>" tabindex="-1" aria-labelledby="hermesApiTitle<?= $hid ?>">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="hermesApiTitle<?= $hid ?>">API <?= e($hermesRow['nodejs_app_name'] ?? '') ?></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+      </div>
+      <div class="modal-body">
+        <?php if ($api === null): ?>
+          <p>Aktifkan API OpenAI-compatible Hermes supaya bisa dipakai dari Cline, Open WebUI, dan klien lain lewat
+            <code><?= e($hermesRow['domain'] ?? '<domain>') ?>/v1</code>.</p>
+          <p class="text-muted small">Panel membuat API key, menambahkan rute <code>/v1/</code> di Nginx untuk domain Hermes, lalu menjalankan ulang Hermes. Dashboard tetap di domain yang sama.</p>
+        <?php else: ?>
+          <?php if ($api['base_url'] !== null): ?>
+          <div class="mb-3">
+            <label class="form-label" for="hapiUrl<?= $hid ?>">Base URL</label>
+            <div class="input-group">
+              <input type="text" class="form-control font-monospace" id="hapiUrl<?= $hid ?>" value="<?= e($api['base_url']) ?>" readonly>
+              <button class="btn btn-outline-secondary" type="button" data-copy="<?= e($api['base_url']) ?>" aria-label="Salin Base URL"><i class="bi bi-clipboard"></i></button>
+            </div>
+            <?php if (str_starts_with($api['base_url'], 'http://')): ?>
+            <div class="form-text">Domain ini belum ber-SSL di panel. Kalau lewat Cloudflare (proxy atau Tunnel), pakai <code>https://</code>; kalau tidak, aktifkan SSL dulu supaya API key tidak terkirim tanpa enkripsi.</div>
+            <?php endif; ?>
+          </div>
+          <?php endif; ?>
+          <div class="mb-3">
+            <label class="form-label" for="hapiModel<?= $hid ?>">Model ID</label>
+            <div class="input-group">
+              <input type="text" class="form-control font-monospace" id="hapiModel<?= $hid ?>" value="<?= e(HermesInstallerService::API_MODEL_NAME) ?>" readonly>
+              <button class="btn btn-outline-secondary" type="button" data-copy="<?= e(HermesInstallerService::API_MODEL_NAME) ?>" aria-label="Salin Model ID"><i class="bi bi-clipboard"></i></button>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="hapiKey<?= $hid ?>">API key</label>
+            <div class="input-group">
+              <input type="password" class="form-control font-monospace" id="hapiKey<?= $hid ?>" value="<?= e($api['key']) ?>" readonly autocomplete="off">
+              <button class="btn btn-outline-secondary" type="button" data-toggle-password-input="hapiKey<?= $hid ?>" aria-label="Tampilkan API key"><i class="bi bi-eye"></i></button>
+              <button class="btn btn-outline-secondary" type="button" data-copy="<?= e($api['key']) ?>" aria-label="Salin API key"><i class="bi bi-clipboard"></i></button>
+            </div>
+          </div>
+          <p class="small mb-3">Di Cline: API Provider <strong>OpenAI Compatible</strong>, lalu isi Base URL, API key, dan Model ID di atas.</p>
+        <?php endif; ?>
+        <div class="alert alert-warning small mb-0">Siapa pun yang memegang API key ini bisa menyuruh Hermes menjalankan perintah di server ini. Simpan seperti password, dan ganti key kalau bocor.</div>
+      </div>
+      <div class="modal-footer">
+        <?php if ($api === null): ?>
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+          <form method="post" class="d-inline">
+            <?= Csrf::field() ?>
+            <input type="hidden" name="action" value="hermes_api_enable">
+            <input type="hidden" name="nodejs_app_id" value="<?= $hid ?>">
+            <button type="submit" class="btn btn-primary">Aktifkan API</button>
+          </form>
+        <?php else: ?>
+          <form method="post" class="d-inline me-auto" data-confirm="Nonaktifkan API Hermes? Klien yang memakai /v1 berhenti bekerja dan Hermes dijalankan ulang.">
+            <?= Csrf::field() ?>
+            <input type="hidden" name="action" value="hermes_api_disable">
+            <input type="hidden" name="nodejs_app_id" value="<?= $hid ?>">
+            <button type="submit" class="btn btn-outline-danger">Nonaktifkan</button>
+          </form>
+          <form method="post" class="d-inline" data-confirm="Ganti API key? Key lama langsung tidak berlaku dan Hermes dijalankan ulang.">
+            <?= Csrf::field() ?>
+            <input type="hidden" name="action" value="hermes_api_rotate">
+            <input type="hidden" name="nodejs_app_id" value="<?= $hid ?>">
+            <button type="submit" class="btn btn-outline-secondary">Ganti key</button>
+          </form>
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>
+        <?php endif; ?>
+      </div>
+    </div>
+  </div>
+</div>
+<?php endforeach; ?>
 
 <script>
 (function () {
