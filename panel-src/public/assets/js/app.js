@@ -206,7 +206,14 @@ document.addEventListener('DOMContentLoaded', function () {
         });
         setStat(row, 'cpu', function (el) { el.textContent = rt ? rt.cpu_percent + '%' : '-'; });
         setStat(row, 'ram', function (el) { el.textContent = rt ? (Math.round(rt.memory_bytes / 1048576 * 10) / 10) + ' MB' : '-'; });
-        setStat(row, 'uptime', function (el) { el.textContent = (rt && rt.uptime_ms) ? formatUptime(rt.uptime_ms) : '-'; });
+        setStat(row, 'usage', function (el) {
+          el.innerHTML = rt ? rt.cpu_percent + '%<br>' + (Math.round(rt.memory_bytes / 1048576 * 10) / 10) + ' MB' : '-';
+        });
+        setStat(row, 'uptime', function (el) {
+          var up = (rt && rt.uptime_ms) ? formatUptime(rt.uptime_ms) : '-';
+          // Halaman Node.js menggabung restart ke Uptime: "01:41:02 (10)".
+          el.textContent = (el.hasAttribute('data-with-restarts') && rt) ? up + ' (' + rt.restart_count + ')' : up;
+        });
         setStat(row, 'restarts', function (el) { el.textContent = rt ? rt.restart_count : '-'; });
       });
       function setStat(row, name, fn) {

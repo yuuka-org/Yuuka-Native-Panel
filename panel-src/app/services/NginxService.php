@@ -749,25 +749,7 @@ final class NginxService
             throw new InvalidArgumentException('Website tidak ditemukan');
         }
 
-        $result = Executor::run('log-traffic-daily', [$site['domain']], null, 30);
-        $counts = [];
-        if ($result['ok']) {
-            foreach (explode("\n", trim($result['output'])) as $line) {
-                if ($line === '' || !str_contains($line, "\t")) {
-                    continue;
-                }
-                [$date, $count] = explode("\t", $line, 2);
-                $counts[$date] = (int) $count;
-            }
-        }
-
-        $days = max(1, min(90, $days));
-        $out = [];
-        for ($i = $days - 1; $i >= 0; $i--) {
-            $date = date('Y-m-d', strtotime("-{$i} days"));
-            $out[] = ['date' => $date, 'count' => $counts[$date] ?? 0];
-        }
-        return $out;
+        return TrafficService::daily((string) $site['domain'], $days);
     }
 
     /**

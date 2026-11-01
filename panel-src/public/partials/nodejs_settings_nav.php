@@ -18,6 +18,7 @@ $nodejsTabs = [
     'logs' => ['/nodejs_logs', 'Logs', 'bi-file-text'],
     'response_log' => ['/nodejs_response_log', 'Response Log', 'bi-file-earmark-text'],
     'health' => ['/nodejs_health', 'Health Check', 'bi-heart-pulse'],
+    'traffic' => ['/nodejs_traffic', 'Traffic Analysis', 'bi-graph-up'],
     'backup' => ['/nodejs_backup', 'Backup', 'bi-cloud-arrow-down'],
 ];
 $embed = $embed ?? false;

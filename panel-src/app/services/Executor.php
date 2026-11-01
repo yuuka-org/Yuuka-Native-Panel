@@ -32,6 +32,7 @@ final class Executor
         'disk-usage',
         'fs-mkdir-website', 'fs-remove-website', 'fs-remove-nodeapp',
         'git-clone-website', 'git-pull-website', 'git-status-website',
+        'git-clone-nodeapp', 'git-pull-nodeapp', 'git-status-nodeapp', 'project-clone',
         'port-check',
         'plugin-install-zip', 'plugin-install-git', 'plugin-remove', 'plugin-exec',
         'files-list', 'files-read', 'files-write', 'files-mkdir', 'files-delete',
@@ -66,7 +67,7 @@ final class Executor
      * silently merges that batch's last log line with the FIRST line of
      * the next poll's batch once appended together in the browser.
      */
-    private const RAW_OUTPUT_SUBCOMMANDS = ['files-read', 'files-list', 'files-search', 'files-trash-list', 'git-status-website', 'plugin-exec', 'pm2-logs-tail'];
+    private const RAW_OUTPUT_SUBCOMMANDS = ['files-read', 'files-list', 'files-search', 'files-trash-list', 'git-status-website', 'git-status-nodeapp', 'plugin-exec', 'pm2-logs-tail'];
 
     /**
      * @param string[] $args

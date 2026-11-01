@@ -41,9 +41,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 trim((string) ($_POST['max_memory_restart'] ?? '512M')),
                 (string) ($_POST['node_env'] ?? 'production'),
                 $env,
-                $user['id']
+                $user['id'],
+                'default',
+                trim((string) ($_POST['git_repo_url'] ?? '')) ?: null,
+                trim((string) ($_POST['git_branch'] ?? '')) ?: null
             );
             flash('success', "Aplikasi {$app['app_name']} berhasil dijalankan via PM2 (port {$port}).");
+        } elseif ($action === 'git_pull') {
+            Rbac::require('nodejs.control');
+            NodeService::gitPull((int) $_POST['id'], $user['id']);
+            flash('success', 'Berhasil git pull. Restart aplikasi agar perubahan aktif.');
+        } elseif ($action === 'clone') {
+            Rbac::require('nodejs.create');
+            ProjectCloneService::clone((string) ($_POST['src'] ?? ''), (string) ($_POST['dest'] ?? ''), ($_POST['with_git'] ?? '') === '1', $user['id']);
+            flash('success', 'Proyek berhasil di-clone. Restart aplikasi Node.js tujuan agar perubahan aktif.');
         } elseif ($action === 'control') {
             Rbac::require('nodejs.control');
             NodeService::controlApp((int) $_POST['id'], (string) $_POST['control'], $user['id']);
@@ -69,6 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $status = NodeService::combinedStatus();
 $nodeVersions = NodeService::allowedNodeVersions();
+$cloneTargets = ProjectCloneService::targets();
 
 $pageTitle = 'Node.js Applications';
 include __DIR__ . '/partials/header.php';
@@ -106,21 +118,32 @@ include __DIR__ . '/partials/header.php';
     <div class="table-responsive">
       <table class="table table-hover mb-0 align-middle">
         <thead class="table-light">
-          <tr><th>App Name</th><th>Domain</th><th>Status</th><th>CPU</th><th>RAM</th><th>Uptime</th><th>Restarts</th><th>Port</th><th class="text-end">Aksi</th></tr>
+          <tr><th>App Name</th><th>Status</th><th>Uptime</th><th>Usage</th><th>Traffic</th><th class="text-end">Aksi</th></tr>
         </thead>
         <tbody>
         <?php if (empty($status['managed'])): ?>
-          <tr><td colspan="9" class="text-center text-muted py-4">Belum ada aplikasi Node.js terdaftar</td></tr>
+          <tr><td colspan="6" class="text-center text-muted py-4">Belum ada aplikasi Node.js terdaftar</td></tr>
         <?php endif; ?>
-        <?php foreach ($status['managed'] as $item): $m = $item['meta']; $rt = $item['runtime']; $domainCount = NodeService::countDomains((int) $m['id']); ?>
+        <?php foreach ($status['managed'] as $item): $m = $item['meta']; $rt = $item['runtime']; $domainCount = NodeService::countDomains((int) $m['id']); $gitStatus = NodeService::gitStatus((int) $m['id']); ?>
           <tr data-app-row="<?= (int) $m['id'] ?>">
-            <td><?= e($m['app_name']) ?><div class="text-muted small">Node <?= e($m['node_version']) ?></div></td>
             <td>
-              <?php if ($m['domain']): ?>
-                <a href="http://<?= e($m['domain']) ?>" target="_blank"><?= e($m['domain']) ?></a>
-                <?php if ($domainCount > 1): ?><a href="/nodejs_domains?id=<?= (int) $m['id'] ?>" class="badge text-bg-light border text-decoration-none">+<?= $domainCount - 1 ?> lainnya</a><?php endif; ?>
+              <strong><?= e($m['app_name']) ?></strong> <span class="text-muted">[v<?= e($m['node_version']) ?>]</span>
+              <div class="small mt-1">
+                <?php if ($m['domain']): ?>
+                  <a href="http://<?= e($m['domain']) ?>" target="_blank"><?= e($m['domain']) ?></a>
+                  <?php if ($domainCount > 1): ?><a href="/nodejs_domains?id=<?= (int) $m['id'] ?>" class="badge text-bg-light border text-decoration-none">+<?= $domainCount - 1 ?> lainnya</a><?php endif; ?>
+                <?php else: ?>
+                  <span class="text-muted">Tanpa domain</span>
+                <?php endif; ?>
+                <span class="text-muted">&middot; port <code><?= e((string) $m['port']) ?></code></span>
+              </div>
+              <?php if ($gitStatus !== null && $gitStatus['is_git']): ?>
+                <div class="small mt-1" <?= !empty($gitStatus['remote']) ? 'title="' . e($gitStatus['remote']) . '"' : '' ?>>
+                  <i class="bi bi-git me-1"></i><code><?= e($gitStatus['branch'] ?? '?') ?></code> @ <code><?= e($gitStatus['commit'] ?? '?') ?></code>
+                  <span class="text-muted" title="<?= e($gitStatus['message'] ?? '') ?>">&middot; <?= e(mb_strimwidth((string) ($gitStatus['message'] ?? ''), 0, 40, '...')) ?> &middot; <?= e($gitStatus['date'] ?? '') ?></span>
+                </div>
               <?php else: ?>
-                <span class="text-muted">-</span>
+                <div class="small text-muted mt-1"><i class="bi bi-git me-1"></i>Git: -</div>
               <?php endif; ?>
             </td>
             <td>
@@ -132,13 +155,21 @@ include __DIR__ . '/partials/header.php';
               <span data-stat="status"><span class="status-dot <?= e($item['status']) ?>"></span><?= e($item['status']) ?></span>
               <?php endif; ?>
             </td>
-            <td data-stat="cpu"><?= $rt ? e((string) $rt['cpu_percent']) . '%' : '-' ?></td>
-            <td data-stat="ram"><?= $rt ? e((string) round($rt['memory_bytes'] / 1048576, 1)) . ' MB' : '-' ?></td>
-            <td data-stat="uptime"><?= $rt && $rt['uptime_ms'] ? e(gmdate('H:i:s', intdiv((int) $rt['uptime_ms'], 1000))) : '-' ?></td>
-            <td data-stat="restarts"><?= $rt ? e((string) $rt['restart_count']) : '-' ?></td>
-            <td><?= e((string) $m['port']) ?></td>
+            <td data-stat="uptime" data-with-restarts="1"><?= $rt && $rt['uptime_ms'] ? e(gmdate('H:i:s', intdiv((int) $rt['uptime_ms'], 1000))) . ' (' . e((string) $rt['restart_count']) . ')' : ($rt ? '- (' . e((string) $rt['restart_count']) . ')' : '-') ?></td>
+            <td data-stat="usage"><?= $rt ? e((string) $rt['cpu_percent']) . '%<br>' . e((string) round($rt['memory_bytes'] / 1048576, 1)) . ' MB' : '-' ?></td>
+            <td style="min-width:130px;">
+              <a href="javascript:void(0)" onclick="nodejsOpenSettings(<?= (int) $m['id'] ?>, 'traffic')" class="text-decoration-none d-block" title="Buka Traffic Analysis">
+                <?= TrafficService::sparkline(NodeService::trafficDaily((int) $m['id'], 14)) ?>
+              </a>
+            </td>
             <td class="text-end text-nowrap">
               <div class="btn-group">
+                <?php if ($gitStatus !== null && $gitStatus['is_git'] && Rbac::can($user['role'], 'nodejs.control')): ?>
+                <button type="button" class="btn btn-sm btn-outline-success" title="Pull / Update dari Git" onclick="nodeGitPull(<?= (int) $m['id'] ?>, <?= e(json_encode($m['app_name'])) ?>)"><i class="bi bi-cloud-download"></i></button>
+                <?php endif; ?>
+                <?php if (Rbac::can($user['role'], 'nodejs.create')): ?>
+                <button type="button" class="btn btn-sm btn-outline-secondary" title="Clone proyek ke Website/Node.js lain" onclick="cloneOpen('nodeapp:<?= (int) $m['id'] ?>', <?= e(json_encode($m['app_name'])) ?>)"><i class="bi bi-copy"></i></button>
+                <?php endif; ?>
                 <button type="button" class="btn btn-sm btn-outline-secondary" title="Settings" onclick="nodejsOpenSettings(<?= (int) $m['id'] ?>)"><i class="bi bi-gear"></i></button>
                 <?php if (Rbac::can($user['role'], 'files.view')): ?>
                 <a href="/file_manager?scope=nodeapp&name=<?= urlencode($m['app_name']) ?>" class="btn btn-sm btn-outline-secondary" title="File Manager"><i class="bi bi-folder2-open"></i></a>
@@ -281,6 +312,15 @@ include __DIR__ . '/partials/header.php';
                 <label class="form-check-label" for="watch">Watch files</label>
               </div>
             </div>
+            <div class="col-md-8">
+              <label class="form-label">Deploy dari Git (opsional)</label>
+              <input type="url" name="git_repo_url" class="form-control" placeholder="https://github.com/user/repo.git">
+              <div class="form-text">HTTPS saja. Repo privat: <code>https://user:TOKEN@github.com/...</code>. Repo di-clone langsung ke folder aplikasi.</div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Branch (opsional)</label>
+              <input type="text" name="git_branch" class="form-control" placeholder="main">
+            </div>
             <div class="col-12">
               <label class="form-label">Environment Variables (.env format, satu baris per variabel)</label>
               <textarea name="env" class="form-control" rows="4" placeholder="DATABASE_URL=mysql://...&#10;API_KEY=..."></textarea>
@@ -296,6 +336,12 @@ include __DIR__ . '/partials/header.php';
     </form>
   </div>
 </div>
+
+<form id="gitPullForm" method="post" class="d-none">
+  <?= Csrf::field() ?>
+  <input type="hidden" name="action" value="git_pull">
+  <input type="hidden" name="id" id="gitPullId">
+</form>
 
 <form id="ctlForm" method="post" class="d-none">
   <?= Csrf::field() ?>
@@ -342,9 +388,10 @@ include __DIR__ . '/partials/header.php';
 </div>
 
 <script>
-window.nodejsOpenSettings = function (id) {
+window.nodejsOpenSettings = function (id, tab) {
   var frame = document.getElementById('nodejsSettingsFrame');
-  if (frame) { frame.src = '/nodejs_settings?id=' + id + '&embed=1'; }
+  var page = tab === 'traffic' ? '/nodejs_traffic' : '/nodejs_settings';
+  if (frame) { frame.src = page + '?id=' + id + '&embed=1'; }
   var modalEl = document.getElementById('nodejsSettingsModal');
   if (modalEl && typeof bootstrap !== 'undefined') { bootstrap.Modal.getOrCreateInstance(modalEl).show(); }
 };
@@ -376,6 +423,12 @@ window.nodejsOpenSettings = function (id) {
     preview.textContent = '/home/nodeapps/apps/' + (sanitized || '<nama>');
   });
 })();
+
+function nodeGitPull(id, name) {
+  if (!confirm('Git pull untuk ' + name + '? (fast-forward only)')) { return; }
+  document.getElementById('gitPullId').value = id;
+  document.getElementById('gitPullForm').submit();
+}
 
 function pctl(id, action) {
   document.getElementById('ctlId').value = id;
@@ -436,5 +489,7 @@ document.addEventListener('keydown', function (e) {
   });
 })();
 </script>
+
+<?php if (Rbac::can($user['role'], 'nodejs.create')) { include __DIR__ . '/partials/clone_modal.php'; } ?>
 
 <?php include __DIR__ . '/partials/footer.php'; ?>

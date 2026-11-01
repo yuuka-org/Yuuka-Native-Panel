@@ -529,7 +529,8 @@ if (!$showTrash && $searchQuery === '') {
         $entries = array_values(array_filter($entries, static fn(array $e): bool => !str_starts_with($e['name'], '.')));
     }
     $clipboard = $_SESSION['fm_clipboard'] ?? null;
-    $clipboardFamilyMatches = is_array($clipboard) && fm_scope_family((string) $clipboard['scope']) === fm_scope_family($scope);
+    // Salin/pindah lintas Website <-> Node.js diizinkan (pemilik file otomatis disesuaikan di sisi server).
+    $clipboardFamilyMatches = is_array($clipboard);
 }
 
 if ($isAjaxBrowse) {

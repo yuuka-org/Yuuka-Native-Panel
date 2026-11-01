@@ -1527,10 +1527,14 @@ op_fs_mkdir_website() {
 # is there so Nginx doesn't hard-error on a missing document root).
 op_git_clone_website() {
     local domain="$1" repo_url="$2" branch="${3:-}"
-    require_match "$domain" "$RE_DOMAIN" "domain"
+    if [[ -n "${GIT_BASE:-}" ]]; then
+        require_match "$domain" "$RE_APPNAME" "appname"
+    else
+        require_match "$domain" "$RE_DOMAIN" "domain"
+    fi
     require_match "$repo_url" "$RE_GIT_URL" "repo url"
-    local dir="${WWW_BASE}/${domain}"
-    require_path_within "$dir" "$WWW_BASE" >/dev/null
+    local dir="${GIT_BASE:-$WWW_BASE}/${domain}"
+    require_path_within "$dir" "${GIT_BASE:-$WWW_BASE}" >/dev/null
     [[ -e "$dir" ]] && fail "Direktori sudah ada: $dir"
 
     local branch_args=()
@@ -1548,8 +1552,8 @@ op_git_clone_website() {
     fi
     rm -f "/tmp/git-clone-out.$$"
 
-    mkdir -p "${dir}/public"
-    chown -R www-data:www-data "$dir"
+    [[ -n "${GIT_BASE:-}" ]] || mkdir -p "${dir}/public"
+    chown -R "${GIT_OWNER:-www-data:www-data}" "$dir"
     chmod 750 "$dir"
     fm_reapply_terminal_acl "$dir"
     echo "$dir"
@@ -1576,7 +1580,7 @@ op_git_pull_website() {
     fi
     rm -f "/tmp/git-pull-out.$$"
 
-    chown -R www-data:www-data "$dir"
+    chown -R "${GIT_OWNER:-www-data:www-data}" "$dir"
     fm_reapply_terminal_acl "$dir"
     echo "OK: pulled $name"
 }
@@ -1588,8 +1592,8 @@ op_git_pull_website() {
 git_resolve_site_dir() {
     local name="$1"
     require_match "$name" '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$' "site dir"
-    GIT_SITE_DIR="${WWW_BASE}/${name}"
-    require_path_within "$GIT_SITE_DIR" "$WWW_BASE" >/dev/null
+    GIT_SITE_DIR="${GIT_BASE:-$WWW_BASE}/${name}"
+    require_path_within "$GIT_SITE_DIR" "${GIT_BASE:-$WWW_BASE}" >/dev/null
 }
 
 # NUL-terminated key\tvalue records (same reasoning as op_files_list -
@@ -1613,6 +1617,43 @@ op_git_status_website() {
     remote=$("${g[@]}" remote get-url origin 2>/dev/null | sed -E 's#(https?://)[^/@]*@#\1#') || remote=""
 
     printf 'is_git\tyes\0branch\t%s\0commit\t%s\0message\t%s\0date\t%s\0remote\t%s\0' "$branch" "$commit" "$message" "$date" "$remote"
+}
+
+# Varian Node.js App untuk operasi git di atas (basis folder + pemilik beda).
+op_git_clone_nodeapp()  { GIT_BASE="$NODEAPPS_BASE" GIT_OWNER="nodeapps:nodeapps" op_git_clone_website "$@"; }
+op_git_pull_nodeapp()   { GIT_BASE="$NODEAPPS_BASE" GIT_OWNER="nodeapps:nodeapps" op_git_pull_website "$@"; }
+op_git_status_nodeapp() { GIT_BASE="$NODEAPPS_BASE" GIT_OWNER="nodeapps:nodeapps" op_git_status_website "$@"; }
+
+# Clone isi proyek satu Website/Node.js App ke yang lain (mis. satu repo Git
+# berisi bagian PHP dan Node). Hanya MENAMBAH/MENIMPA file - tidak pernah
+# menghapus file di tujuan - dan tidak menyentuh node_modules, .env,
+# ecosystem.config.cjs, .trash (dan .git kecuali diminta), supaya konfigurasi
+# milik tujuan tetap utuh. Bisa dijalankan berulang untuk sinkronisasi.
+# Args: <src_kind> <src_name> <dest_kind> <dest_name> [with-git]
+op_project_clone() {
+    local src_kind="$1" src_name="$2" dest_kind="$3" dest_name="$4" with_git="${5:-}"
+    local src_dir dest_dir dest_owner
+    case "$src_kind" in
+        website) require_match "$src_name" '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$' "src"; src_dir="${WWW_BASE}/${src_name}"; require_path_within "$src_dir" "$WWW_BASE" >/dev/null ;;
+        nodeapp) require_match "$src_name" "$RE_APPNAME" "src"; src_dir="${NODEAPPS_BASE}/${src_name}"; require_path_within "$src_dir" "$NODEAPPS_BASE" >/dev/null ;;
+        *) fail "Jenis sumber tidak dikenal" ;;
+    esac
+    case "$dest_kind" in
+        website) require_match "$dest_name" '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$' "dest"; dest_dir="${WWW_BASE}/${dest_name}"; require_path_within "$dest_dir" "$WWW_BASE" >/dev/null; dest_owner="www-data:www-data" ;;
+        nodeapp) require_match "$dest_name" "$RE_APPNAME" "dest"; dest_dir="${NODEAPPS_BASE}/${dest_name}"; require_path_within "$dest_dir" "$NODEAPPS_BASE" >/dev/null; dest_owner="nodeapps:nodeapps" ;;
+        *) fail "Jenis tujuan tidak dikenal" ;;
+    esac
+    [[ -d "$src_dir" ]] || fail "Folder sumber tidak ditemukan: $src_dir"
+    [[ -d "$dest_dir" ]] || fail "Folder tujuan tidak ditemukan: $dest_dir"
+    [[ "$(realpath -m -- "$src_dir")" != "$(realpath -m -- "$dest_dir")" ]] || fail "Sumber dan tujuan tidak boleh sama"
+
+    local excludes=(--exclude=./node_modules --exclude=./.env --exclude=./ecosystem.config.cjs --exclude=./.trash)
+    [[ "$with_git" == "with-git" ]] || excludes+=(--exclude=./.git)
+    tar -C "$src_dir" "${excludes[@]}" -cf - . | tar -C "$dest_dir" -xf - --no-same-owner
+
+    chown -R "$dest_owner" "$dest_dir"
+    fm_reapply_terminal_acl "$dest_dir"
+    echo "OK: clone ${src_kind}/${src_name} -> ${dest_kind}/${dest_name}"
 }
 
 op_fs_remove_website() {
@@ -2108,10 +2149,12 @@ _fm_copy_or_move() {
     [[ -n "$src_relpath" ]] || fail "Path sumber wajib diisi"
     [[ -n "$dest_relpath" ]] || fail "Path tujuan wajib diisi"
 
-    local src_family dest_family
-    src_family=$(fm_scope_family "$src_scope")
-    dest_family=$(fm_scope_family "$dest_scope")
-    [[ "$src_family" == "$dest_family" ]] || fail "Tidak bisa memindahkan/menyalin antara Website dan Node.js App"
+    # Salin/pindah antara Website <-> Node.js App DIIZINKAN: hasilnya selalu
+    # di-chown -R ke pemilik scope tujuan (www-data / nodeapps) + ACL
+    # terminal diterapkan ulang di bawah, jadi tidak ada file berpemilik
+    # salah yang tertinggal. Cukup validasi scope-nya dikenal.
+    fm_scope_family "$src_scope" >/dev/null
+    fm_scope_family "$dest_scope" >/dev/null
 
     if fm_is_root_scope "$src_scope" && [[ "$src_relpath" != */* ]] && [[ "$orphan_confirmed" != "orphan-confirmed" ]]; then
         fail "Tidak bisa memindahkan/menyalin folder website/aplikasi lewat mode 'Jelajahi semua' - gunakan menu Hapus/Kelola Website/Aplikasi"
@@ -2556,12 +2599,15 @@ op_log_clear() {
 op_log_traffic_daily() {
     local domain="$1"
     require_match "$domain" "$RE_DOMAIN" "domain"
-    local base="/var/log/nginx/${domain}-access.log"
     {
-        [[ -f "$base" ]] && cat "$base"
-        [[ -f "${base}.1" ]] && cat "${base}.1"
-        for gz in "${base}".*.gz; do
-            [[ -f "$gz" ]] && zcat "$gz"
+        local suffix base gz
+        for suffix in "" "-ssl"; do
+            base="/var/log/nginx/${domain}${suffix}-access.log"
+            [[ -f "$base" ]] && cat "$base"
+            [[ -f "${base}.1" ]] && cat "${base}.1"
+            for gz in "${base}".*.gz; do
+                [[ -f "$gz" ]] && zcat "$gz"
+            done
         done
     } 2>/dev/null | awk '
         {
@@ -2838,6 +2884,10 @@ case "$SUBCOMMAND" in
     git-clone-website)     op_git_clone_website "$@" ;;
     git-pull-website)      op_git_pull_website "$@" ;;
     git-status-website)    op_git_status_website "$@" ;;
+    git-clone-nodeapp)     op_git_clone_nodeapp "$@" ;;
+    git-pull-nodeapp)      op_git_pull_nodeapp "$@" ;;
+    git-status-nodeapp)    op_git_status_nodeapp "$@" ;;
+    project-clone)         op_project_clone "$@" ;;
     fs-remove-website)     op_fs_remove_website "$@" ;;
     fs-remove-nodeapp)     op_fs_remove_nodeapp "$@" ;;
     port-check)            op_port_check "$@" ;;

@@ -118,7 +118,9 @@ final class NodeService
         string $nodeEnv,
         array $env,
         ?int $userId,
-        string $proxyProfile = 'default'
+        string $proxyProfile = 'default',
+        ?string $gitRepoUrl = null,
+        ?string $gitBranch = null
     ): array {
         if (!Validator::appName($appName)) {
             throw new InvalidArgumentException('Nama aplikasi tidak valid (huruf, angka, - dan _ saja)');
@@ -153,6 +155,12 @@ final class NodeService
         if (!self::isPortAvailable($port)) {
             throw new InvalidArgumentException("Port {$port} sudah digunakan aplikasi lain");
         }
+        if ($gitRepoUrl !== null && $gitRepoUrl !== '' && !Validator::gitUrl($gitRepoUrl)) {
+            throw new InvalidArgumentException('URL repository Git tidak valid (harus https://...)');
+        }
+        if ($gitBranch !== null && $gitBranch !== '' && !Validator::gitBranch($gitBranch)) {
+            throw new InvalidArgumentException('Nama branch tidak valid');
+        }
 
         $pdo = Database::app();
         $pm2Name = $appName;
@@ -179,8 +187,22 @@ final class NodeService
         // app registration. It first actually runs on the next explicit
         // redeploy (see updateApp()), by which point real project files
         // are expected to exist.
+        // Deploy dari Git (opsional): repo di-clone LEBIH DULU ke folder app
+        // supaya PM2 langsung menjalankan kode asli, bukan placeholder.
+        $cloned = false;
+        if ($gitRepoUrl !== null && $gitRepoUrl !== '') {
+            $clone = Executor::run('git-clone-nodeapp', [$appName, $gitRepoUrl, (string) $gitBranch], null, 120);
+            if (!$clone['ok']) {
+                throw new RuntimeException('Gagal clone repository Git: ' . $clone['output']);
+            }
+            $cloned = true;
+        }
+
         $deploy = nodejs_pm2_deploy($pm2Name, $ecosystem, $nodeVersion);
         if (!$deploy['ok']) {
+            if ($cloned) {
+                Executor::run('fs-remove-nodeapp', [$appName], null, 30);
+            }
             throw new RuntimeException('Gagal menjalankan aplikasi via PM2: ' . $deploy['output']);
         }
 
@@ -598,6 +620,56 @@ final class NodeService
         nginx_delete_site("wildcard-node-{$app['app_name']}");
         Database::app()->prepare('UPDATE nodejs_apps SET wildcard_enabled = 0, wildcard_port = NULL WHERE id = :id')->execute(['id' => $id]);
         ActivityLog::record($userId, 'nodejs.wildcard_disable', "Wildcard hostname dinonaktifkan untuk {$app['app_name']}");
+    }
+
+    /** @return array{is_git:bool,branch?:string,commit?:string,message?:string,date?:string,remote?:string}|null */
+    public static function gitStatus(int $id): ?array
+    {
+        $app = self::find($id);
+        if ($app === null) {
+            return null;
+        }
+        $result = Executor::run('git-status-nodeapp', [$app['app_name']], null, 15);
+        if (!$result['ok']) {
+            return ['is_git' => false];
+        }
+        $status = ['is_git' => false];
+        foreach (explode("\0", $result['output']) as $record) {
+            if ($record === '' || !str_contains($record, "\t")) {
+                continue;
+            }
+            [$key, $value] = explode("\t", $record, 2);
+            $status[$key] = $key === 'is_git' ? ($value === 'yes') : $value;
+        }
+        return $status;
+    }
+
+    /** Fast-forward-only git pull di folder app; app tidak di-restart otomatis (tekan Restart bila perlu). */
+    public static function gitPull(int $id, ?int $userId): array
+    {
+        $app = self::find($id);
+        if ($app === null) {
+            throw new InvalidArgumentException('Aplikasi tidak ditemukan');
+        }
+        $result = Executor::run('git-pull-nodeapp', [$app['app_name']], null, 60);
+        if (!$result['ok']) {
+            throw new RuntimeException('Gagal git pull: ' . $result['output']);
+        }
+        ActivityLog::record($userId, 'nodejs.git_pull', "Git pull untuk {$app['app_name']}");
+        return self::gitStatus($id) ?? ['is_git' => false];
+    }
+
+    /** @return array<int,array{date:string,count:int}> kosong-isi nol bila app belum punya domain */
+    public static function trafficDaily(int $id, int $days = 30): array
+    {
+        $app = self::find($id);
+        if ($app === null) {
+            throw new InvalidArgumentException('Aplikasi tidak ditemukan');
+        }
+        if (empty($app['domain'])) {
+            return TrafficService::zeros($days);
+        }
+        return TrafficService::daily((string) $app['domain'], $days);
     }
 
     public static function deleteApp(int $id, bool $deleteFiles, ?int $userId): void

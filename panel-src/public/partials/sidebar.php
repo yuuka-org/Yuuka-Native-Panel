@@ -10,7 +10,7 @@ $links = [
     // keep this entry highlighted, since it no longer maps 1:1 to its own
     // href like every other entry here.
     ['href' => '/websites', 'icon' => 'bi-globe2', 'label' => t('sidebar.website'), 'perm' => 'website.view', 'group' => 'sites',
-        'match' => ['websites', 'nodejs', 'nodejs_settings', 'nodejs_domains', 'nodejs_env', 'nodejs_logs', 'nodejs_health', 'nodejs_backup']],
+        'match' => ['websites', 'nodejs', 'nodejs_settings', 'nodejs_domains', 'nodejs_env', 'nodejs_logs', 'nodejs_health', 'nodejs_traffic', 'nodejs_backup']],
     ['href' => '/app_installer', 'icon' => 'bi-grid-3x3-gap', 'label' => t('sidebar.app_installer'), 'perm' => 'apps.view', 'group' => 'sites'],
     ['href' => '/wp_manager', 'icon' => 'bi-wordpress', 'label' => t('sidebar.wp_manager'), 'perm' => 'wp.view', 'group' => 'sites',
         'match' => ['wp_manager', 'wp_manager_core', 'wp_manager_plugins', 'wp_manager_themes']],

@@ -62,6 +62,19 @@ CRUD website statis/PHP native, ditangani `NginxService`:
   di tempat (gagal bersih, tidak pernah merge/rebase otomatis kalau ada
   konflik/divergen), dan info branch + commit hash + pesan commit terakhir
   yang ditampilkan di tabel.
+- **Clone proyek** (`ProjectCloneService`, subcommand `project-clone`) —
+  tombol Clone di Aksi setiap Website/Node.js App menyalin isi proyek ke
+  Website/App lain (mis. satu repo Git berisi bagian PHP dan Node). Hanya
+  menambah/menimpa file; `node_modules`, `.env`, `ecosystem.config.cjs` dan
+  `.git` (kecuali dicentang) tidak ikut. Jalankan ulang untuk sinkronisasi.
+- **Salin/pindah lintas Website <-> Node.js** di File Manager diizinkan;
+  pemilik file otomatis disesuaikan (www-data / nodeapps).
+- **Node.js: Deploy dari Git** (`git-clone/pull/status-nodeapp`) — isi URL
+  repo + branch saat Tambah Aplikasi; repo yang sudah ada di folder app
+  terdeteksi otomatis dan punya tombol Pull. **Traffic Analysis** Node.js
+  (tab `Traffic Analysis` di Settings) memakai access log Nginx domain app,
+  sama seperti Website (`TrafficService`, cache 5 menit; log `-ssl` ikut
+  dibaca). Kolom **Traffic** di tabel Website/Node.js berisi sparkline 14 hari.
 - `toggleWebsite($id, $enable, $userId)` — enable/disable vhost tanpa
   menghapus file (`nginx-enable`/`nginx-disable`).
 - `deleteWebsite($id, $deleteFiles, $userId)` — hapus vhost

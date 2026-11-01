@@ -25,6 +25,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             Rbac::require('website.create');
             NginxService::gitPull((int) $_POST['id'], $user['id']);
             flash('success', 'Berhasil git pull - situs diperbarui ke commit terbaru.');
+        } elseif ($action === 'clone') {
+            Rbac::require('website.create');
+            ProjectCloneService::clone((string) ($_POST['src'] ?? ''), (string) ($_POST['dest'] ?? ''), ($_POST['with_git'] ?? '') === '1', $user['id']);
+            flash('success', 'Proyek berhasil di-clone.');
         } elseif ($action === 'toggle') {
             Rbac::require('website.toggle');
             NginxService::toggleWebsite((int) $_POST['id'], $_POST['enable'] === '1', $user['id']);
@@ -42,6 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $websites = NginxService::listWebsites();
 $phpVersions = PhpService::installedVersions();
+$cloneTargets = ProjectCloneService::targets();
 
 $pageTitle = 'Website PHP';
 include __DIR__ . '/partials/header.php';
@@ -71,27 +76,36 @@ include __DIR__ . '/partials/header.php';
     <div class="table-responsive">
       <table class="table table-hover mb-0 align-middle">
         <thead class="table-light">
-          <tr><th>Domain</th><th>PHP Version</th><th>Document Root</th><th>Git</th><th>SSL</th><th>Status</th><th class="text-end">Aksi</th></tr>
+          <tr><th>Domain</th><th>Document Root</th><th>Traffic</th><th>Status</th><th class="text-end">Aksi</th></tr>
         </thead>
         <tbody>
         <?php if (empty($websites)): ?>
-          <tr><td colspan="7" class="text-center text-muted py-4">Belum ada website</td></tr>
+          <tr><td colspan="5" class="text-center text-muted py-4">Belum ada website</td></tr>
         <?php endif; ?>
         <?php foreach ($websites as $site): ?>
           <?php $gitStatus = NginxService::gitStatus((int) $site['id']); /* auto-detect .git on disk, incl. repos cloned via terminal */ ?>
           <tr>
-            <td><a href="http://<?= e($site['domain']) ?>" target="_blank" rel="noopener"><?= e($site['domain']) ?></a></td>
-            <td><span class="badge text-bg-light border">PHP <?= e($site['php_version']) ?></span></td>
-            <td class="text-muted small"><?= e($site['document_root']) ?></td>
-            <td class="small">
+            <td>
+              <a href="http://<?= e($site['domain']) ?>" target="_blank" rel="noopener"><?= e($site['domain']) ?></a>
+              <div class="d-flex flex-wrap align-items-center gap-1 mt-1">
+                <span class="badge text-bg-light border">PHP <?= e($site['php_version']) ?></span>
+                <?= $site['ssl_enabled'] ? '<span class="badge text-bg-success">SSL aktif</span>' : '<span class="badge text-bg-secondary">SSL tidak aktif</span>' ?>
+              </div>
               <?php if ($gitStatus !== null && $gitStatus['is_git']): ?>
-                <div <?= !empty($gitStatus['remote']) ? 'title="' . e($gitStatus['remote']) . '"' : '' ?>><i class="bi bi-git me-1"></i><code><?= e($gitStatus['branch'] ?? '?') ?></code> @ <code><?= e($gitStatus['commit'] ?? '?') ?></code></div>
-                <div class="text-muted" title="<?= e($gitStatus['message'] ?? '') ?>"><?= e(mb_strimwidth((string) ($gitStatus['message'] ?? ''), 0, 40, '...')) ?> &middot; <?= e($gitStatus['date'] ?? '') ?></div>
+                <div class="small mt-1" <?= !empty($gitStatus['remote']) ? 'title="' . e($gitStatus['remote']) . '"' : '' ?>>
+                  <i class="bi bi-git me-1"></i><code><?= e($gitStatus['branch'] ?? '?') ?></code> @ <code><?= e($gitStatus['commit'] ?? '?') ?></code>
+                  <span class="text-muted" title="<?= e($gitStatus['message'] ?? '') ?>">&middot; <?= e(mb_strimwidth((string) ($gitStatus['message'] ?? ''), 0, 40, '...')) ?> &middot; <?= e($gitStatus['date'] ?? '') ?></span>
+                </div>
               <?php else: ?>
-                <span class="text-muted">-</span>
+                <div class="small text-muted mt-1"><i class="bi bi-git me-1"></i>Git: -</div>
               <?php endif; ?>
             </td>
-            <td><?= $site['ssl_enabled'] ? '<span class="badge text-bg-success">Aktif</span>' : '<span class="badge text-bg-secondary">Tidak aktif</span>' ?></td>
+            <td class="text-muted small"><?= e($site['document_root']) ?></td>
+            <td style="min-width:130px;">
+              <a href="javascript:void(0)" onclick="websiteOpenSettings(<?= (int) $site['id'] ?>, 'traffic')" class="text-decoration-none d-block" title="Buka Traffic Analysis">
+                <?= TrafficService::sparkline(NginxService::trafficDaily((int) $site['id'], 14)) ?>
+              </a>
+            </td>
             <td><?= $site['is_enabled'] ? '<span class="badge text-bg-success">Enabled</span>' : '<span class="badge text-bg-secondary">Disabled</span>' ?></td>
             <td class="text-end">
               <?php if (Rbac::can($user['role'], 'website.toggle')): ?>
@@ -112,6 +126,9 @@ include __DIR__ . '/partials/header.php';
                 <input type="hidden" name="id" value="<?= e((string) $site['id']) ?>">
                 <button class="btn btn-sm btn-outline-success" title="Pull / Update dari Git"><i class="bi bi-cloud-download"></i></button>
               </form>
+              <?php endif; ?>
+              <?php if (Rbac::can($user['role'], 'website.create')): ?>
+              <button type="button" class="btn btn-sm btn-outline-secondary" title="Clone proyek ke Website/Node.js lain" onclick="cloneOpen('website:<?= (int) $site['id'] ?>', <?= e(json_encode($site['domain'])) ?>)"><i class="bi bi-copy"></i></button>
               <?php endif; ?>
               <button type="button" class="btn btn-sm btn-outline-secondary" title="Settings" onclick="websiteOpenSettings(<?= (int) $site['id'] ?>)"><i class="bi bi-gear"></i></button>
               <?php if (Rbac::can($user['role'], 'files.view')): ?>
@@ -217,9 +234,10 @@ include __DIR__ . '/partials/header.php';
 </div>
 
 <script>
-window.websiteOpenSettings = function (id) {
+window.websiteOpenSettings = function (id, tab) {
   var frame = document.getElementById('websiteSettingsFrame');
-  if (frame) { frame.src = '/website_settings?id=' + id + '&embed=1'; }
+  var page = tab === 'traffic' ? '/website_traffic' : '/website_settings';
+  if (frame) { frame.src = page + '?id=' + id + '&embed=1'; }
   var modalEl = document.getElementById('websiteSettingsModal');
   if (modalEl && typeof bootstrap !== 'undefined') { bootstrap.Modal.getOrCreateInstance(modalEl).show(); }
 };
@@ -232,5 +250,7 @@ window.websiteOpenSettings = function (id) {
   });
 })();
 </script>
+
+<?php if (Rbac::can($user['role'], 'website.create')) { include __DIR__ . '/partials/clone_modal.php'; } ?>
 
 <?php include __DIR__ . '/partials/footer.php'; ?>
