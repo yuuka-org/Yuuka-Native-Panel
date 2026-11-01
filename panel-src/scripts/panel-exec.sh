@@ -2617,6 +2617,11 @@ op_log_traffic_daily() {
                 [[ -f "$gz" ]] && zcat "$gz"
             done
         done
+        # Penting: tanpa ini status grup = status `[[ -f ]]` terakhir (false bila
+        # tidak ada file .gz) dan `set -o pipefail` membuat SELURUH op dianggap
+        # gagal walau datanya sudah tercetak -> panel menampilkan datanya sebagai
+        # pesan error / 0 request.
+        true
     } 2>/dev/null | awk '
         {
             # Cari timestamp [dd/Mon/yyyy: di mana pun di baris (bukan
