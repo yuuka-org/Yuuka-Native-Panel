@@ -55,7 +55,10 @@ CRUD website statis/PHP native, ditangani `NginxService`:
   `nginx-write-config` — divalidasi `nginx -t` sebelum diaktifkan, otomatis
   rollback ke config lama kalau invalid), lalu `nginx-enable`.
 - `gitPull($id, $userId)` / `gitStatus($id)` — tombol Pull/Update di tabel
-  Website (cuma muncul untuk situs hasil deploy Git): `git pull --ff-only`
+  Website: Git **terdeteksi otomatis** dari folder `.git` di disk (termasuk repo
+  yang di-clone manual lewat terminal, dan situs yang nama foldernya beda dari
+  domain — folder dibaca dari `document_root` lewat `siteDirName()`).
+  `git pull --ff-only`
   di tempat (gagal bersih, tidak pernah merge/rebase otomatis kalau ada
   konflik/divergen), dan info branch + commit hash + pesan commit terakhir
   yang ditampilkan di tabel.

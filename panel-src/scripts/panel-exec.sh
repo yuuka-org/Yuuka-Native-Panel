@@ -1560,13 +1560,15 @@ op_git_clone_website() {
 # clear error instead of silently producing a merge commit or, worse, a
 # half-applied working tree nobody asked for.
 op_git_pull_website() {
-    local domain="$1"
-    require_match "$domain" "$RE_DOMAIN" "domain"
-    local dir="${WWW_BASE}/${domain}"
-    require_path_within "$dir" "$WWW_BASE" >/dev/null
+    local name="$1"
+    git_resolve_site_dir "$name"
+    local dir="$GIT_SITE_DIR"
     [[ -d "${dir}/.git" ]] || fail "Website ini bukan deployment git (tidak ada .git)"
 
-    if ! git -C "$dir" pull --ff-only >/tmp/git-pull-out.$$ 2>&1; then
+    # safe.directory: repo yang di-clone manual lewat terminal biasanya
+    # dimiliki user lain, sehingga git (jalan sebagai root) akan menolak
+    # dengan "dubious ownership" tanpa ini.
+    if ! git -c safe.directory="$dir" -C "$dir" pull --ff-only >/tmp/git-pull-out.$$ 2>&1; then
         local out
         out=$(cat "/tmp/git-pull-out.$$" 2>/dev/null)
         rm -f "/tmp/git-pull-out.$$"
@@ -1576,28 +1578,41 @@ op_git_pull_website() {
 
     chown -R www-data:www-data "$dir"
     fm_reapply_terminal_acl "$dir"
-    echo "OK: pulled $domain"
+    echo "OK: pulled $name"
+}
+
+# Resolves a website's project directory from its folder name under
+# WWW_BASE (NOT necessarily equal to the domain - sites whose folder was
+# created/renamed by hand, e.g. via terminal, have a different name).
+# Sets GIT_SITE_DIR.
+git_resolve_site_dir() {
+    local name="$1"
+    require_match "$name" '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$' "site dir"
+    GIT_SITE_DIR="${WWW_BASE}/${name}"
+    require_path_within "$GIT_SITE_DIR" "$WWW_BASE" >/dev/null
 }
 
 # NUL-terminated key\tvalue records (same reasoning as op_files_list -
 # a commit message could legally contain a literal newline).
 op_git_status_website() {
-    local domain="$1"
-    require_match "$domain" "$RE_DOMAIN" "domain"
-    local dir="${WWW_BASE}/${domain}"
-    require_path_within "$dir" "$WWW_BASE" >/dev/null
+    local name="$1"
+    git_resolve_site_dir "$name"
+    local dir="$GIT_SITE_DIR"
     if [[ ! -d "${dir}/.git" ]]; then
         printf 'is_git\tno\0'
         return 0
     fi
 
-    local branch commit message date
-    branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null) || branch="unknown"
-    commit=$(git -C "$dir" rev-parse --short HEAD 2>/dev/null) || commit="unknown"
-    message=$(git -C "$dir" log -1 --format=%s 2>/dev/null) || message=""
-    date=$(git -C "$dir" log -1 --format=%cd --date=relative 2>/dev/null) || date=""
+    local g=(git -c safe.directory="$dir" -C "$dir")
+    local branch commit message date remote
+    branch=$("${g[@]}" rev-parse --abbrev-ref HEAD 2>/dev/null) || branch="unknown"
+    commit=$("${g[@]}" rev-parse --short HEAD 2>/dev/null) || commit="unknown"
+    message=$("${g[@]}" log -1 --format=%s 2>/dev/null) || message=""
+    date=$("${g[@]}" log -1 --format=%cd --date=relative 2>/dev/null) || date=""
+    # Strip any embedded user:token@ credentials before showing the URL.
+    remote=$("${g[@]}" remote get-url origin 2>/dev/null | sed -E 's#(https?://)[^/@]*@#\1#') || remote=""
 
-    printf 'is_git\tyes\0branch\t%s\0commit\t%s\0message\t%s\0date\t%s\0' "$branch" "$commit" "$message" "$date"
+    printf 'is_git\tyes\0branch\t%s\0commit\t%s\0message\t%s\0date\t%s\0remote\t%s\0' "$branch" "$commit" "$message" "$date" "$remote"
 }
 
 op_fs_remove_website() {

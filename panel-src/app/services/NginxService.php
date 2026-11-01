@@ -771,6 +771,24 @@ final class NginxService
     }
 
     /**
+     * Folder name under /var/www that holds the site's project, derived
+     * from document_root (".../<dir>/public" -> "<dir>") so sites whose
+     * folder differs from their domain (created via terminal / renamed)
+     * are still found. Falls back to the domain.
+     */
+    public static function siteDirName(array $site): string
+    {
+        $root = rtrim((string) ($site['document_root'] ?? ''), '/');
+        if (basename($root) === 'public') {
+            $root = dirname($root);
+        }
+        if (dirname($root) === '/var/www' && preg_match('/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/', basename($root))) {
+            return basename($root);
+        }
+        return (string) $site['domain'];
+    }
+
+    /**
      * Fast-forward-only `git pull` in the site's own directory - fails
      * cleanly (never merges/rebases unattended) if local changes or a
      * diverged branch would require one.
@@ -781,11 +799,9 @@ final class NginxService
         if ($site === null) {
             throw new InvalidArgumentException('Website tidak ditemukan');
         }
-        if (empty($site['git_repo_url'])) {
-            throw new InvalidArgumentException('Website ini bukan deployment Git');
-        }
-
-        $result = Executor::run('git-pull-website', [$site['domain']], null, 60);
+        // No git_repo_url check: repos cloned by hand (terminal) are
+        // auto-detected from the .git folder on disk instead.
+        $result = Executor::run('git-pull-website', [self::siteDirName($site)], null, 60);
         if (!$result['ok']) {
             throw new RuntimeException('Gagal git pull: ' . $result['output']);
         }
@@ -795,7 +811,7 @@ final class NginxService
         return self::gitStatus($id);
     }
 
-    /** @return array{is_git:bool,branch?:string,commit?:string,message?:string,date?:string}|null null if the website doesn't exist */
+    /** @return array{is_git:bool,branch?:string,commit?:string,message?:string,date?:string,remote?:string}|null null if the website doesn't exist */
     public static function gitStatus(int $id): ?array
     {
         $site = self::find($id);
@@ -803,7 +819,7 @@ final class NginxService
             return null;
         }
 
-        $result = Executor::run('git-status-website', [$site['domain']], null, 15);
+        $result = Executor::run('git-status-website', [self::siteDirName($site)], null, 15);
         if (!$result['ok']) {
             return ['is_git' => false];
         }

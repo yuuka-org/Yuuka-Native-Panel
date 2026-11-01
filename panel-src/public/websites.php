@@ -78,14 +78,14 @@ include __DIR__ . '/partials/header.php';
           <tr><td colspan="7" class="text-center text-muted py-4">Belum ada website</td></tr>
         <?php endif; ?>
         <?php foreach ($websites as $site): ?>
-          <?php $gitStatus = !empty($site['git_repo_url']) ? NginxService::gitStatus((int) $site['id']) : null; ?>
+          <?php $gitStatus = NginxService::gitStatus((int) $site['id']); /* auto-detect .git on disk, incl. repos cloned via terminal */ ?>
           <tr>
             <td><a href="http://<?= e($site['domain']) ?>" target="_blank" rel="noopener"><?= e($site['domain']) ?></a></td>
             <td><span class="badge text-bg-light border">PHP <?= e($site['php_version']) ?></span></td>
             <td class="text-muted small"><?= e($site['document_root']) ?></td>
             <td class="small">
               <?php if ($gitStatus !== null && $gitStatus['is_git']): ?>
-                <div><i class="bi bi-git me-1"></i><code><?= e($gitStatus['branch'] ?? '?') ?></code> @ <code><?= e($gitStatus['commit'] ?? '?') ?></code></div>
+                <div <?= !empty($gitStatus['remote']) ? 'title="' . e($gitStatus['remote']) . '"' : '' ?>><i class="bi bi-git me-1"></i><code><?= e($gitStatus['branch'] ?? '?') ?></code> @ <code><?= e($gitStatus['commit'] ?? '?') ?></code></div>
                 <div class="text-muted" title="<?= e($gitStatus['message'] ?? '') ?>"><?= e(mb_strimwidth((string) ($gitStatus['message'] ?? ''), 0, 40, '...')) ?> &middot; <?= e($gitStatus['date'] ?? '') ?></div>
               <?php else: ?>
                 <span class="text-muted">-</span>
