@@ -94,7 +94,7 @@ include __DIR__ . '/partials/header.php';
               <?php if ($gitStatus !== null && $gitStatus['is_git']): ?>
                 <div class="small mt-1" <?= !empty($gitStatus['remote']) ? 'title="' . e($gitStatus['remote']) . '"' : '' ?>>
                   <i class="bi bi-git me-1"></i><code><?= e($gitStatus['branch'] ?? '?') ?></code> @ <code><?= e($gitStatus['commit'] ?? '?') ?></code>
-                  <span class="text-muted" title="<?= e($gitStatus['message'] ?? '') ?>">&middot; <?= e(mb_strimwidth((string) ($gitStatus['message'] ?? ''), 0, 40, '...')) ?> &middot; <?= e($gitStatus['date'] ?? '') ?></span>
+                  <span class="text-muted" title="<?= e($gitStatus['message'] ?? '') ?>">&middot; <?= e($gitStatus['date'] ?? '') ?></span>
                 </div>
               <?php else: ?>
                 <div class="small text-muted mt-1"><i class="bi bi-git me-1"></i>Git: -</div>
