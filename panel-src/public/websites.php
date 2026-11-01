@@ -27,7 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash('success', 'Berhasil git pull - situs diperbarui ke commit terbaru.');
         } elseif ($action === 'clone') {
             Rbac::require('website.create');
-            ProjectCloneService::clone((string) ($_POST['src'] ?? ''), (string) ($_POST['dest'] ?? ''), ($_POST['with_git'] ?? '') === '1', $user['id']);
+            ProjectCloneService::clone((string) ($_POST['src'] ?? ''), (string) ($_POST['dest'] ?? ''), ($_POST['with_git'] ?? '') === '1', $user['id'], ProjectCloneService::pathsFromPost($_POST));
             flash('success', 'Proyek berhasil di-clone.');
         } elseif ($action === 'toggle') {
             Rbac::require('website.toggle');

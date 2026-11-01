@@ -53,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash('success', 'Berhasil git pull. Restart aplikasi agar perubahan aktif.');
         } elseif ($action === 'clone') {
             Rbac::require('nodejs.create');
-            ProjectCloneService::clone((string) ($_POST['src'] ?? ''), (string) ($_POST['dest'] ?? ''), ($_POST['with_git'] ?? '') === '1', $user['id']);
+            ProjectCloneService::clone((string) ($_POST['src'] ?? ''), (string) ($_POST['dest'] ?? ''), ($_POST['with_git'] ?? '') === '1', $user['id'], ProjectCloneService::pathsFromPost($_POST));
             flash('success', 'Proyek berhasil di-clone. Restart aplikasi Node.js tujuan agar perubahan aktif.');
         } elseif ($action === 'control') {
             Rbac::require('nodejs.control');

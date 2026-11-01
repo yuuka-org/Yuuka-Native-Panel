@@ -1629,9 +1629,13 @@ op_git_status_nodeapp() { GIT_BASE="$NODEAPPS_BASE" GIT_OWNER="nodeapps:nodeapps
 # menghapus file di tujuan - dan tidak menyentuh node_modules, .env,
 # ecosystem.config.cjs, .trash (dan .git kecuali diminta), supaya konfigurasi
 # milik tujuan tetap utuh. Bisa dijalankan berulang untuk sinkronisasi.
-# Args: <src_kind> <src_name> <dest_kind> <dest_name> [with-git]
+# Args: <src_kind> <src_name> <dest_kind> <dest_name> [with-git|no-git] [path...]
+# Tanpa path = seluruh proyek; dengan path = hanya folder/file itu (relatif ke
+# root proyek, posisinya dipertahankan di tujuan).
 op_project_clone() {
     local src_kind="$1" src_name="$2" dest_kind="$3" dest_name="$4" with_git="${5:-}"
+    shift $(( $# < 5 ? $# : 5 ))
+    local paths=("$@")
     local src_dir dest_dir dest_owner
     case "$src_kind" in
         website) require_match "$src_name" '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$' "src"; src_dir="${WWW_BASE}/${src_name}"; require_path_within "$src_dir" "$WWW_BASE" >/dev/null ;;
@@ -1647,9 +1651,21 @@ op_project_clone() {
     [[ -d "$dest_dir" ]] || fail "Folder tujuan tidak ditemukan: $dest_dir"
     [[ "$(realpath -m -- "$src_dir")" != "$(realpath -m -- "$dest_dir")" ]] || fail "Sumber dan tujuan tidak boleh sama"
 
-    local excludes=(--exclude=./node_modules --exclude=./.env --exclude=./ecosystem.config.cjs --exclude=./.trash)
+    local excludes=(--exclude=node_modules --exclude=./.env --exclude=./ecosystem.config.cjs --exclude=./.trash)
     [[ "$with_git" == "with-git" ]] || excludes+=(--exclude=./.git)
-    tar -C "$src_dir" "${excludes[@]}" -cf - . | tar -C "$dest_dir" -xf - --no-same-owner
+    local members=(.) p
+    if (( ${#paths[@]} > 0 )); then
+        members=()
+        for p in "${paths[@]}"; do
+            p="${p%/}"
+            [[ -n "$p" && "$p" != /* && "$p" != -* ]] || fail "Path tidak valid: $p"
+            case "/${p}/" in */../*|*/./*) fail "Path tidak valid: $p" ;; esac
+            require_path_within "${src_dir}/${p}" "$src_dir" >/dev/null
+            [[ -e "${src_dir}/${p}" ]] || fail "Tidak ditemukan di sumber: $p"
+            members+=("./${p}")
+        done
+    fi
+    tar -C "$src_dir" "${excludes[@]}" -cf - -- "${members[@]}" | tar -C "$dest_dir" -xf - --no-same-owner
 
     chown -R "$dest_owner" "$dest_dir"
     fm_reapply_terminal_acl "$dest_dir"
