@@ -2599,8 +2599,16 @@ op_log_clear() {
 op_log_traffic_daily() {
     local domain="$1"
     require_match "$domain" "$RE_DOMAIN" "domain"
+    local suffix base found=0
+    for suffix in "" "-ssl"; do
+        base="/var/log/nginx/${domain}${suffix}-access.log"
+        if [[ -f "$base" ]] || compgen -G "${base}.*" >/dev/null; then found=1; fi
+    done
+    # Bedakan "log tidak ada" (salah nama/belum pernah ada request/nginx
+    # belum di-reload) dari "log ada tapi memang 0 request".
+    (( found )) || fail "Access log Nginx tidak ditemukan: /var/log/nginx/${domain}-access.log (atau -ssl-access.log)"
     {
-        local suffix base gz
+        local gz
         for suffix in "" "-ssl"; do
             base="/var/log/nginx/${domain}${suffix}-access.log"
             [[ -f "$base" ]] && cat "$base"
@@ -2611,10 +2619,11 @@ op_log_traffic_daily() {
         done
     } 2>/dev/null | awk '
         {
-            split($0, a, "[");
-            if (length(a[2]) < 11) next;
-            split(a[2], b, ":");
-            split(b[1], p, "/");
+            # Cari timestamp [dd/Mon/yyyy: di mana pun di baris (bukan
+            # hanya "[" pertama - IPv6 "[::1]" juga memakai kurung siku).
+            if (!match($0, /\[[0-9][0-9]\/[A-Za-z][A-Za-z][A-Za-z]\/[0-9][0-9][0-9][0-9]:/)) next;
+            ts = substr($0, RSTART + 1, 11);
+            split(ts, p, "/");
             m["Jan"]="01"; m["Feb"]="02"; m["Mar"]="03"; m["Apr"]="04";
             m["May"]="05"; m["Jun"]="06"; m["Jul"]="07"; m["Aug"]="08";
             m["Sep"]="09"; m["Oct"]="10"; m["Nov"]="11"; m["Dec"]="12";

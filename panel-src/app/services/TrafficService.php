@@ -12,6 +12,9 @@ final class TrafficService
 {
     private const CACHE_TTL = 300;
 
+    /** Pesan error pembacaan log terakhir (null = sukses), supaya halaman bisa membedakan "gagal baca" dari "0 request". */
+    public static ?string $lastError = null;
+
     /**
      * Oldest first, zero-filled untuk hari tanpa traffic.
      * @return array<int,array{date:string,count:int}>
@@ -51,9 +54,15 @@ final class TrafficService
             }
         }
 
+        self::$lastError = null;
         $counts = [];
         $result = Executor::run('log-traffic-daily', [$domain], null, 30);
-        if ($result['ok']) {
+        if (!$result['ok']) {
+            // Jangan di-cache: kegagalan bukan "0 request" dan harus dicoba ulang.
+            self::$lastError = trim((string) $result['output']) ?: 'Gagal membaca access log';
+            return [];
+        }
+        {
             foreach (explode("\n", trim($result['output'])) as $line) {
                 if ($line === '' || !str_contains($line, "\t")) {
                     continue;

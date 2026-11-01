@@ -96,6 +96,8 @@ include __DIR__ . ($embed ? '/partials/embed_header.php' : '/partials/header.php
   <div class="card-body">
     <?php if ($noDomain): ?>
       <p class="text-muted text-center py-5 mb-0">Aplikasi ini belum punya domain, jadi belum ada access log Nginx untuk dianalisis. Tambahkan domain di tab Domain.</p>
+    <?php elseif (TrafficService::$lastError !== null): ?>
+      <div class="alert alert-warning mb-0"><i class="bi bi-exclamation-triangle me-1"></i><strong>Gagal membaca access log:</strong> <?= e(TrafficService::$lastError) ?></div>
     <?php elseif (empty($traffic) || $total === 0): ?>
       <p class="text-muted text-center py-5 mb-0">Belum ada traffic tercatat pada rentang ini.</p>
     <?php else: ?>

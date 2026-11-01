@@ -93,7 +93,9 @@ include __DIR__ . ($embed ? '/partials/embed_header.php' : '/partials/header.php
     </div>
   </div>
   <div class="card-body">
-    <?php if (empty($traffic) || $total === 0): ?>
+    <?php if (TrafficService::$lastError !== null): ?>
+      <div class="alert alert-warning mb-0"><i class="bi bi-exclamation-triangle me-1"></i><strong>Gagal membaca access log:</strong> <?= e(TrafficService::$lastError) ?></div>
+    <?php elseif (empty($traffic) || $total === 0): ?>
       <p class="text-muted text-center py-5 mb-0">Belum ada traffic tercatat pada rentang ini.</p>
     <?php else: ?>
     <svg viewBox="0 0 <?= $svgW ?> <?= $svgH ?>" class="w-100" style="height:260px;" preserveAspectRatio="none">
