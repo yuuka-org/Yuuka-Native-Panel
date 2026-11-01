@@ -33,7 +33,7 @@ if ($isPicker) {
               <div class="list-group-item text-muted">Belum ada website</div>
             <?php endif; ?>
             <?php foreach ($websites as $site): ?>
-              <a class="list-group-item list-group-item-action" href="/file_manager?scope=website&name=<?= urlencode($site['domain']) ?>">
+              <a class="list-group-item list-group-item-action" href="/file_manager?scope=website&name=<?= urlencode(NginxService::siteDirName($site)) ?>">
                 <i class="bi bi-folder2-open me-1"></i><?= e($site['domain']) ?>
               </a>
             <?php endforeach; ?>

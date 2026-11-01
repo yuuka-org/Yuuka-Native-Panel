@@ -115,7 +115,7 @@ include __DIR__ . '/partials/header.php';
               <?php endif; ?>
               <button type="button" class="btn btn-sm btn-outline-secondary" title="Settings" onclick="websiteOpenSettings(<?= (int) $site['id'] ?>)"><i class="bi bi-gear"></i></button>
               <?php if (Rbac::can($user['role'], 'files.view')): ?>
-              <a href="/file_manager?scope=website&name=<?= urlencode($site['domain']) ?>" class="btn btn-sm btn-outline-secondary" title="File Manager"><i class="bi bi-folder2-open"></i></a>
+              <a href="/file_manager?scope=website&name=<?= urlencode(NginxService::siteDirName($site)) ?>" class="btn btn-sm btn-outline-secondary" title="File Manager"><i class="bi bi-folder2-open"></i></a>
               <?php endif; ?>
               <?php if (Rbac::can($user['role'], 'website.delete')): ?>
               <button class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteModal<?= e((string) $site['id']) ?>" title="Hapus"><i class="bi bi-trash"></i></button>
