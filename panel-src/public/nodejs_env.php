@@ -37,11 +37,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             EnvService::deleteVariable($id, (string) $_POST['key']);
             flash('success', 'Environment variable dihapus.');
         } elseif ($action === 'import') {
-            $parsed = EnvService::parseDotEnv((string) ($_POST['dotenv'] ?? ''));
-            foreach ($parsed as $k => $v) {
-                EnvService::setVariable($id, $k, $v, str_contains(strtolower($k), 'secret') || str_contains(strtolower($k), 'password') || str_contains(strtolower($k), 'key'));
-            }
-            flash('success', count($parsed) . ' variabel diimpor.');
+            $imported = EnvService::importDotEnv($id, (string) ($_POST['dotenv'] ?? ''));
+            flash('success', $imported . ' variabel diimpor.');
         } elseif ($action === 'apply') {
             Rbac::require('nodejs.control');
             NodeService::applyEnv($id);

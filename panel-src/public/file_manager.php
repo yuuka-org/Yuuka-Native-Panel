@@ -202,6 +202,47 @@ function fm_do_upload(string $scope, string $name, string $path, ?int $userId): 
     return $fileName;
 }
 
+/** Nama file yang dianggap file environment: .env, .env.production, production.env, dst. */
+function fm_is_env_file_name(string $fileName): bool
+{
+    return (bool) preg_match('/^\.env(\.[A-Za-z0-9_-]+)?$/', $fileName) || (bool) preg_match('/^[A-Za-z0-9_-]+\.env$/', $fileName);
+}
+
+/** Import satu file .env di folder Node.js App ke Environment app-nya (menimpa key yang sama). */
+function fm_import_env_file(string $scope, string $name, array $targets, ?int $userId): void
+{
+    $targets = fm_assert_bulk_count($targets);
+    if (count($targets) !== 1) {
+        throw new InvalidArgumentException('Pilih satu file .env untuk diimpor');
+    }
+    $relPath = (string) $targets[0];
+
+    // Scope 'nodeapp': name = app. Scope 'nodeapps' (jelajahi semua): segmen pertama path = app.
+    if ($scope === 'nodeapp') {
+        $appName = $name;
+        $inAppPath = $relPath;
+    } elseif ($scope === 'nodeapps' && str_contains($relPath, '/')) {
+        [$appName, $inAppPath] = explode('/', $relPath, 2);
+    } else {
+        throw new InvalidArgumentException('Import .env hanya tersedia untuk file di dalam folder Node.js App');
+    }
+    if (!fm_is_env_file_name(basename($inAppPath))) {
+        throw new InvalidArgumentException('Bukan file environment (.env / .env.* / *.env)');
+    }
+    $app = NodeService::findByPm2Name($appName);
+    if ($app === null) {
+        throw new InvalidArgumentException("Folder '{$appName}' belum terdaftar sebagai aplikasi di panel");
+    }
+
+    $content = FileManagerService::readFile('nodeapp', $appName, $inAppPath);
+    $count = EnvService::importDotEnv((int) $app['id'], $content);
+    if ($count === 0) {
+        throw new InvalidArgumentException('Tidak ada variabel valid (format KEY=value) di file itu');
+    }
+    ActivityLog::record($userId, 'nodejs.env_import_file', "Import {$count} env dari file {$inAppPath} ke {$appName}");
+    flash('success', $count . ' variabel diimpor dari ' . basename($inAppPath) . ' ke Environment ' . $appName . '. Buka Settings > Environment lalu Terapkan & Restart agar aktif.');
+}
+
 function fm_paste_clipboard(string $destScope, string $destName, string $destPath, ?int $userId): void
 {
     $clipboard = $_SESSION['fm_clipboard'] ?? null;
@@ -383,6 +424,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             FileManagerService::compress($scope, $name, $path, $destName, $itemNames, $user['id']);
             flash('success', 'ZIP berhasil dibuat: ' . $destName);
+        } elseif ($action === 'import_env') {
+            Rbac::require('files.manage');
+            Rbac::require('nodejs.control');
+            fm_import_env_file($scope, $name, (array) ($_POST['targets'] ?? []), $user['id']);
         } elseif ($action === 'copy_to_clipboard' || $action === 'cut_to_clipboard') {
             Rbac::require('files.manage');
             $targets = fm_assert_bulk_count((array) ($_POST['targets'] ?? []));
@@ -854,6 +899,22 @@ $extraBodyHtml = <<<HTML
   // checkbox selection would use) and Open in Terminal.
   var fmCtxRow = null;
 
+  // Mirrors fm_is_env_file_name() di PHP: .env, .env.production, production.env
+  function fmIsEnvFileName(n) {
+    return /^\.env(\.[A-Za-z0-9_-]+)?$/.test(n) || /^[A-Za-z0-9_-]+\.env$/.test(n);
+  }
+  function fmImportEnv(relPath, name) {
+    if (!confirm("Impor variabel dari '" + name + "' ke Environment aplikasi? Key yang sama akan ditimpa.")) { return; }
+    fmSelectOnly(relPath);
+    window.fmSetBulkAction('import_env');
+  }
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-fm-import-env]');
+    if (!btn) { return; }
+    e.preventDefault();
+    fmImportEnv(btn.getAttribute('data-fm-import-env'), btn.getAttribute('data-fm-import-name'));
+  });
+
   document.addEventListener('contextmenu', function (e) {
     // Only inside the page's own main content area (.app-content, shared
     // layout wrapper from partials/header.php - filled to viewport height,
@@ -894,6 +955,8 @@ $extraBodyHtml = <<<HTML
     if (downloadItem) { downloadItem.style.display = fmCtxRow.isDir ? 'none' : ''; }
     var extractItem = menu.querySelector('[data-fm-ctx="extract"]');
     if (extractItem) { extractItem.style.display = (!fmCtxRow.isDir && /\.zip$/i.test(fmCtxRow.name)) ? '' : 'none'; }
+    var envItem = menu.querySelector('[data-fm-ctx="importenv"]');
+    if (envItem) { envItem.style.display = (!fmCtxRow.isDir && fmIsEnvFileName(fmCtxRow.name)) ? '' : 'none'; }
     var menuWidth = 220;
     var x = Math.min(e.clientX, window.innerWidth - menuWidth - 8);
     menu.style.display = 'block';
@@ -981,6 +1044,8 @@ $extraBodyHtml = <<<HTML
       fmSelectOnly(row.relPath);
       var compressEl = document.getElementById('compressModal');
       if (compressEl && typeof bootstrap !== 'undefined') { bootstrap.Modal.getOrCreateInstance(compressEl).show(); }
+    } else if (action === 'importenv') {
+      fmImportEnv(row.relPath, row.name);
     } else if (action === 'extract') {
       if (!confirm("Ekstrak '" + row.name + "' ke folder baru di sini?")) { return; }
       fmSelectOnly(row.relPath);

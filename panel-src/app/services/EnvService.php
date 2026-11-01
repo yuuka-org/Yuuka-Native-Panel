@@ -118,6 +118,21 @@ final class EnvService
         return $result;
     }
 
+    /**
+     * Import isi .env ke variabel app (ditimpa jika key sama). Key yang
+     * mengandung secret/password/key otomatis ditandai secret.
+     * @return int jumlah variabel yang diimpor
+     */
+    public static function importDotEnv(int $appId, string $content): int
+    {
+        $parsed = self::parseDotEnv($content);
+        foreach ($parsed as $k => $v) {
+            $lk = strtolower($k);
+            self::setVariable($appId, $k, $v, str_contains($lk, 'secret') || str_contains($lk, 'password') || str_contains($lk, 'key'));
+        }
+        return count($parsed);
+    }
+
     public static function toDotEnvExport(int $appId): string
     {
         $lines = [];
