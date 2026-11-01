@@ -132,9 +132,6 @@ declare(strict_types=1);
                 <?php if (!$isDir): ?>
                 <a href="/file_manager?scope=<?= urlencode($scope) ?>&name=<?= urlencode($name) ?>&download=<?= urlencode($entryRelPath) ?>" class="btn btn-sm btn-outline-secondary" title="Download"><i class="bi bi-download"></i></a>
                 <?php endif; ?>
-                <?php if ($canManage && !$isDir && in_array($scope, ['nodeapp', 'nodeapps'], true) && fm_is_env_file_name($entry['name']) && Rbac::can($user['role'] ?? '', 'nodejs.control')): ?>
-                <button type="button" class="btn btn-sm btn-outline-primary" title="Import ke Environment aplikasi" data-fm-import-env="<?= e($entryRelPath) ?>" data-fm-import-name="<?= e($entry['name']) ?>"><i class="bi bi-key"></i></button>
-                <?php endif; ?>
                 <?php if ($canManage): ?>
                 <button type="button" class="btn btn-sm btn-outline-secondary" title="Ubah Izin" data-bs-toggle="modal" data-bs-target="#chmodModal" data-target="<?= e($entryRelPath) ?>" data-label="<?= e($entry['name']) ?>"><i class="bi bi-shield-lock"></i></button>
                 <button type="button" class="btn btn-sm btn-outline-secondary" title="Rename" data-bs-toggle="modal" data-bs-target="#renameModal" data-target="<?= e($entryRelPath) ?>" data-current-name="<?= e($entry['name']) ?>"><i class="bi bi-pencil"></i></button>
@@ -341,9 +338,6 @@ declare(strict_types=1);
   <button type="button" class="dropdown-item" data-fm-ctx="chmod"><i class="bi bi-shield-lock me-2"></i>Ubah Izin</button>
   <button type="button" class="dropdown-item" data-fm-ctx="rename"><i class="bi bi-pencil me-2"></i>Rename</button>
   <button type="button" class="dropdown-item" data-fm-ctx="compress"><i class="bi bi-file-earmark-zip me-2"></i>Kompres ke ZIP</button>
-  <?php if (in_array($scope, ['nodeapp', 'nodeapps'], true) && Rbac::can($user['role'] ?? '', 'nodejs.control')): ?>
-  <button type="button" class="dropdown-item" data-fm-ctx="importenv" style="display:none;"><i class="bi bi-key me-2"></i>Import ke Environment</button>
-  <?php endif; ?>
   <button type="button" class="dropdown-item" data-fm-ctx="extract" id="fmCtxExtract"><i class="bi bi-file-earmark-zip-fill me-2"></i>Ekstrak ZIP</button>
   <?php endif; ?>
   <?php if ($canTerminal): ?>

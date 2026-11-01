@@ -39,6 +39,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($action === 'import') {
             $imported = EnvService::importDotEnv($id, (string) ($_POST['dotenv'] ?? ''));
             flash('success', $imported . ' variabel diimpor.');
+        } elseif ($action === 'import_file') {
+            // Dari file .env yang sudah ada di folder app (File Manager) ...
+            $fileName = (string) ($_POST['env_file'] ?? '');
+            if (!EnvService::isEnvFileName($fileName)) {
+                throw new InvalidArgumentException('Pilih file environment yang valid');
+            }
+            $content = FileManagerService::readFile('nodeapp', $app['app_name'], $fileName);
+            $imported = EnvService::importDotEnv($id, $content);
+            if ($imported === 0) {
+                throw new InvalidArgumentException("Tidak ada variabel valid (format KEY=value) di {$fileName}");
+            }
+            ActivityLog::record($user['id'] ?? null, 'nodejs.env_import_file', "Import {$imported} env dari {$fileName} ke {$app['app_name']}");
+            flash('success', "{$imported} variabel diimpor dari {$fileName}. Klik Terapkan & Restart agar aktif.");
+        } elseif ($action === 'import_upload') {
+            // ... atau dari file .env yang diunggah langsung dari komputer (isinya hanya dibaca, tidak disimpan).
+            $f = $_FILES['env_upload'] ?? null;
+            if (!is_array($f) || ($f['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK || !is_uploaded_file((string) $f['tmp_name'])) {
+                throw new InvalidArgumentException('Pilih file .env untuk diunggah');
+            }
+            if ((int) $f['size'] > 512 * 1024) {
+                throw new InvalidArgumentException('File terlalu besar untuk file .env (maks 512 KB)');
+            }
+            $imported = EnvService::importDotEnv($id, (string) file_get_contents((string) $f['tmp_name']));
+            if ($imported === 0) {
+                throw new InvalidArgumentException('Tidak ada variabel valid (format KEY=value) di file itu');
+            }
+            flash('success', "{$imported} variabel diimpor dari file yang diunggah. Klik Terapkan & Restart agar aktif.");
         } elseif ($action === 'apply') {
             Rbac::require('nodejs.control');
             NodeService::applyEnv($id);
@@ -51,6 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $variables = EnvService::listForApp($id);
+$envFiles = EnvService::envFilesInAppDir($app['app_name']);
 $activeNodejsTab = 'env';
 
 $pageTitle = 'Environment - ' . $app['app_name'];
@@ -148,10 +176,35 @@ include __DIR__ . ($embed ? '/partials/embed_header.php' : '/partials/header.php
     <div class="card stat-card h-100">
       <div class="card-header bg-white fw-semibold">Import dari .env</div>
       <div class="card-body">
+        <form method="post" class="mb-3">
+          <?= Csrf::field() ?>
+          <input type="hidden" name="action" value="import_file">
+          <label class="form-label small mb-1">Dari file di folder aplikasi (File Manager)</label>
+          <div class="input-group">
+            <select name="env_file" class="form-select" <?= empty($envFiles) ? 'disabled' : '' ?>>
+              <?php if (empty($envFiles)): ?>
+                <option>Tidak ada file .env di folder aplikasi</option>
+              <?php endif; ?>
+              <?php foreach ($envFiles as $f): ?><option value="<?= e($f) ?>"><?= e($f) ?></option><?php endforeach; ?>
+            </select>
+            <button class="btn btn-outline-primary" <?= empty($envFiles) ? 'disabled' : '' ?>>Import file</button>
+          </div>
+        </form>
+        <form method="post" enctype="multipart/form-data" class="mb-3">
+          <?= Csrf::field() ?>
+          <input type="hidden" name="action" value="import_upload">
+          <label class="form-label small mb-1">Atau unggah file .env dari komputer</label>
+          <div class="input-group">
+            <input type="file" name="env_upload" class="form-control" required>
+            <button class="btn btn-outline-primary">Unggah &amp; Import</button>
+          </div>
+        </form>
+        <hr>
         <form method="post">
           <?= Csrf::field() ?>
           <input type="hidden" name="action" value="import">
-          <textarea name="dotenv" class="form-control mb-3" rows="6" placeholder="KEY=value&#10;ANOTHER_KEY=value"></textarea>
+          <label class="form-label small mb-1">Atau tempel isi .env</label>
+          <textarea name="dotenv" class="form-control mb-3" rows="4" placeholder="KEY=value&#10;ANOTHER_KEY=value"></textarea>
           <button class="btn btn-outline-primary w-100">Import</button>
         </form>
       </div>

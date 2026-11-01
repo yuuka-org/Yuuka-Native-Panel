@@ -118,6 +118,32 @@ final class EnvService
         return $result;
     }
 
+    /** Nama file yang dianggap file environment: .env, .env.production, production.env, dst. */
+    public static function isEnvFileName(string $fileName): bool
+    {
+        return (bool) preg_match('/^\.env(\.[A-Za-z0-9_-]+)?$/', $fileName)
+            || (bool) preg_match('/^[A-Za-z0-9_-]+\.env$/', $fileName);
+    }
+
+    /**
+     * File environment di root folder app (.env, .env.*, *.env) - sumber untuk "Import dari file".
+     * @return string[]
+     */
+    public static function envFilesInAppDir(string $appName): array
+    {
+        $names = [];
+        try {
+            foreach (FileManagerService::listDir('nodeapp', $appName, '') as $entry) {
+                if ($entry['type'] === 'file' && self::isEnvFileName($entry['name'])) {
+                    $names[] = $entry['name'];
+                }
+            }
+        } catch (InvalidArgumentException|RuntimeException $e) {
+            // folder belum ada / tidak terbaca: daftar kosong
+        }
+        return $names;
+    }
+
     /**
      * Import isi .env ke variabel app (ditimpa jika key sama). Key yang
      * mengandung secret/password/key otomatis ditandai secret.
